@@ -26,7 +26,7 @@ else:
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
 
 DEFAULT_CONFIG = {
-    "download_path": CONFIG_DIR,
+    "download_path": CONFIG_DIR,    
     "container": "mkv",
     "embed_subtitles": True,
     "audio_only": False,
@@ -273,6 +273,125 @@ def download_chzzk_clip_direct(target_url, chosen_stream_url, max_res_val, cfg, 
 
     return info
 
+def _open_windows_explorer(path):
+    import ctypes
+    from ctypes import wintypes
+
+    target = os.path.normpath(os.path.abspath(path))
+    is_file = os.path.isfile(target)
+    folder = target if not is_file else os.path.dirname(target)
+
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def list_explorer_hwnds():
+        found = []
+        buf = ctypes.create_unicode_buffer(256)
+
+        def _cb(hwnd, _lparam):
+            if user32.IsWindowVisible(hwnd):
+                user32.GetClassNameW(hwnd, buf, 256)
+                if buf.value in ("CabinetWClass", "ExploreWClass"):
+                    found.append(hwnd)
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(_cb), 0)
+        return found
+
+    before = set(list_explorer_hwnds())
+    args = ["explorer.exe", "/n,", "/select," + target] if is_file else ["explorer.exe", "/n,", folder]
+    subprocess.Popen(args, close_fds=True)
+
+    hwnd = None
+    for _ in range(40):
+        time.sleep(0.1)
+        for h in list_explorer_hwnds():
+            if h not in before:
+                hwnd = h
+                break
+        if hwnd:
+            break
+    if hwnd is None:
+        after = list_explorer_hwnds()
+        hwnd = after[-1] if after else None
+    if not hwnd:
+        return
+
+    class RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    class POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    class WINDOWPLACEMENT(ctypes.Structure):
+        _fields_ = [
+            ("length", wintypes.UINT),
+            ("flags", wintypes.UINT),
+            ("showCmd", wintypes.UINT),
+            ("ptMinPosition", POINT),
+            ("ptMaxPosition", POINT),
+            ("rcNormalPosition", RECT),
+        ]
+
+    work = RECT()
+    user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(work), 0)
+    work_w = max(work.right - work.left, 800)
+    work_h = max(work.bottom - work.top, 600)
+    width = min(1100, max(860, int(work_w * 0.58)))
+    height = min(720, max(540, int(work_h * 0.62)))
+    x = work.left + (work_w - width) // 2
+    y = work.top + (work_h - height) // 2
+
+    SW_SHOWNORMAL = 1
+    SW_RESTORE = 9
+    HWND_TOPMOST = -1
+    HWND_NOTOPMOST = -2
+    SWP_SHOWWINDOW = 0x0040
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    WM_SYSCOMMAND = 0x0112
+    SC_RESTORE = 0xF120
+
+    def place_normal():
+        if not user32.IsWindow(hwnd):
+            return
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        user32.ShowWindow(hwnd, SW_SHOWNORMAL)
+        user32.SendMessageW(hwnd, WM_SYSCOMMAND, SC_RESTORE, 0)
+        wp = WINDOWPLACEMENT()
+        wp.length = ctypes.sizeof(WINDOWPLACEMENT)
+        user32.GetWindowPlacement(hwnd, ctypes.byref(wp))
+        wp.flags = 0
+        wp.showCmd = SW_SHOWNORMAL
+        wp.rcNormalPosition.left = x
+        wp.rcNormalPosition.top = y
+        wp.rcNormalPosition.right = x + width
+        wp.rcNormalPosition.bottom = y + height
+        user32.SetWindowPlacement(hwnd, ctypes.byref(wp))
+        user32.MoveWindow(hwnd, x, y, width, height, True)
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW)
+
+    time.sleep(0.25)
+    for _ in range(20):
+        place_normal()
+        if not user32.IsZoomed(hwnd):
+            break
+        time.sleep(0.12)
+
+    fg = user32.GetForegroundWindow()
+    fg_pid = wintypes.DWORD()
+    fg_tid = user32.GetWindowThreadProcessId(fg, ctypes.byref(fg_pid))
+    our_tid = kernel32.GetCurrentThreadId()
+    user32.AttachThreadInput(our_tid, fg_tid, True)
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
+    user32.AttachThreadInput(our_tid, fg_tid, False)
+    user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+    place_normal()
+    user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+
 def main(page: ft.Page):
     page.title = f"{APP_NAME} {APP_VERSION}"
     page.vertical_alignment = "start"
@@ -363,7 +482,7 @@ def main(page: ft.Page):
         path = cfg.get("download_path", BASE_DIR)
         if os.path.exists(path):
             if platform.system() == "Windows":
-                subprocess.Popen(f'explorer /select,"{path}"' if os.path.isfile(path) else f'explorer "{path}"')
+                threading.Thread(target=_open_windows_explorer, args=(path,), daemon=True).start()
             elif platform.system() == "Darwin":
                 subprocess.Popen(["open", path])
             else:
@@ -458,7 +577,7 @@ def main(page: ft.Page):
             border=ft.Border.all(1, "grey700"),
             width=540
         ),
-        alignment=ft.alignment.center,
+        alignment=ft.Alignment.CENTER,
         bgcolor="black54",
         visible=False,
         expand=True
