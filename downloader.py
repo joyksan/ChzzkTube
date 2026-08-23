@@ -1,3 +1,5 @@
+# 백그라운드 스레드 및 훅 관리
+
 import os
 import time
 from PyQt6.QtCore import QThread, pyqtSignal

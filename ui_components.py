@@ -1,3 +1,5 @@
+# 커스텀 위젯
+
 from PyQt6.QtWidgets import QComboBox, QListView
 
 class CustomComboBox(QComboBox):

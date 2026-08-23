@@ -1,3 +1,5 @@
+# 팝업 다이얼로그 모음
+
 import os
 import json
 import platform
@@ -430,7 +432,16 @@ class SettingsDialog(QDialog):
                     content = f.read(2000) + ("\n... (생략)" if os.path.getsize(self.cfg["cookie_file_path"]) > 2000 else "")
             except Exception as ex: content = f"파일 읽기 오류: {ex}"
         elif cookie_src not in ["none", "auto"]:
-            content = f"[{cookie_src}] 브라우저의 쿠키를 사용 중입니다.\n\n보안상 전체 텍스트 표시는 생략됩니다."
+            try:
+                from utils import get_browser_cookies
+                cookie_dict = get_browser_cookies()
+                if cookie_dict:
+                    lines = [f"{k} = {v}" for k, v in cookie_dict.items()]
+                    content = f"[{cookie_src}] 브라우저 추출 쿠키 목록:\n\n" + "\n".join(lines)
+                else:
+                    content = f"[{cookie_src}] 브라우저에서 쿠키를 가져오지 못했습니다. (브라우저 실행 중 또는 권한 문제)"
+            except Exception as ex:
+                content = f"쿠키 조회 중 오류 발생: {ex}"
         QMessageBox.information(self, "쿠키 뷰어", content)
 
     def load_cookie(self):

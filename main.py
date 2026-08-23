@@ -1,3 +1,5 @@
+# 메인 윈도우 및 앱 실행 진입점
+
 import sys
 import os
 import json

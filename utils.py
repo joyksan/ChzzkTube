@@ -1,3 +1,5 @@
+# 유틸리티 및 코어 로직
+
 import os
 import re
 import json
@@ -51,7 +53,8 @@ def get_audio_codec_rank(acodec, fid=""):
     return rank
 
 def get_browser_cookies():
-    cookie_dict = {}
+    # 도메인별 쿠키를 담기 위해 {domain: {name: value}} 구조로 변경
+    cookie_data = {}
     try:
         sys_name = platform.system()
         appdata = os.environ.get("APPDATA", "")
@@ -79,9 +82,11 @@ def get_browser_cookies():
                             shutil.copy2(cf, tdb)
                             conn = sqlite3.connect(tdb)
                             cur = conn.cursor()
-                            cur.execute('SELECT name, value FROM moz_cookies WHERE host LIKE "%naver.com"')
-                            for n, v in cur.fetchall():
-                                if n not in cookie_dict: cookie_dict[n] = v
+                            # host와 name, value를 함께 조회
+                            cur.execute('SELECT host, name, value FROM moz_cookies')
+                            for host, n, v in cur.fetchall():
+                                if host not in cookie_data: cookie_data[host] = {}
+                                cookie_data[host][n] = v
                             conn.close()
                             shutil.rmtree(td, ignore_errors=True)
                 else:
@@ -93,17 +98,18 @@ def get_browser_cookies():
                         shutil.copy2(cf, tdb)
                         conn = sqlite3.connect(tdb)
                         cur = conn.cursor()
-                        cur.execute('SELECT name, value FROM cookies WHERE host_key LIKE "%naver.com"')
-                        for n, v in cur.fetchall():
-                            if n not in cookie_dict: cookie_dict[n] = v
+                        # host_key와 name, value를 함께 조회
+                        cur.execute('SELECT host_key, name, value FROM cookies')
+                        for host, n, v in cur.fetchall():
+                            if host not in cookie_data: cookie_data[host] = {}
+                            cookie_data[host][n] = v
                         conn.close()
                         shutil.rmtree(td, ignore_errors=True)
             except Exception:
                 continue
-            if "NID_AUT" in cookie_dict: break
     except Exception:
         pass
-    return cookie_dict
+    return cookie_data
 
 def analyze_chzzk_clip_api(target_url):
     clip_id = target_url.split("/")[-1].split("?")[0]
