@@ -4,7 +4,7 @@ import os
 import time
 from PyQt6.QtCore import QThread, pyqtSignal
 import yt_dlp
-from utils import clean_ansi, get_filename_template, get_video_codec_rank, get_audio_codec_rank, analyze_chzzk_clip_api, parse_sec[cite: 3, 6]
+from utils import clean_ansi, get_filename_template, get_video_codec_rank, get_audio_codec_rank, analyze_chzzk_clip_api, parse_sec
 
 def map_res(res, height):
     h = int(height or 0)
