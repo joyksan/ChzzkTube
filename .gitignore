@@ -1,0 +1,7 @@
+versions/
+build/
+dist/
+__pycache__/
+*.pyc
+Untitled
+dl_config.json
