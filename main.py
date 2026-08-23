@@ -5,9 +5,22 @@ import os
 import json
 import platform
 
+from PyQt6.QtCore import qInstallMessageHandler
+def qt_message_handler(mode, context, message):
+    if "must be a top level window" in message:
+        return
+    sys.stderr.write(message + "\n")
+qInstallMessageHandler(qt_message_handler)
+
+from PyQt6.QtWidgets import QApplication
+app = QApplication(sys.argv)
+
+from qfluentwidgets import setTheme, Theme
+setTheme(Theme.DARK)
+
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-    QLabel, QLineEdit, QPushButton, QProgressBar, QFileDialog, QTextEdit
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+    QLabel, QLineEdit, QPushButton, QProgressBar, QFileDialog, QTextEdit, QDialog
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QTextCursor, QIcon
@@ -16,6 +29,11 @@ from utils import _open_windows_explorer
 from ui_components import CustomComboBox
 from dialogs import ExitConfirmDialog, ActionCountdownDialog, SettingsDialog
 from downloader import AnalyzeWorker, DownloadWorker
+
+try:
+    import winsound
+except ImportError:
+    winsound = None
 
 APP_NAME = "ChzzkTube"
 APP_VERSION = "v2.0.1 (PyQt6)"
@@ -44,16 +62,8 @@ DEFAULT_CONFIG = {
     "filename_prefix": "none",
     "filename_suffix": "id",
     "browser_cookie": "auto",
-    "cookie_file_path": "",
-    "use_cut": False,
-    "cut_start": "",
-    "cut_end": ""
+    "cookie_file_path": ""
 }
-
-try:
-    import winsound
-except ImportError:
-    winsound = None
 
 
 class MainWindow(QMainWindow):
@@ -65,18 +75,82 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(ICON_PATH))
 
         self.setStyleSheet("""
-            QMainWindow, QWidget { background-color: #121212; color: #d4d4d4; font-family: 'Segoe UI', sans-serif; font-size: 12px; }
-            QPushButton { background-color: #333; border: 1px solid #555; border-radius: 5px; padding: 6px 12px; font-weight: bold; }
-            QPushButton:hover { background-color: #444; }
-            QPushButton:disabled { background-color: #222; color: #666; border-color: #333; }
-            QLineEdit { background-color: #1e1e1e; border: 1px solid #444; border-radius: 5px; padding: 8px; font-size: 13px; }
-            QTextEdit { background-color: #000; border: 1px solid #333; border-radius: 5px; font-family: 'Consolas', monospace; padding: 5px; }
-            QComboBox { background-color: #1e1e1e; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; min-height: 24px; max-height: 24px; }
-            QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border: none; background: transparent; }
-            QComboBox::down-arrow { image: none; }
-            QComboBox QAbstractItemView { background-color: #1e1e1e; color: #ffffff; selection-background-color: #1976d2; border: 1px solid #444; border-radius: 8px; padding: 4px; outline: 0px; }
-            QProgressBar { text-align: center; border: 1px solid #444; border-radius: 4px; background-color: #111; height: 10px; }
-            QProgressBar::chunk { background-color: #1976d2; border-radius: 3px; }
+            QMainWindow, QDialog {
+                background-color: #121212;
+                color: #e3e3e3;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 12px;
+            }
+            QLabel {
+                color: #e3e3e3;
+            }
+            QPushButton {
+                background-color: #2b2b2b;
+                color: #e3e3e3;
+                border: 1px solid #3d3d3d;
+                border-radius: 6px;
+                padding: 6px 14px;
+                font-weight: bold;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #353535;
+                border-color: #4a4a4a;
+            }
+            QPushButton:pressed {
+                background-color: #1c1c1c;
+                border-color: #303030;
+            }
+            QPushButton:disabled {
+                background-color: #181818;
+                color: #5a5a5a;
+                border-color: #2d2d2d;
+            }
+            QLineEdit {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                border: 1px solid #3d3d3d;
+                border-radius: 6px;
+                padding: 8px 46px 8px 10px;
+                font-size: 13px;
+            }
+            QLineEdit:hover {
+                border-color: #4d4d4d;
+            }
+            QLineEdit:focus {
+                border: 1.5px solid #02b275;
+                background-color: #151515;
+            }
+            QLineEdit::clear-button {
+                subcontrol-position: right;
+                subcontrol-origin: padding;
+                position: relative;
+                right: 22px;
+                width: 20px;
+                height: 20px;
+            }
+            QTextEdit {
+                background-color: #0d0d0d;
+                color: #d4d4d4;
+                border: 1px solid #2d2d2d;
+                border-radius: 6px;
+                font-family: 'Consolas', monospace;
+                font-size: 12px;
+                padding: 8px;
+            }
+            QProgressBar {
+                text-align: center;
+                border: none;
+                border-radius: 5px;
+                background-color: #1e1e1e;
+                height: 8px;
+                font-size: 10px;
+                color: transparent;
+            }
+            QProgressBar::chunk {
+                background-color: #02b275;
+                border-radius: 5px;
+            }
         """)
 
         self.cfg = DEFAULT_CONFIG.copy()
@@ -91,6 +165,11 @@ class MainWindow(QMainWindow):
         self.dl_state = {"running": False, "paused": False, "canceled": False, "skip": False}
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
         
+        # 스레드 참조 변수 선언 (가비지 컬렉션 방지)
+        self.worker_analyze = None
+        self.worker_dl = None
+        self.settings_dlg = None
+
         self.analyze_timer = QTimer()
         self.analyze_timer.setSingleShot(True)
         self.analyze_timer.timeout.connect(self.run_analysis)
@@ -116,11 +195,15 @@ class MainWindow(QMainWindow):
                 pass
 
         result = dlg.exec()
-        if result == 1:
+        if result in [1, 2]:
             if hasattr(self, 'settings_dlg') and self.settings_dlg: self.settings_dlg.close()
-            event.accept()
-        elif result == 2:
-            if hasattr(self, 'settings_dlg') and self.settings_dlg: self.settings_dlg.close()
+            
+            # 다운로드 중인 스레드가 있으면 취소 플래그 전달
+            if self.worker_dl and self.worker_dl.isRunning():
+                self.dl_state["canceled"] = True
+                self.worker_dl.quit()
+                self.worker_dl.wait(1000)
+                
             event.accept()
         else:
             event.ignore()
@@ -149,7 +232,8 @@ class MainWindow(QMainWindow):
         self.btn_open.clicked.connect(lambda: _open_windows_explorer(self.cfg['download_path']))
         self.btn_change = QPushButton("폴더 변경")
         self.btn_change.clicked.connect(self.change_folder)
-        self.btn_settings = QPushButton("⚙ 설정")
+        self.btn_settings = QPushButton("⚙\uFE0E 설정")
+        self.btn_settings.setStyleSheet("QPushButton { font-family: 'MS Gothic', 'Segoe UI', sans-serif; }")
         self.btn_settings.clicked.connect(self.open_settings)
         
         for b in [self.btn_open, self.btn_change, self.btn_settings]: top_layout.addWidget(b)
@@ -166,6 +250,7 @@ class MainWindow(QMainWindow):
 
         input_layout = QHBoxLayout()
         self.btn_txt = QPushButton(".txt 선택")
+        self.btn_txt.setObjectName("btn_txt")
         self.btn_txt.setFixedSize(80, 36)
         self.btn_txt.clicked.connect(self.pick_txt)
         input_layout.addWidget(self.btn_txt)
@@ -173,26 +258,27 @@ class MainWindow(QMainWindow):
         self.le_url = QLineEdit()
         self.le_url.setPlaceholderText("URL, 재생목록, 채널주소, TXT파일 경로 입력...")
         self.le_url.setFixedHeight(36)
+        self.le_url.setClearButtonEnabled(True)
         self.le_url.textChanged.connect(self.on_url_changed)
         input_layout.addWidget(self.le_url, 1)
 
         self.btn_download = QPushButton("다운로드 시작")
         self.btn_download.setFixedSize(110, 36)
-        self.btn_download.setStyleSheet("QPushButton { background-color: #2e7d32; color: white; } QPushButton:disabled { background-color: #1b451d; color: #777; }")
+        self.btn_download.setStyleSheet("QPushButton { background-color: #02b275; color: white; border: none; } QPushButton:hover { background-color: #03cb85; } QPushButton:pressed { background-color: #018f5d; } QPushButton:disabled { background-color: #143d2c; color: #5a5a5a; }")
         self.btn_download.clicked.connect(self.toggle_download)
         self.btn_download.setEnabled(False)
         input_layout.addWidget(self.btn_download)
 
         self.btn_pause = QPushButton("일시중지")
         self.btn_pause.setFixedSize(90, 36)
-        self.btn_pause.setStyleSheet("QPushButton { background-color: #f57c00; color: white; } QPushButton:disabled { background-color: #5c3002; color: #777; }")
+        self.btn_pause.setStyleSheet("QPushButton { background-color: #e65100; color: white; border: none; } QPushButton:hover { background-color: #ff5722; } QPushButton:pressed { background-color: #bf360c; } QPushButton:disabled { background-color: #3e2215; color: #5a5a5a; }")
         self.btn_pause.clicked.connect(self.toggle_pause)
         self.btn_pause.setEnabled(False)
         input_layout.addWidget(self.btn_pause)
 
         self.btn_skip = QPushButton("건너뛰기")
         self.btn_skip.setFixedSize(90, 36)
-        self.btn_skip.setStyleSheet("QPushButton { background-color: #1565c0; color: white; } QPushButton:disabled { background-color: #0b315c; color: #777; }")
+        self.btn_skip.setStyleSheet("QPushButton { background-color: #1565c0; color: white; border: none; } QPushButton:hover { background-color: #1e88e5; } QPushButton:pressed { background-color: #0d47a1; } QPushButton:disabled { background-color: #12213d; color: #5a5a5a; }")
         self.btn_skip.clicked.connect(self.skip_current)
         self.btn_skip.setEnabled(False)
         input_layout.addWidget(self.btn_skip)
@@ -204,13 +290,13 @@ class MainWindow(QMainWindow):
         stream_lay = QHBoxLayout(stream_bar)
         stream_lay.setContentsMargins(15, 10, 15, 10)
         
-        def make_stream_col(title, cb):
+        def make_stream_col(title, cb, width=200):
             lay = QVBoxLayout()
-            lay.setSpacing(2)
+            lay.setSpacing(8)
             lbl = QLabel(title)
-            lbl.setStyleSheet("color: #aaa; font-size: 11px;")
+            lbl.setStyleSheet("color: #aaa; font-size: 11px; padding-left: 8px;")
             lay.addWidget(lbl)
-            cb.setFixedWidth(170)
+            cb.setFixedWidth(width)
             lay.addWidget(cb)
             return lay
 
@@ -229,9 +315,9 @@ class MainWindow(QMainWindow):
         self.cb_audio.addItem("최고 품질 자동 선택", "auto")
         self.cb_audio.currentIndexChanged.connect(self.update_meta_badge)
 
-        stream_lay.addLayout(make_stream_col("비디오 스트림 선택", self.cb_video))
-        stream_lay.addLayout(make_stream_col("최고 해상도 제한", self.cb_max_res))
-        stream_lay.addLayout(make_stream_col("오디오 스트림 선택", self.cb_audio))
+        stream_lay.addLayout(make_stream_col("비디오 스트림 선택", self.cb_video, 230))
+        stream_lay.addLayout(make_stream_col("최고 해상도 제한", self.cb_max_res, 150))
+        stream_lay.addLayout(make_stream_col("오디오 스트림 선택", self.cb_audio, 230))
         
         self.lbl_meta = QLabel("")
         self.lbl_meta.setStyleSheet("color: #64b5f6; font-weight: bold;")
@@ -300,6 +386,11 @@ class MainWindow(QMainWindow):
         if not url: return
         self.btn_download.setText("분석 중...")
         
+        # 이전 스레드 정리
+        if self.worker_analyze and self.worker_analyze.isRunning():
+            self.worker_analyze.terminate()
+            self.worker_analyze.wait()
+
         self.worker_analyze = AnalyzeWorker(url, self.cfg)
         self.worker_analyze.result_ready.connect(self.on_analyze_success)
         self.worker_analyze.error_occurred.connect(self.on_analyze_error)
@@ -337,7 +428,7 @@ class MainWindow(QMainWindow):
 
         self.cb_audio.blockSignals(True)
         self.cb_audio.clear()
-        self.cb_audio.addItem("자동 선택 (치지직 통합)" if self.extracted_data.get("is_chzzk") else "자동 선택 (최고 품질)", "auto")
+        self.cb_audio.addItem("최고 품질 자동 선택", "auto")
         for a in self.extracted_data.get("a_list", []):
             self.cb_audio.addItem(a["label"], a["id"])
         self.cb_audio.blockSignals(False)
@@ -433,7 +524,7 @@ class MainWindow(QMainWindow):
         if not self.dl_state["paused"]:
             self.dl_state["paused"] = True
             self.btn_pause.setText("중지 (완전종료)")
-            self.btn_pause.setStyleSheet("QPushButton { background-color: #d32f2f; color: white; }")
+            self.btn_pause.setStyleSheet("QPushButton { background-color: #c62828; color: white; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; }")
             self.btn_download.setText("이어받기")
             self.btn_download.setEnabled(True)
             self.append_concise_log("[!] 일시중지됨. (건너뛰기 또는 완전 중지 가능)", True, False)
@@ -446,7 +537,7 @@ class MainWindow(QMainWindow):
             self.dl_state["skip"] = True
             self.dl_state["paused"] = False
             self.btn_pause.setText("일시중지")
-            self.btn_pause.setStyleSheet("QPushButton { background-color: #f57c00; color: white; }")
+            self.btn_pause.setStyleSheet("QPushButton { background-color: #e65100; color: white; border: none; } QPushButton:hover { background-color: #ff5722; } QPushButton:pressed { background-color: #bf360c; }")
             self.btn_download.setText("다운로드 중")
             self.btn_download.setEnabled(False)
 
@@ -455,7 +546,7 @@ class MainWindow(QMainWindow):
         self.btn_download.setText("다운로드 시작")
         self.btn_download.setEnabled(True)
         self.btn_pause.setText("일시중지")
-        self.btn_pause.setStyleSheet("QPushButton { background-color: #f57c00; color: white; }")
+        self.btn_pause.setStyleSheet("QPushButton { background-color: #e65100; color: white; border: none; } QPushButton:hover { background-color: #ff5722; } QPushButton:pressed { background-color: #bf360c; }")
         self.btn_pause.setEnabled(False)
         self.btn_skip.setEnabled(False)
         self.le_url.setEnabled(True)
@@ -470,13 +561,14 @@ class MainWindow(QMainWindow):
         if success:
             if self.cfg.get("play_sound") and winsound:
                 try: winsound.MessageBeep(winsound.MB_ICONASTERISK)
-                except: pass
+                except Exception: pass
             if self.cfg.get("auto_open_folder"):
                 _open_windows_explorer(self.cfg['download_path'])
             
             action = self.cfg.get("completion_action", "none")
             if action != "none":
                 dlg = ActionCountdownDialog(action, self)
+                # dlg.exec() 결과값 상수로 처리
                 if dlg.exec() == QDialog.DialogCode.Accepted:
                     if action == "shutdown" and platform.system() == "Windows":
                         os.system("shutdown -s -t 0")
@@ -485,16 +577,17 @@ class MainWindow(QMainWindow):
                     elif action == "exit_app":
                         QApplication.quit()
 
+
 if __name__ == "__main__":
     if platform.system() == "Windows":
         import ctypes
         myappid = 'chzzktube.subapp.v2'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
-    app = QApplication(sys.argv)
+    # 1. QApplication 인스턴스를 최우선 생성
     app.setStyle("Fusion")
-    
     if os.path.exists(ICON_PATH):
+        from PyQt6.QtGui import QIcon
         app.setWindowIcon(QIcon(ICON_PATH))
 
     win = MainWindow()

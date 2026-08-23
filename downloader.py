@@ -6,6 +6,16 @@ from PyQt6.QtCore import QThread, pyqtSignal
 import yt_dlp
 from utils import clean_ansi, get_filename_template, get_video_codec_rank, get_audio_codec_rank, analyze_chzzk_clip_api
 
+def map_res(res, height):
+    h = int(height or 0)
+    if h == 2160 or "2160" in str(res): return "4K"
+    if h == 1440 or "1440" in str(res): return "2K"
+    if h == 1080 or "1080" in str(res): return "1080p"
+    if h == 720 or "720" in str(res): return "720p"
+    if h == 480 or "480" in str(res): return "480p"
+    if h == 360 or "360" in str(res): return "360p"
+    return str(res)
+
 class YtLoggerBridge:
     def __init__(self, log_full_signal):
         self.log_full_signal = log_full_signal
@@ -42,7 +52,7 @@ class AnalyzeWorker(QThread):
                     v_list.append({
                         "id": fmt["id"], "height": fmt["height"], "vcodec": fmt.get("vcodec", ""),
                         "bitrate": fmt["bitrate"], "tbr": fmt["bitrate"], 
-                        "label": f"해상도: {fmt['res']} | 비트레이트: {fmt['bitrate']}kbps"
+                        "label": f"{map_res(fmt['res'], fmt['height'])} | {fmt['bitrate']}kbps"
                     })
                 self.log_concise.emit(f"[✓] 치지직 클립 분석 완료! (제목: {ch_info['title']})", False, False)
                 self.result_ready.emit({"info": ch_info, "v_list": v_list, "a_list": [], "is_chzzk": True})
@@ -63,10 +73,10 @@ class AnalyzeWorker(QThread):
 
                         if vcodec != 'none':
                             v_list.append({"id": fid, "height": height, "fps": fps, "tbr": tbr, "vcodec": vcodec, 
-                                           "label": f"ID: {fid} | {res} {fps_str} | {tbr}kbps | Codec: {vcodec} ({ext})"})
+                                           "label": f"{map_res(res, height)} {fps_str} | {tbr}kbps ({ext})"})
                         if acodec != 'none' and vcodec == 'none':
                             abr = int(f.get('abr') or tbr or 0)
-                            a_list.append({"id": fid, "abr": abr, "acodec": acodec, "label": f"ID: {fid} | {abr}kbps | Codec: {acodec} ({ext})"})
+                            a_list.append({"id": fid, "abr": abr, "acodec": acodec, "label": f"{abr}kbps | Codec: {acodec} ({ext})"})
 
                     v_list.sort(key=lambda x: (x["height"], x["fps"], get_video_codec_rank(x["vcodec"]), x["tbr"]), reverse=True)
                     a_list.sort(key=lambda x: (x["abr"], get_audio_codec_rank(x["acodec"], x["id"])), reverse=True)

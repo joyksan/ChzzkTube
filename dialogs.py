@@ -14,6 +14,66 @@ try:
     import winsound
 except ImportError:
     winsound = None
+def show_info_message(parent, title, text, detail=None, is_error=False):
+    msg_box = QMessageBox(parent)
+    msg_box.setIcon(QMessageBox.Icon.NoIcon)
+    msg_box.setWindowTitle(title)
+    
+    # Prepend monochrome icon
+    prefix = "▲  " if is_error else "✓  "
+    msg_box.setText(prefix + text)
+    if detail:
+        msg_box.setDetailedText(detail)
+        
+    msg_box.setStyleSheet("""
+        QMessageBox {
+            background-color: #121212;
+        }
+        QLabel {
+            color: #e3e3e3;
+            font-size: 13px;
+            font-family: 'Segoe UI', sans-serif;
+            padding: 12px 20px;
+        }
+        QPushButton {
+            background-color: #2b2b2b;
+            color: #e3e3e3;
+            border: 1px solid #3d3d3d;
+            border-radius: 6px;
+            padding: 6px 16px;
+            font-weight: bold;
+            min-width: 75px;
+        }
+        QPushButton:hover {
+            background-color: #353535;
+            border-color: #4a4a4a;
+        }
+        QPushButton:pressed {
+            background-color: #1c1c1c;
+        }
+        QTextEdit {
+            background-color: #0d0d0d;
+            color: #d4d4d4;
+            border: 1px solid #2d2d2d;
+            border-radius: 6px;
+            font-family: 'Consolas', monospace;
+            font-size: 11px;
+            padding: 5px;
+        }
+    """)
+    msg_box.addButton("확인" if not is_error else "닫기", QMessageBox.ButtonRole.AcceptRole)
+    
+    # Programmatic text alignment centering for success / left alignment for error
+    label = msg_box.findChild(QLabel)
+    if label:
+        if is_error:
+            label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        else:
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+    msg_box.exec()
+
+
 
 class ExitConfirmDialog(QDialog):
     def __init__(self, parent=None):
@@ -25,39 +85,40 @@ class ExitConfirmDialog(QDialog):
                 pass
 
         self.setWindowTitle("ChzzkTube")
-        self.setFixedSize(360, 155)
-        self.setStyleSheet("background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+        self.setFixedSize(320, 125)
+        self.setStyleSheet("background-color: #121212; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
 
         msg_layout = QHBoxLayout()
-        msg_layout.setSpacing(15)
+        msg_layout.setSpacing(10)
+        msg_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        icon_lbl = QLabel("⚠️")
-        icon_lbl.setStyleSheet("font-size: 26px; border: none; background: transparent;")
-        msg_layout.addWidget(icon_lbl, alignment=Qt.AlignmentFlag.AlignTop)
+        icon_lbl = QLabel("⚠\uFE0E")
+        icon_lbl.setStyleSheet("font-size: 20px; color: #888888; border: none; background: transparent;")
+        msg_layout.addWidget(icon_lbl)
 
         text_lbl = QLabel("정말 종료하시겠습니까?")
         text_lbl.setStyleSheet("font-size: 13px; font-weight: bold; border: none; background: transparent;")
-        msg_layout.addWidget(text_lbl, alignment=Qt.AlignmentFlag.AlignVCenter)
+        msg_layout.addWidget(text_lbl)
         
         layout.addLayout(msg_layout)
 
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(8)
 
-        btn_save_exit = QPushButton("저장 & 종료")
-        btn_save_exit.setStyleSheet("QPushButton { background-color: #3b5998; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px; border: none; } QPushButton:hover { background-color: #4c6ef5; }")
+        btn_save_exit = QPushButton("저장&&종료")
+        btn_save_exit.setStyleSheet("QPushButton { background-color: #02b275; color: white; font-weight: bold; padding: 6px 12px; border-radius: 6px; border: none; } QPushButton:hover { background-color: #03cb85; } QPushButton:pressed { background-color: #018f5d; }")
         btn_save_exit.clicked.connect(lambda: self.done(1))
 
         btn_exit = QPushButton("종료")
-        btn_exit.setStyleSheet("QPushButton { background-color: #333; color: #ddd; padding: 6px 16px; border-radius: 4px; border: 1px solid #444; } QPushButton:hover { background-color: #444; }")
+        btn_exit.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; padding: 6px 16px; border-radius: 6px; border: 1px solid #3d3d3d; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }")
         btn_exit.clicked.connect(lambda: self.done(2))
 
         btn_cancel = QPushButton("취소")
-        btn_cancel.setStyleSheet("QPushButton { background-color: #333; color: #ddd; padding: 6px 16px; border-radius: 4px; border: 1px solid #444; } QPushButton:hover { background-color: #444; }")
+        btn_cancel.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; padding: 6px 16px; border-radius: 6px; border: 1px solid #3d3d3d; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }")
         btn_cancel.clicked.connect(lambda: self.done(0))
 
         btn_layout.addWidget(btn_save_exit)
@@ -74,7 +135,7 @@ class CookieSelectDialog(QDialog):
         
         self.setWindowTitle("쿠키 불러오기...")
         self.setFixedSize(300, 380)
-        self.setStyleSheet("background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+        self.setStyleSheet("background-color: #121212; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -88,7 +149,7 @@ class CookieSelectDialog(QDialog):
 
         for text, b_type in buttons:
             btn = QPushButton(text)
-            btn.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #d4d4d4; border: 1px solid #3c3c3c; border-radius: 4px; padding: 8px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #383838; border-color: #555; }")
+            btn.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d; border-radius: 6px; padding: 8px; font-size: 12px; font-weight: bold; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; } QPushButton:pressed { background-color: #1c1c1c; }")
             btn.clicked.connect(lambda checked, t=b_type: self.on_select(t))
             layout.addWidget(btn)
 
@@ -105,14 +166,11 @@ class CookieSelectDialog(QDialog):
                     import yt_dlp.cookies
                     yt_dlp.cookies.extract_cookies_from_browser(b_type)
                 except Exception as ex:
-                    msg_box = QMessageBox(self)
-                    msg_box.setIcon(QMessageBox.Icon.Critical)
-                    msg_box.setWindowTitle("오류")
-                    msg_box.setText(f"브라우저({b_type}) 쿠키를 불러오는 데 실패했습니다.\n\n해당 브라우저가 실행 중이거나 보안 정책(권한 거부)으로 인해 접근할 수 없습니다.")
-                    msg_box.setDetailedText(str(ex))
-                    
-                    btn_close = msg_box.addButton("닫기", QMessageBox.ButtonRole.RejectRole)
-                    msg_box.exec()
+                    show_info_message(
+                        self, "오류", 
+                        f"브라우저({b_type}) 쿠키를 불러오는 데 실패했습니다.\n\n해당 브라우저가 실행 중이거나\n보안 정책(권한 거부)으로 인해 접근할 수 없습니다.", 
+                        detail=str(ex), is_error=True
+                    )
                     return
 
             self.selected_type = b_type
@@ -135,7 +193,7 @@ class ActionCountdownDialog(QDialog):
 
         self.setWindowTitle("작업 완료 후 동작 안내")
         self.setFixedSize(380, 160)
-        self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
+        self.setStyleSheet("background-color: #121212; color: #ffffff;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -150,11 +208,11 @@ class ActionCountdownDialog(QDialog):
         btn_layout.setSpacing(10)
 
         self.btn_now = QPushButton("지금 실행")
-        self.btn_now.setStyleSheet("background-color: #d32f2f; color: white; font-weight: bold; padding: 6px; border-radius: 4px;")
+        self.btn_now.setStyleSheet("QPushButton { background-color: #c62828; color: white; font-weight: bold; padding: 6px; border-radius: 6px; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; }")
         self.btn_now.clicked.connect(self.execute_now)
 
         self.btn_cancel = QPushButton("취소")
-        self.btn_cancel.setStyleSheet("background-color: #444; color: white; font-weight: bold; padding: 6px; border-radius: 4px;")
+        self.btn_cancel.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d; font-weight: bold; padding: 6px; border-radius: 6px; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }")
         self.btn_cancel.clicked.connect(self.cancel_action)
 
         btn_layout.addWidget(self.btn_now)
@@ -188,7 +246,7 @@ class CookieViewerDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title_text)
         self.setFixedSize(650, 500)
-        self.setStyleSheet("background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+        self.setStyleSheet("background-color: #121212; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -199,9 +257,9 @@ class CookieViewerDialog(QDialog):
         self.te_content.setPlainText(content_text)
         self.te_content.setStyleSheet("""
             QTextEdit {
-                background-color: #121212;
+                background-color: #0d0d0d;
                 color: #d4d4d4;
-                border: 1px solid #444;
+                border: 1px solid #2d2d2d;
                 border-radius: 6px;
                 font-family: 'Consolas', monospace;
                 font-size: 11px;
@@ -217,10 +275,10 @@ class CookieViewerDialog(QDialog):
         btn_close.setFixedWidth(90)
         btn_close.setStyleSheet("""
             QPushButton {
-                background-color: #333; color: #ddd; border: 1px solid #444;
-                border-radius: 4px; padding: 6px 16px; font-weight: bold;
+                background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d;
+                border-radius: 6px; padding: 6px 16px; font-weight: bold;
             }
-            QPushButton:hover { background-color: #444; }
+            QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }
         """)
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
@@ -235,8 +293,8 @@ class SettingsDialog(QDialog):
         self.is_running = is_running
         self.saved = False
         self.setWindowTitle("설정")
-        self.setFixedSize(460, 530)
-        self.setStyleSheet("background-color: #1e1e1e; color: #ffffff;")
+        self.setFixedSize(460, 550)
+        self.setStyleSheet("QDialog { background-color: #121212; color: #ffffff; }")
         self.init_ui()
         self.load_settings()
 
@@ -255,7 +313,6 @@ class SettingsDialog(QDialog):
             cb = CustomComboBox()
             cb.setFixedWidth(width)
             cb.setEnabled(not self.is_running)
-            cb.setStyleSheet("QComboBox { background-color: #1e1e1e; border: 1px solid #444; border-radius: 4px; padding: 0px 6px; font-size: 11px; min-height: 24px; max-height: 24px; } QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border: none; background: transparent; } QComboBox::down-arrow { image: none; } QComboBox:disabled { background-color: #161616; color: #555; border-color: #333; } QComboBox QAbstractItemView { background-color: #1e1e1e; color: #ffffff; selection-background-color: #1976d2; border: 1px solid #444; border-radius: 8px; padding: 4px; outline: 0px; }")
             for k, v in options: cb.addItem(v, k)
             return cb
 
@@ -271,13 +328,14 @@ class SettingsDialog(QDialog):
         layout.addLayout(row1)
 
         cookie_box = QFrame()
-        cookie_box.setStyleSheet("QFrame { border: 1px solid #444; border-radius: 6px; background-color: #242424; }")
+        cookie_box.setObjectName("cookie_box")
+        cookie_box.setStyleSheet("QFrame#cookie_box { border: 1px solid #3d3d3d; border-radius: 6px; background-color: #1e1e1e; }")
         cookie_layout = QVBoxLayout(cookie_box)
         cookie_layout.setContentsMargins(12, 10, 12, 10)
         cookie_layout.setSpacing(8)
 
-        cookie_lbl = QLabel("🍪 쿠키 설정 (연령제한/멤버십)")
-        cookie_lbl.setStyleSheet("font-weight: bold; font-size: 12px; border: none; background: transparent;")
+        cookie_lbl = QLabel("🔒\uFE0E 쿠키 설정 (연령제한/멤버십)")
+        cookie_lbl.setStyleSheet("font-weight: bold; font-size: 12px; border: none; background: transparent; font-family: 'MS Gothic', 'Segoe UI', sans-serif;")
         cookie_layout.addWidget(cookie_lbl)
         
         c_hlay = QHBoxLayout()
@@ -286,22 +344,114 @@ class SettingsDialog(QDialog):
         for text, func in [("보기...", self.view_cookie), ("불러오기...", self.load_cookie), ("초기화", self.reset_cookie)]:
             btn = QPushButton(text)
             btn.setEnabled(not self.is_running)
-            btn.setStyleSheet("QPushButton { background-color: #1e1e1e; border: 1px solid #444; padding: 0px; border-radius: 4px; min-height: 24px; max-height: 24px; font-size: 11px; } QPushButton:hover { background-color: #2a2a2a; } QPushButton:disabled { background-color: #161616; color: #555; border-color: #333; }")
+            btn.setStyleSheet("QPushButton { background-color: #2b2b2b; border: 1px solid #3d3d3d; padding: 4px 10px; border-radius: 6px; min-height: 22px; font-size: 11px; color: #e3e3e3; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; } QPushButton:disabled { background-color: #181818; color: #5a5a5a; border-color: #2d2d2d; }")
             btn.clicked.connect(func)
             c_hlay.addWidget(btn)
             self.cookie_buttons.append(btn)
         cookie_layout.addLayout(c_hlay)
         layout.addWidget(cookie_box)
 
-        self.chk_sub = QCheckBox("한국어 자막 포함 (SRT 자동 변환 병합)")
-        self.chk_audio = QCheckBox("음원만 추출 (MP3)")
-        self.chk_dedup = QCheckBox("중복 URL 자동 제거")
-        self.chk_fast = QCheckBox("고속 분할 다운로드 (5스레드 병렬)")
-        self.chk_auto_open = QCheckBox("완료 시 폴더 열기")
-        self.chk_sound = QCheckBox("완료 알림음 재생")
-        for chk in [self.chk_sub, self.chk_audio, self.chk_dedup, self.chk_fast, self.chk_auto_open, self.chk_sound]:
+        self.chk_sub = QCheckBox()
+        self.chk_audio = QCheckBox()
+        self.chk_dedup = QCheckBox()
+        self.chk_fast = QCheckBox()
+        self.chk_auto_open = QCheckBox()
+        self.chk_sound = QCheckBox()
+
+        chk_items = [
+            (self.chk_sub, "한국어 자막 포함 (SRT 자동 변환 병합)"),
+            (self.chk_audio, "음원만 추출 (MP3)"),
+            (self.chk_dedup, "중복 URL 자동 제거"),
+            (self.chk_fast, "고속 분할 다운로드 (5스레드 병렬)"),
+            (self.chk_auto_open, "완료 시 폴더 열기"),
+            (self.chk_sound, "완료 알림음 재생")
+        ]
+
+        chk_style = """
+            QCheckBox {
+                background: transparent;
+                border: none;
+                outline: none;
+            }
+            QCheckBox::indicator:unchecked {
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid #888888;
+                border-radius: 3px;
+                background-color: #1e1e1e;
+                image: none;
+            }
+            QCheckBox[custom_hover="true"]::indicator:unchecked {
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid #d4d4d4;
+                border-radius: 3px;
+                background-color: #d4d4d4;
+                image: none;
+            }
+            QCheckBox::indicator:checked {
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid #d4d4d4;
+                border-radius: 3px;
+                background-color: #d4d4d4;
+                image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%231e1e1e' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+            }
+            QCheckBox[custom_hover="true"]::indicator:checked {
+                width: 14px;
+                height: 14px;
+                border: 1.5px solid #ffffff;
+                border-radius: 3px;
+                background-color: #ffffff;
+                image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%231e1e1e' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+            }
+        """
+
+        def update_chk_style(c):
+            c.style().unpolish(c)
+            c.style().polish(c)
+
+        for chk, text in chk_items:
             chk.setEnabled(not self.is_running)
-            layout.addWidget(chk)
+            chk.setStyleSheet(chk_style)
+            chk.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            chk.setProperty("custom_hover", False)
+            chk.setProperty("suppress_hover", False)
+
+            lbl = QLabel(text)
+            lbl.setStyleSheet("color: #d4d4d4; background: transparent; font-size: 12px;")
+            lbl.setCursor(Qt.CursorShape.PointingHandCursor)
+            lbl.mousePressEvent = lambda event, c=chk: c.toggle() if c.isEnabled() else None
+
+            chk.toggled.connect(lambda checked, c=chk: (
+                c.setProperty("suppress_hover", True),
+                c.setProperty("custom_hover", False),
+                update_chk_style(c)
+            ) if not checked else None)
+
+            row_widget = QFrame()
+            row_widget.setStyleSheet("QFrame { background: transparent; border: none; }")
+            row_chk = QHBoxLayout(row_widget)
+            row_chk.setSpacing(8)
+            row_chk.setContentsMargins(0, 2, 0, 2)
+            row_chk.addWidget(chk)
+            row_chk.addWidget(lbl)
+            row_chk.addStretch()
+
+            def on_enter(e, c=chk):
+                if not c.property("suppress_hover"):
+                    c.setProperty("custom_hover", True)
+                    update_chk_style(c)
+
+            def on_leave(e, c=chk):
+                c.setProperty("suppress_hover", False)
+                c.setProperty("custom_hover", False)
+                update_chk_style(c)
+
+            row_widget.enterEvent = on_enter
+            row_widget.leaveEvent = on_leave
+
+            layout.addWidget(row_widget)
 
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("작업 완료 후 동작"))
@@ -327,7 +477,7 @@ class SettingsDialog(QDialog):
         lbl_title = QLabel("제목")
         lbl_title.setFixedWidth(45)
         lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_title.setStyleSheet("font-weight: bold;")
+        lbl_title.setStyleSheet("font-weight: bold; background: transparent; border: none;")
         format_layout.addWidget(lbl_title)
         
         self.cb_suffix = make_combo([
@@ -340,39 +490,6 @@ class SettingsDialog(QDialog):
         self.lbl_filename_preview.setStyleSheet("color: #64b5f6; font-size: 11px; padding-left: 2px;")
         layout.addWidget(self.lbl_filename_preview)
 
-        cut_layout = QHBoxLayout()
-        self.chk_cut = QCheckBox("구간 추출 (Cut)")
-        self.chk_cut.setEnabled(not self.is_running)
-        cut_layout.addWidget(self.chk_cut)
-        cut_layout.addStretch()
-        
-        line_edit_style = "QLineEdit { background-color: #2d2d2d; border: 1px solid #444; border-radius: 4px; font-size: 11px; padding: 0px 4px; margin: 0px; min-height: 24px; max-height: 24px; } QLineEdit:disabled { background-color: #1a1a1a; color: #555; border-color: #333; }"
-
-        lbl_start = QLabel("시작")
-        lbl_start.setStyleSheet("color: #aaa; font-size: 11px;")
-        self.le_cut_start = QLineEdit()
-        self.le_cut_start.setPlaceholderText("00:00:00")
-        self.le_cut_start.setFixedSize(85, 24)
-        self.le_cut_start.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.le_cut_start.setStyleSheet(line_edit_style)
-        self.le_cut_start.setEnabled(not self.is_running)
-
-        lbl_end = QLabel("종료")
-        lbl_end.setStyleSheet("color: #aaa; font-size: 11px;")
-        self.le_cut_end = QLineEdit()
-        self.le_cut_end.setPlaceholderText("00:00:00")
-        self.le_cut_end.setFixedSize(85, 24)
-        self.le_cut_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.le_cut_end.setStyleSheet(line_edit_style)
-        self.le_cut_end.setEnabled(not self.is_running)
-
-        cut_layout.addWidget(lbl_start)
-        cut_layout.addWidget(self.le_cut_start)
-        cut_layout.addSpacing(6)
-        cut_layout.addWidget(lbl_end)
-        cut_layout.addWidget(self.le_cut_end)
-        layout.addLayout(cut_layout)
-
         self.cb_prefix.currentIndexChanged.connect(self.update_filename_preview)
         self.cb_suffix.currentIndexChanged.connect(self.update_filename_preview)
         self.cb_container.currentIndexChanged.connect(self.update_filename_preview)
@@ -383,19 +500,42 @@ class SettingsDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        btn_cancel = QPushButton("변경 취소")
-        btn_cancel.setStyleSheet("QPushButton { background-color: #333; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 6px 16px; font-weight: bold; } QPushButton:hover { background-color: #444; }")
+        btn_cancel = QPushButton("취소")
+        btn_cancel.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d; border-radius: 6px; padding: 6px 16px; font-weight: bold; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }")
         btn_cancel.clicked.connect(self.reject)
 
-        btn_save = QPushButton("설정 완료")
-        btn_save.setStyleSheet("background-color: #1976d2; border-radius: 4px; padding: 6px 16px; font-weight: bold;")
+        btn_save = QPushButton("완료")
+        btn_save.setStyleSheet("QPushButton { background-color: #02b275; color: white; border: none; border-radius: 6px; padding: 6px 16px; font-weight: bold; } QPushButton:hover { background-color: #03cb85; } QPushButton:pressed { background-color: #018f5d; }")
         btn_save.clicked.connect(self.accept_settings)
 
         btn_layout.addWidget(btn_cancel)
         btn_layout.addWidget(btn_save)
         layout.addLayout(btn_layout)
 
-        self.chk_cut.toggled.connect(self.update_cut_state)
+    def update_filename_preview(self):
+        import datetime
+        today = datetime.datetime.now()
+        date_dash = today.strftime("%Y-%m-%d")
+        date_compact = today.strftime("%Y%m%d")
+
+        prefix_map = {
+            "none": "",
+            "uploader": "[채널명] ",
+            "date_dash_uploader": f"{date_dash} [채널명] ",
+            "date_compact_uploader": f"{date_compact} [채널명] ",
+            "date_dash": f"{date_dash} ",
+            "date_compact": f"{date_compact} "
+        }
+        suffix_map = {
+            "id_res_fps": " [PLCAxEuddBvAs] [1080p] [60fps]",
+            "id_res": " [PLCAxEuddBvAs] [1080p]",
+            "id": " [PLCAxEuddBvAs]"
+        }
+        p_text = prefix_map.get(self.cb_prefix.currentData(), "")
+        s_text = suffix_map.get(self.cb_suffix.currentData(), "")
+        ext = self.cb_container.currentData()
+        preview_str = f"미리보기  :  {p_text}동영상제목{s_text}.{ext}"
+        self.lbl_filename_preview.setText(preview_str)
 
     def load_settings(self):
         def set_combo(cb, val):
@@ -413,37 +553,6 @@ class SettingsDialog(QDialog):
         self.chk_fast.setChecked(self.cfg.get("fast_download", True))
         self.chk_auto_open.setChecked(self.cfg.get("auto_open_folder", True))
         self.chk_sound.setChecked(self.cfg.get("play_sound", True))
-        
-        self.chk_cut.setChecked(self.cfg.get("use_cut", False))
-        self.le_cut_start.setText(self.cfg.get("cut_start", ""))
-        self.le_cut_end.setText(self.cfg.get("cut_end", ""))
-        self.update_cut_state()
-
-    def update_cut_state(self):
-        if self.is_running: return
-        checked = self.chk_cut.isChecked()
-        self.le_cut_start.setEnabled(checked)
-        self.le_cut_end.setEnabled(checked)
-
-    def update_filename_preview(self):
-        prefix_map = {
-            "none": "",
-            "uploader": "[채널명] ",
-            "date_dash_uploader": "2026-06-07 [채널명] ",
-            "date_compact_uploader": "20260607 [채널명] ",
-            "date_dash": "2026-06-07 ",
-            "date_compact": "20260607 "
-        }
-        suffix_map = {
-            "id_res_fps": " [abc1234] [1080p] [60fps]",
-            "id_res": " [abc1234] [1080p]",
-            "id": " [abc1234]"
-        }
-        p_text = prefix_map.get(self.cb_prefix.currentData(), "")
-        s_text = suffix_map.get(self.cb_suffix.currentData(), "")
-        ext = self.cb_container.currentData()
-        preview_str = f"미리보기  :  {p_text}동영상제목{s_text}.{ext}"
-        self.lbl_filename_preview.setText(preview_str)
 
     def view_cookie(self):
         cookie_src = self.cfg.get("browser_cookie", "none")
@@ -479,13 +588,13 @@ class SettingsDialog(QDialog):
             self.cfg["browser_cookie"] = dlg.selected_type
             self.cfg["cookie_file_path"] = dlg.selected_path
             self.parent_win.save_cfg()
-            QMessageBox.information(self, "성공", f"쿠키 설정이 완료되었습니다. ({dlg.selected_type})")
+            show_info_message(self, "성공", f"쿠키 설정이 완료되었습니다.\n({dlg.selected_type})")
 
     def reset_cookie(self):
         self.cfg["browser_cookie"] = "none"
         self.cfg["cookie_file_path"] = ""
         self.parent_win.save_cfg()
-        QMessageBox.information(self, "초기화", "쿠키가 초기화되었습니다.")
+        show_info_message(self, "초기화", "쿠키가 초기화되었습니다.")
 
     def accept_settings(self):
         if not self.is_running:
@@ -500,9 +609,6 @@ class SettingsDialog(QDialog):
             self.cfg["fast_download"] = self.chk_fast.isChecked()
             self.cfg["auto_open_folder"] = self.chk_auto_open.isChecked()
             self.cfg["play_sound"] = self.chk_sound.isChecked()
-            self.cfg["use_cut"] = self.chk_cut.isChecked()
-            self.cfg["cut_start"] = self.le_cut_start.text().strip()
-            self.cfg["cut_end"] = self.le_cut_end.text().strip()
             
             self.parent_win.cfg.update(self.cfg)
             self.parent_win.save_cfg()
