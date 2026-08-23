@@ -113,7 +113,9 @@ def get_browser_cookies():
     return cookie_data
 
 def analyze_chzzk_clip_api(target_url):
-    clip_id = target_url.split("/")[-1].split("?")[0]
+    clean_url = target_url.split("?")[0].rstrip("/")
+    clip_id = clean_url.split("/")[-1]
+    
     cookie_dict = get_browser_cookies()
     cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
     headers = {

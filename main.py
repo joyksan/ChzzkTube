@@ -180,8 +180,9 @@ class MainWindow(QMainWindow):
         self.setWindowState(self.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
         self.activateWindow()
         
+        is_running = self.dl_state.get("running", False)
         parent_dlg = self.settings_dlg if (hasattr(self, 'settings_dlg') and self.settings_dlg and self.settings_dlg.isVisible()) else self
-        dlg = ExitConfirmDialog(parent_dlg)
+        dlg = ExitConfirmDialog(parent_dlg, is_running=is_running)
 
         if platform.system() == "Windows":
             try:
@@ -195,16 +196,25 @@ class MainWindow(QMainWindow):
                 pass
 
         result = dlg.exec()
-        if result in [1, 2]:
+        
+        # 1: [저장&종료] (또는 일반 종료) -> 라이브인 경우 MP4 리먹싱 저장 실행!
+        if result == 1:
             if hasattr(self, 'settings_dlg') and self.settings_dlg: self.settings_dlg.close()
-            
-            # 다운로드 중인 스레드가 있으면 취소 플래그 전달
             if self.worker_dl and self.worker_dl.isRunning():
                 self.dl_state["canceled"] = True
-                self.worker_dl.quit()
-                self.worker_dl.wait(1000)
-                
+                self.worker_dl.wait(3000) # 리먹싱 완료까지 대기
             event.accept()
+
+        # 2: [종료] (강제 버리기 후 종료) -> 라이브 녹화본도 삭제 후 강제 종료!
+        elif result == 2:
+            if hasattr(self, 'settings_dlg') and self.settings_dlg: self.settings_dlg.close()
+            if self.worker_dl and self.worker_dl.isRunning():
+                self.dl_state["force_discard"] = True # 강제 삭제 플래그 전달
+                self.dl_state["canceled"] = True
+                self.worker_dl.wait(1000)
+            event.accept()
+
+        # 0: [취소]
         else:
             event.ignore()
 
@@ -269,12 +279,12 @@ class MainWindow(QMainWindow):
         self.btn_download.setEnabled(False)
         input_layout.addWidget(self.btn_download)
 
-        self.btn_pause = QPushButton("일시중지")
-        self.btn_pause.setFixedSize(90, 36)
-        self.btn_pause.setStyleSheet("QPushButton { background-color: #e65100; color: white; border: none; } QPushButton:hover { background-color: #ff5722; } QPushButton:pressed { background-color: #bf360c; } QPushButton:disabled { background-color: #3e2215; color: #5a5a5a; }")
-        self.btn_pause.clicked.connect(self.toggle_pause)
-        self.btn_pause.setEnabled(False)
-        input_layout.addWidget(self.btn_pause)
+        self.btn_stop = QPushButton("작업종료")
+        self.btn_stop.setFixedSize(90, 36)
+        self.btn_stop.setStyleSheet("QPushButton { background-color: #c62828; color: white; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; } QPushButton:disabled { background-color: #3e1515; color: #5a5a5a; }")
+        self.btn_stop.clicked.connect(self.stop_download)
+        self.btn_stop.setEnabled(False)
+        input_layout.addWidget(self.btn_stop)
 
         self.btn_skip = QPushButton("건너뛰기")
         self.btn_skip.setFixedSize(90, 36)
@@ -455,9 +465,11 @@ class MainWindow(QMainWindow):
         cursor = self.te_concise.textCursor()
         if is_status:
             cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
-            txt = cursor.selectedText()
-            if txt.startswith("[다운로드 중]"):
+            # [핵심] <br>로 인해 커서가 맨 밑 빈 줄에 있을 경우, '이전 블록(전 줄)'을 선택하도록 보정
+            cursor.movePosition(QTextCursor.MoveOperation.PreviousBlock, QTextCursor.MoveMode.KeepAnchor)
+            txt = cursor.selectedText().strip()
+
+            if txt.startswith("[다운로드 중]") or txt.startswith("[라이브 녹화 중]"):
                 cursor.removeSelectedText()
                 cursor.deletePreviousChar()
         
@@ -470,12 +482,21 @@ class MainWindow(QMainWindow):
         self.te_full.append(msg)
 
     def on_progress_update(self, val, msg):
-        self.progress_bar.setValue(int(val * 100))
+        # [핵심] val이 음수(-1.0)일 경우 라이브 전용 좌우 왕복 애니메이션 모드(setRange(0, 0)) 발동!
+        if val < 0:
+            if self.progress_bar.maximum() != 0:
+                self.progress_bar.setRange(0, 100)
+        else:
+            if self.progress_bar.maximum() == 0:
+                self.progress_bar.setRange(0, 100)
+            self.progress_bar.setValue(int(val * 100))
 
     def on_status_update(self, current, total, url):
         self.lbl_status.setText(f"전체 진행률: [{current}/{total}] | 처리중: {url[:40]}...")
 
     def toggle_download(self):
+        """다운로드 시작"""
+        # A. 일시중지 상태에서 '이어받기' 클릭 시 -> 다운로드 재개
         if not self.dl_state["running"]:
             raw_target = self.le_url.text().strip()
             targets = []
@@ -495,12 +516,13 @@ class MainWindow(QMainWindow):
             if self.cfg.get("remove_duplicates"): targets = list(dict.fromkeys(targets))
             if not targets: return
 
-            self.dl_state.update({"running": True, "paused": False, "canceled": False, "skip": False})
+            self.dl_state.update({"running": True, "canceled": False, "skip": False})
             self.btn_download.setText("다운로드 중")
             self.btn_download.setEnabled(False)
-            self.btn_pause.setText("일시중지")
-            self.btn_pause.setEnabled(True)
-            self.btn_skip.setEnabled(True)
+            self.btn_stop.setEnabled(True)   # [작업종료] 활성화
+            self.btn_skip.setEnabled(True)   # [건너뛰기] 활성화
+            
+            # 입력폼 잠금
             self.le_url.setEnabled(False)
             self.btn_txt.setEnabled(False)
             self.cb_video.setEnabled(False)
@@ -519,36 +541,23 @@ class MainWindow(QMainWindow):
             self.worker_dl.finished_all.connect(self.on_download_finished)
             self.worker_dl.start()
 
-    def toggle_pause(self):
-        if not self.dl_state["running"]: return
-        if not self.dl_state["paused"]:
-            self.dl_state["paused"] = True
-            self.btn_pause.setText("중지 (완전종료)")
-            self.btn_pause.setStyleSheet("QPushButton { background-color: #c62828; color: white; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; }")
-            self.btn_download.setText("이어받기")
-            self.btn_download.setEnabled(True)
-            self.append_concise_log("[!] 일시중지됨. (건너뛰기 또는 완전 중지 가능)", True, False)
-        else:
-            self.dl_state["canceled"] = True
-            self.dl_state["paused"] = False
-
-    def skip_current(self):
+    def stop_download(self):
+        """'작업종료' 버튼 클릭 시 비동기 즉시 취소"""
         if self.dl_state["running"]:
-            self.dl_state["skip"] = True
-            self.dl_state["paused"] = False
-            self.btn_pause.setText("일시중지")
-            self.btn_pause.setStyleSheet("QPushButton { background-color: #e65100; color: white; border: none; } QPushButton:hover { background-color: #ff5722; } QPushButton:pressed { background-color: #bf360c; }")
-            self.btn_download.setText("다운로드 중")
-            self.btn_download.setEnabled(False)
+            self.dl_state["canceled"] = True
+            self.btn_stop.setEnabled(False)
+            self.btn_skip.setEnabled(False)
+            self.append_concise_log("[!] 다운로드 중단 및 작업 종료 요청 중...", False, True)
 
     def on_download_finished(self, success):
-        self.dl_state.update({"running": False, "paused": False, "canceled": False, "skip": False})
+        """작업 완료/중단 후 새 작업 환경으로 리셋"""
+        self.dl_state.update({"running": False, "canceled": False, "skip": False})
+        
         self.btn_download.setText("다운로드 시작")
-        self.btn_download.setEnabled(True)
-        self.btn_pause.setText("일시중지")
-        self.btn_pause.setStyleSheet("QPushButton { background-color: #e65100; color: white; border: none; } QPushButton:hover { background-color: #ff5722; } QPushButton:pressed { background-color: #bf360c; }")
-        self.btn_pause.setEnabled(False)
+        self.btn_download.setEnabled(bool(self.le_url.text().strip()))
+        self.btn_stop.setEnabled(False)
         self.btn_skip.setEnabled(False)
+        
         self.le_url.setEnabled(True)
         self.btn_txt.setEnabled(True)
         self.btn_change.setEnabled(True)
@@ -556,8 +565,61 @@ class MainWindow(QMainWindow):
         
         self.lbl_status.hide()
         self.progress_bar.hide()
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
 
+    def toggle_pause(self):
+        """'일시중지' 및 '작업종료' 토글 핸들러"""
+        if not self.dl_state["running"]: return
+
+        # 1. 진행 중일 때 '일시중지' 클릭 -> 상태 멈춤 & 버튼을 [작업종료] (빨간색)로 변경
+        if not self.dl_state["paused"]:
+            self.dl_state["paused"] = True
+            self.btn_pause.setText("작업종료")  # 텍스트 잘림 없는 깔끔한 라벨!
+            self.btn_pause.setStyleSheet("QPushButton { background-color: #c62828; color: white; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; }")
+            
+            # 초록색 버튼을 '이어받기'로 재활성화
+            self.btn_download.setText("이어받기")
+            self.btn_download.setEnabled(True)
+            self.append_concise_log("[!] 다운로드 일시 중지됨. ('이어받기' 또는 '작업종료' 선택 가능)", True, False)
+
+        # 2. 일시중지 상태에서 [작업종료] 클릭 -> 작업 강제 중단 시그널 발송
+        else:
+            self.dl_state["canceled"] = True
+            self.dl_state["paused"] = False
+            self.btn_pause.setEnabled(False)
+            self.btn_download.setEnabled(False)
+            self.append_concise_log("[!] 작업 종료 요청을 전달했습니다...", False, True)
+
+    def skip_current(self):
+        """건너뛰기 버튼 클릭 핸들러 (btn_pause 참조 완전 제거)"""
+        if self.dl_state["running"]:
+            self.dl_state["skip"] = True
+            self.append_concise_log("[!] 현재 항목 건너뛰기를 요청했습니다...", False, False)
+
+    def on_download_finished(self, success):
+        """작업 완료/중단 후 UI 상태 완벽 초기화"""
+        self.dl_state.update({"running": False, "canceled": False, "skip": False})
+        
+        # 버튼 상태 원복 (self.btn_pause 참조 제거 및 btn_stop 처리)
+        self.btn_download.setText("다운로드 시작")
+        self.btn_download.setEnabled(bool(self.le_url.text().strip()))
+        self.btn_stop.setEnabled(False)
+        self.btn_skip.setEnabled(False)
+        
+        # 입력폼 및 위젯 잠금 해제
+        self.le_url.setEnabled(True)
+        self.btn_txt.setEnabled(True)
+        self.btn_change.setEnabled(True)
+        self.update_ui_state()
+        
+        # 프로그레스바 및 상태 라벨 초기화
+        self.lbl_status.hide()
+        self.progress_bar.hide()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+
+        # 후속 작업 처리 (사운드 / 폴더 열기 / 전원 제어)
         if success:
             if self.cfg.get("play_sound") and winsound:
                 try: winsound.MessageBeep(winsound.MB_ICONASTERISK)
@@ -568,7 +630,6 @@ class MainWindow(QMainWindow):
             action = self.cfg.get("completion_action", "none")
             if action != "none":
                 dlg = ActionCountdownDialog(action, self)
-                # dlg.exec() 결과값 상수로 처리
                 if dlg.exec() == QDialog.DialogCode.Accepted:
                     if action == "shutdown" and platform.system() == "Windows":
                         os.system("shutdown -s -t 0")

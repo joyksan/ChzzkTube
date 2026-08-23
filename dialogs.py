@@ -76,55 +76,61 @@ def show_info_message(parent, title, text, detail=None, is_error=False):
 
 
 class ExitConfirmDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, is_running=False):
         super().__init__(parent)
-        if winsound:
-            try:
-                winsound.PlaySound("SystemExclamation", winsound.SND_ALIAS | winsound.SND_ASYNC)
-            except Exception:
-                pass
-
+        self.is_running = is_running
         self.setWindowTitle("ChzzkTube")
-        self.setFixedSize(320, 125)
-        self.setStyleSheet("background-color: #121212; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+        self.setFixedSize(380, 160 if is_running else 130)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(10)
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(15)
+        vbox.setContentsMargins(20, 20, 20, 20)
 
-        msg_layout = QHBoxLayout()
-        msg_layout.setSpacing(10)
-        msg_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        
-        icon_lbl = QLabel("⚠\uFE0E")
-        icon_lbl.setStyleSheet("font-size: 20px; color: #888888; border: none; background: transparent;")
-        msg_layout.addWidget(icon_lbl)
+        # 1. 상태별 경고 문구 이원화
+        if self.is_running:
+            msg = "⚠️ 현재 다운로드가 진행 중입니다!\n\n'저장&종료': 녹화 중인 라이브를 MP4로 보존 후 종료\n'종료': 진행 작업을 취소하고 즉시 종료"
+        else:
+            msg = "정말 프로그램을 종료하시겠습니까?"
 
-        text_lbl = QLabel("정말 종료하시겠습니까?")
-        text_lbl.setStyleSheet("font-size: 13px; font-weight: bold; border: none; background: transparent;")
-        msg_layout.addWidget(text_lbl)
-        
-        layout.addLayout(msg_layout)
+        lbl = QLabel(msg)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("font-size: 12px; color: #e3e3e3; line-height: 1.4;")
+        vbox.addWidget(lbl)
 
-        btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(8)
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(8)
 
-        btn_save_exit = QPushButton("저장&&종료")
-        btn_save_exit.setStyleSheet("QPushButton { background-color: #02b275; color: white; font-weight: bold; padding: 6px 12px; border-radius: 6px; border: none; } QPushButton:hover { background-color: #03cb85; } QPushButton:pressed { background-color: #018f5d; }")
-        btn_save_exit.clicked.connect(lambda: self.done(1))
+        # 2. 버튼 구성 이원화 (결과값: 1=저장/정상종료, 2=강제종료, 0=취소)
+        if self.is_running:
+            btn_save = QPushButton("저장&종료")
+            btn_save.setStyleSheet("QPushButton { background-color: #02b275; color: white; border: none; font-weight: bold; } QPushButton:hover { background-color: #03cb85; }")
+            btn_save.clicked.connect(lambda: self.done(1))
 
-        btn_exit = QPushButton("종료")
-        btn_exit.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; padding: 6px 16px; border-radius: 6px; border: 1px solid #3d3d3d; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }")
-        btn_exit.clicked.connect(lambda: self.done(2))
+            btn_force = QPushButton("종료")
+            btn_force.setStyleSheet("QPushButton { background-color: #3a3a3a; color: #e3e3e3; border: 1px solid #4d4d4d; } QPushButton:hover { background-color: #4a4a4a; }")
+            btn_force.clicked.connect(lambda: self.done(2))
 
-        btn_cancel = QPushButton("취소")
-        btn_cancel.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; padding: 6px 16px; border-radius: 6px; border: 1px solid #3d3d3d; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }")
-        btn_cancel.clicked.connect(lambda: self.done(0))
+            btn_cancel = QPushButton("취소")
+            btn_cancel.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d; }")
+            btn_cancel.clicked.connect(lambda: self.done(0))
 
-        btn_layout.addWidget(btn_save_exit)
-        btn_layout.addWidget(btn_exit)
-        btn_layout.addWidget(btn_cancel)
-        layout.addLayout(btn_layout)
+            btn_box.addWidget(btn_save)
+            btn_box.addWidget(btn_force)
+            btn_box.addWidget(btn_cancel)
+        else:
+            btn_exit = QPushButton("종료")
+            btn_exit.setStyleSheet("QPushButton { background-color: #c62828; color: white; border: none; font-weight: bold; } QPushButton:hover { background-color: #e53935; }")
+            btn_exit.clicked.connect(lambda: self.done(1))
+
+            btn_cancel = QPushButton("취소")
+            btn_cancel.setStyleSheet("QPushButton { background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d; }")
+            btn_cancel.clicked.connect(lambda: self.done(0))
+
+            btn_box.addWidget(btn_exit)
+            btn_box.addWidget(btn_cancel)
+
+        vbox.addLayout(btn_box)
 
 
 class CookieSelectDialog(QDialog):
