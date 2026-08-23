@@ -1,9 +1,10 @@
-# 메인 윈도우 및 앱 실행 진입점
+# main.py - 메인 윈도우 및 앱 실행 진입점
 
 import sys
 import os
 import json
 import platform
+import re
 
 from PyQt6.QtCore import qInstallMessageHandler
 def qt_message_handler(mode, context, message):
@@ -162,10 +163,9 @@ class MainWindow(QMainWindow):
                         self.cfg.update(loaded)
             except Exception: pass
 
-        self.dl_state = {"running": False, "paused": False, "canceled": False, "skip": False}
+        self.dl_state = {"running": False, "canceled": False, "skip": False, "force_discard": False}
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
         
-        # 스레드 참조 변수 선언 (가비지 컬렉션 방지)
         self.worker_analyze = None
         self.worker_dl = None
         self.settings_dlg = None
@@ -197,24 +197,15 @@ class MainWindow(QMainWindow):
 
         result = dlg.exec()
         
-        # 1: [저장&종료] (또는 일반 종료) -> 라이브인 경우 MP4 리먹싱 저장 실행!
+        # [종료] 클릭 시 -> 스레드 중단 시그널 발송 후 즉시 종료
         if result == 1:
             if hasattr(self, 'settings_dlg') and self.settings_dlg: self.settings_dlg.close()
             if self.worker_dl and self.worker_dl.isRunning():
                 self.dl_state["canceled"] = True
-                self.worker_dl.wait(3000) # 리먹싱 완료까지 대기
-            event.accept()
-
-        # 2: [종료] (강제 버리기 후 종료) -> 라이브 녹화본도 삭제 후 강제 종료!
-        elif result == 2:
-            if hasattr(self, 'settings_dlg') and self.settings_dlg: self.settings_dlg.close()
-            if self.worker_dl and self.worker_dl.isRunning():
-                self.dl_state["force_discard"] = True # 강제 삭제 플래그 전달
-                self.dl_state["canceled"] = True
                 self.worker_dl.wait(1000)
             event.accept()
 
-        # 0: [취소]
+        # [취소] 클릭 시 -> 창 닫기 취소
         else:
             event.ignore()
 
@@ -338,10 +329,27 @@ class MainWindow(QMainWindow):
         log_lay = QHBoxLayout()
         c_lay = QVBoxLayout()
         c_lay.addWidget(QLabel("간결 로그 (진행 상태)"))
+        
         self.te_concise = QTextEdit()
         self.te_concise.setReadOnly(True)
-        self.te_concise.setStyleSheet("color: #4caf50; font-size: 12px;")
-        self.te_concise.append(f"[{APP_NAME} {APP_VERSION}] 준비 완료.")
+        self.te_concise.setStyleSheet("""
+            QTextEdit {
+                background-color: #0d0d0d;
+                color: #4caf50;
+                border: 1px solid #2d2d2d;
+                border-radius: 6px;
+                font-family: 'Consolas', monospace;
+                font-size: 12px;
+                padding: 10px 10px 35px 10px; /* CLI 터미널 감성 하단 35px 여백 */
+            }
+        """)
+        
+        # [핵심] Document 객체 자체에 하단 마진을 부여하여 항상 바닥 여백 유지
+        doc = self.te_concise.document()
+        doc.setDocumentMargin(8) # 기본 마진
+
+        self.te_concise.document().setDocumentMargin(8)
+        self.te_concise.setHtml(f'<span style="color: #4caf50;">[{APP_NAME} {APP_VERSION}] 준비 완료.</span><br>')
         c_lay.addWidget(self.te_concise)
         
         f_lay = QVBoxLayout()
@@ -396,7 +404,6 @@ class MainWindow(QMainWindow):
         if not url: return
         self.btn_download.setText("분석 중...")
         
-        # 이전 스레드 정리
         if self.worker_analyze and self.worker_analyze.isRunning():
             self.worker_analyze.terminate()
             self.worker_analyze.wait()
@@ -461,31 +468,47 @@ class MainWindow(QMainWindow):
         self.cb_audio.setEnabled(not self.dl_state["running"])
         self.update_meta_badge()
 
-    def append_concise_log(self, msg, is_status, is_error):
+    def append_concise_log(self, msg, is_status=False, is_error=False):
+        """단일 QTextEdit 내부에서 진행 상태([다운로드 중], [라이브 녹화 중]) 한 줄 덮어쓰기 연출"""
+        doc = self.te_concise.document()
         cursor = self.te_concise.textCursor()
-        if is_status:
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            # [핵심] <br>로 인해 커서가 맨 밑 빈 줄에 있을 경우, '이전 블록(전 줄)'을 선택하도록 보정
-            cursor.movePosition(QTextCursor.MoveOperation.PreviousBlock, QTextCursor.MoveMode.KeepAnchor)
-            txt = cursor.selectedText().strip()
-
-            if txt.startswith("[다운로드 중]") or txt.startswith("[라이브 녹화 중]"):
-                cursor.removeSelectedText()
-                cursor.deletePreviousChar()
         
+        # 1. is_status가 True일 경우 실시간 진행 상태 라인을 추적하여 깔끔히 지움
+        if is_status and not doc.isEmpty():
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            
+            # 맨 마지막 블록이 개행 빈 줄일 경우 이전 텍스트 블록으로 이동
+            block = doc.lastBlock()
+            if not block.text().strip() and block.previous().isValid():
+                block = block.previous()
+            
+            txt = block.text().strip()
+            
+            # 직전 라인이 진행 상태 문구라면 해당 블록 선택 삭제
+            if txt.startswith("[다운로드 중]") or txt.startswith("[라이브 녹화 중]"):
+                cursor.setPosition(block.position())
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+                if not cursor.atStart():
+                    cursor.deletePreviousChar() # 개행 문자 제거
+
+        # 2. 커서를 문단 맨 끝으로 이동 후 새 로그 출력
         self.te_concise.moveCursor(QTextCursor.MoveOperation.End)
         color = "#ff5252" if is_error else ("#64b5f6" if is_status else "#4caf50")
         self.te_concise.insertHtml(f'<span style="color: {color};">{msg}</span><br>')
+        
+        # 3. 자동 스크롤 및 CLI 하단 여백 유지
         self.te_concise.moveCursor(QTextCursor.MoveOperation.End)
+        sb = self.te_concise.verticalScrollBar()
+        sb.setValue(sb.maximum())
 
     def append_full_log(self, msg):
         self.te_full.append(msg)
 
     def on_progress_update(self, val, msg):
-        # [핵심] val이 음수(-1.0)일 경우 라이브 전용 좌우 왕복 애니메이션 모드(setRange(0, 0)) 발동!
         if val < 0:
             if self.progress_bar.maximum() != 0:
-                self.progress_bar.setRange(0, 100)
+                self.progress_bar.setRange(0, 0)
         else:
             if self.progress_bar.maximum() == 0:
                 self.progress_bar.setRange(0, 100)
@@ -496,7 +519,6 @@ class MainWindow(QMainWindow):
 
     def toggle_download(self):
         """다운로드 시작"""
-        # A. 일시중지 상태에서 '이어받기' 클릭 시 -> 다운로드 재개
         if not self.dl_state["running"]:
             raw_target = self.le_url.text().strip()
             targets = []
@@ -511,16 +533,27 @@ class MainWindow(QMainWindow):
             else:
                 for l in raw_target.splitlines():
                     t = l.strip()
-                    if t: targets.append("https://" + t if t.startswith("www.") else t)
+                    if t: 
+                        targets.append("https://" + t if t.startswith("www.") else t)
+
+            # [핵심 수정] watch?v= 단일 영상 주소 뒤에 붙은 &list=, &index= 등의 플레이리스트 파라미터 강제 제거!
+            cleaned_targets = []
+            for u in targets:
+                if "watch?v=" in u and "&list=" in u:
+                    u = re.sub(r'&list=[^&]+', '', u)
+                    u = re.sub(r'&index=[^&]+', '', u)
+                    u = re.sub(r'&start_radio=[^&]+', '', u)
+                cleaned_targets.append(u)
+            targets = cleaned_targets
 
             if self.cfg.get("remove_duplicates"): targets = list(dict.fromkeys(targets))
             if not targets: return
 
-            self.dl_state.update({"running": True, "canceled": False, "skip": False})
+            self.dl_state.update({"running": True, "canceled": False, "skip": False, "force_discard": False})
             self.btn_download.setText("다운로드 중")
             self.btn_download.setEnabled(False)
-            self.btn_stop.setEnabled(True)   # [작업종료] 활성화
-            self.btn_skip.setEnabled(True)   # [건너뛰기] 활성화
+            self.btn_stop.setEnabled(True)
+            self.btn_skip.setEnabled(True)
             
             # 입력폼 잠금
             self.le_url.setEnabled(False)
@@ -542,84 +575,48 @@ class MainWindow(QMainWindow):
             self.worker_dl.start()
 
     def stop_download(self):
-        """'작업종료' 버튼 클릭 시 비동기 즉시 취소"""
+        """작업종료 버튼 클릭 시 비동기 즉시 취소"""
         if self.dl_state["running"]:
             self.dl_state["canceled"] = True
             self.btn_stop.setEnabled(False)
             self.btn_skip.setEnabled(False)
             self.append_concise_log("[!] 다운로드 중단 및 작업 종료 요청 중...", False, True)
 
-    def on_download_finished(self, success):
-        """작업 완료/중단 후 새 작업 환경으로 리셋"""
-        self.dl_state.update({"running": False, "canceled": False, "skip": False})
-        
-        self.btn_download.setText("다운로드 시작")
-        self.btn_download.setEnabled(bool(self.le_url.text().strip()))
-        self.btn_stop.setEnabled(False)
-        self.btn_skip.setEnabled(False)
-        
-        self.le_url.setEnabled(True)
-        self.btn_txt.setEnabled(True)
-        self.btn_change.setEnabled(True)
-        self.update_ui_state()
-        
-        self.lbl_status.hide()
-        self.progress_bar.hide()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-
-    def toggle_pause(self):
-        """'일시중지' 및 '작업종료' 토글 핸들러"""
-        if not self.dl_state["running"]: return
-
-        # 1. 진행 중일 때 '일시중지' 클릭 -> 상태 멈춤 & 버튼을 [작업종료] (빨간색)로 변경
-        if not self.dl_state["paused"]:
-            self.dl_state["paused"] = True
-            self.btn_pause.setText("작업종료")  # 텍스트 잘림 없는 깔끔한 라벨!
-            self.btn_pause.setStyleSheet("QPushButton { background-color: #c62828; color: white; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; }")
-            
-            # 초록색 버튼을 '이어받기'로 재활성화
-            self.btn_download.setText("이어받기")
-            self.btn_download.setEnabled(True)
-            self.append_concise_log("[!] 다운로드 일시 중지됨. ('이어받기' 또는 '작업종료' 선택 가능)", True, False)
-
-        # 2. 일시중지 상태에서 [작업종료] 클릭 -> 작업 강제 중단 시그널 발송
-        else:
-            self.dl_state["canceled"] = True
-            self.dl_state["paused"] = False
-            self.btn_pause.setEnabled(False)
-            self.btn_download.setEnabled(False)
-            self.append_concise_log("[!] 작업 종료 요청을 전달했습니다...", False, True)
-
     def skip_current(self):
-        """건너뛰기 버튼 클릭 핸들러 (btn_pause 참조 완전 제거)"""
+        """현재 항목 건너뛰기"""
         if self.dl_state["running"]:
             self.dl_state["skip"] = True
             self.append_concise_log("[!] 현재 항목 건너뛰기를 요청했습니다...", False, False)
 
     def on_download_finished(self, success):
         """작업 완료/중단 후 UI 상태 완벽 초기화"""
-        self.dl_state.update({"running": False, "canceled": False, "skip": False})
+        self.dl_state.update({"running": False, "canceled": False, "skip": False, "force_discard": False})
         
-        # 버튼 상태 원복 (self.btn_pause 참조 제거 및 btn_stop 처리)
+        # 1. 다운로드 성공 시에만 입력창 및 메타데이터 자동 청소
+        if success:
+            self.le_url.clear()
+            self.extracted_data = {"info": None, "v_list": [], "a_list": []}
+            self.update_stream_dropdowns()
+        
+        # 2. 버튼 상태 원복
         self.btn_download.setText("다운로드 시작")
         self.btn_download.setEnabled(bool(self.le_url.text().strip()))
         self.btn_stop.setEnabled(False)
         self.btn_skip.setEnabled(False)
         
-        # 입력폼 및 위젯 잠금 해제
+        # 3. 입력폼 잠금 해제
         self.le_url.setEnabled(True)
         self.btn_txt.setEnabled(True)
         self.btn_change.setEnabled(True)
         self.update_ui_state()
         
-        # 프로그레스바 및 상태 라벨 초기화
+        # 4. 진행바 상태 리셋
         self.lbl_status.hide()
         self.progress_bar.hide()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
 
-        # 후속 작업 처리 (사운드 / 폴더 열기 / 전원 제어)
+        # 5. 후속 시스템 동작 실행
         if success:
             if self.cfg.get("play_sound") and winsound:
                 try: winsound.MessageBeep(winsound.MB_ICONASTERISK)
@@ -645,7 +642,6 @@ if __name__ == "__main__":
         myappid = 'chzzktube.subapp.v2'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
-    # 1. QApplication 인스턴스를 최우선 생성
     app.setStyle("Fusion")
     if os.path.exists(ICON_PATH):
         from PyQt6.QtGui import QIcon

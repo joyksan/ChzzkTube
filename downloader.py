@@ -80,14 +80,26 @@ def remux_stream(ts_path, output_path, thumb_path=None):
         except Exception: pass
 
 class YtLoggerBridge:
-    def __init__(self, log_full_signal):
+    def __init__(self, log_full_signal, log_concise_signal=None):
         self.log_full_signal = log_full_signal
+        self.log_concise_signal = log_concise_signal
+
     def debug(self, msg):
-        if msg.strip(): self.log_full_signal.emit(clean_ansi(msg))
+        clean_msg = clean_ansi(msg)
+        if clean_msg.strip(): 
+            self.log_full_signal.emit(clean_msg)
+            # [핵심] yt-dlp가 출력하는 이미 다운로드됨 안내 문구 감지!
+            if "has already been downloaded" in clean_msg and self.log_concise_signal:
+                # 파일명만 깔끔하게 추출해서 간결 로그에 출판
+                fname = clean_msg.replace("[download]", "").replace("has already been downloaded", "").strip()
+                self.log_concise_signal.emit(f"[!] 건너뜀: 이미 존재하는 파일입니다. ({os.path.basename(fname)})", False, True)
+
     def info(self, msg):
-        if msg.strip(): self.log_full_signal.emit(clean_ansi(msg))
+        self.debug(msg)
+        
     def warning(self, msg):
         if msg.strip(): self.log_full_signal.emit(f"[WARNING] {clean_ansi(msg)}")
+        
     def error(self, msg):
         if msg.strip(): self.log_full_signal.emit(f"[ERROR] {clean_ansi(msg)}")
 
@@ -179,7 +191,8 @@ class DownloadWorker(QThread):
         self.v_sel = v_sel
         self.a_sel = a_sel
         self.current_file = None
-        self.logger = YtLoggerBridge(self.log_full)
+        # [수정] log_concise 시그널도 함께 전달하여 중복 안내 메세지를 간결 로그로 전송!
+        self.logger = YtLoggerBridge(self.log_full, self.log_concise)
 
     def log_success_info(self, file_path):
         """다운로드 성공/완료 시 트리 형태 저장 메타정보 출력"""
@@ -221,12 +234,12 @@ class DownloadWorker(QThread):
             self.log_concise.emit("[+] 다운로드 완료, 후처리 진행 중...", False, False)
 
     def run(self):
-        # [보강] 재생목록(list=)뿐만 아니라 유튜브 채널(/@, /channel/) URL까지 고속 순차 언롤링
         expanded_targets = []
         for u in self.targets:
-            is_multi_source = any(k in u for k in ["list=", "playlist", "/@", "/channel/", "/c/", "/user/"])
+            is_playlist_only = ("playlist?list=" in u) or (("list=" in u) and ("watch?v=" not in u))
+            is_channel_only = any(k in u for k in ["/@", "/channel/", "/c/", "/user/"])
             
-            if is_multi_source and not ("chzzk.naver.com" in u):
+            if (is_playlist_only or is_channel_only) and not ("chzzk.naver.com" in u):
                 self.log_concise.emit(f"[+] 재생목록/채널 감지: 항목 목록 고속 파싱 중...", False, False)
                 try:
                     ydl_flat_opts = {
@@ -261,7 +274,7 @@ class DownloadWorker(QThread):
                 self.status_update.emit(idx - 1, total, url)
 
                 try:
-                    # 1. 치지직 클립 (API 커스텀)
+                    # 1. 치지직 클립 파싱 (API 커스텀)
                     if re.search(r'chzzk\.naver\.com/clips?/', url):
                         max_res = self.cfg.get("max_video_res", "none")
                         ch_info = analyze_chzzk_clip_api(url)
@@ -505,8 +518,10 @@ class DownloadWorker(QThread):
                     
                     ex_msg = str(item_ex).lower()
                     failed_targets.append(url)
-                    if "cookie" in ex_msg or "dpapi" in ex_msg or "encryption" in ex_msg or "locked" in ex_msg:
-                        self.log_concise.emit(f"[X] 쿠키 접근 실패 (브라우저 보안 제한): 쿠키 불러오기에서 'Cookies.txt' 방식을 사용해주세요.", False, True)
+                    if "permission" in ex_msg or "winerror 32" in ex_msg or "already exists" in ex_msg:
+                        self.log_concise.emit(f"[X] 파일 접근 오류: 동일한 파일이 이미 존재하거나 사용 중입니다.", False, True)
+                    elif "cookie" in ex_msg or "dpapi" in ex_msg or "encryption" in ex_msg or "locked" in ex_msg:
+                        self.log_concise.emit(f"[X] 쿠키 접근 실패 (브라우저 보안 제한): Cookies.txt 방식을 사용해주세요.", False, True)
                     else:
                         self.log_concise.emit(f"[X] 오류 발생: {str(item_ex)}", False, True)
 
