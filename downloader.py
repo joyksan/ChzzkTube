@@ -4,7 +4,7 @@ import os
 import time
 from PyQt6.QtCore import QThread, pyqtSignal
 import yt_dlp
-from utils import clean_ansi, get_filename_template, get_video_codec_rank, get_audio_codec_rank, analyze_chzzk_clip_api
+from utils import clean_ansi, get_filename_template, get_video_codec_rank, get_audio_codec_rank, analyze_chzzk_clip_api, parse_sec[cite: 3, 6]
 
 def map_res(res, height):
     h = int(height or 0)
@@ -182,7 +182,7 @@ class DownloadWorker(QThread):
                         if self.cfg.get("use_cut"):
                             s_time = self.cfg.get("cut_start", "00:00:00")
                             e_time = self.cfg.get("cut_end", "inf")
-                            ydl_opts['download_ranges'] = yt_dlp.utils.download_range_func(None, [(yt_dlp.utils.parse_sec(s_time), yt_dlp.utils.parse_sec(e_time))])
+                            ydl_opts['download_ranges'] = yt_dlp.utils.download_range_func(None, [(parse_sec(s_time), parse_sec(e_time))])
                             ydl_opts['force_keyframes_at_cuts'] = True
 
                         max_res = self.cfg.get("max_video_res", "none")

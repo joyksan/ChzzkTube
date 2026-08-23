@@ -36,7 +36,7 @@ except ImportError:
     winsound = None
 
 APP_NAME = "ChzzkTube"
-APP_VERSION = "v2.0.1 (PyQt6)"
+APP_VERSION = "v3.0.0 (PyQt6안정화버전)"
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = sys._MEIPASS

@@ -182,3 +182,19 @@ def _open_windows_explorer(path):
         subprocess.Popen(["open", path])
     else:
         subprocess.Popen(["xdg-open", path])
+
+def parse_sec(time_str):
+    """시간 문자열(HH:MM:SS, MM:SS, SS)을 초(초 단위 float)로 변환"""
+    if not time_str or str(time_str).strip().lower() == "inf":
+        return float("inf")
+    try:
+        parts = [float(p) for p in str(time_str).strip().split(":")]
+        if len(parts) == 3:
+            return parts[0] * 3600 + parts[1] * 60 + parts[2]
+        elif len(parts) == 2:
+            return parts[0] * 60 + parts[1]
+        elif len(parts) == 1:
+            return parts[0]
+    except (ValueError, TypeError):
+        pass
+    return 0.0
