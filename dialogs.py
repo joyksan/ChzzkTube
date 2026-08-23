@@ -5,7 +5,7 @@ import json
 import platform
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QFileDialog, QMessageBox, QCheckBox, QLineEdit, QFrame
+    QFileDialog, QMessageBox, QCheckBox, QLineEdit, QFrame, QTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer
 from ui_components import CustomComboBox
@@ -183,6 +183,50 @@ class ActionCountdownDialog(QDialog):
         self.reject()
 
 
+class CookieViewerDialog(QDialog):
+    def __init__(self, title_text, content_text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title_text)
+        self.setFixedSize(650, 500)
+        self.setStyleSheet("background-color: #1e1e1e; color: #ffffff; font-family: 'Segoe UI', sans-serif;")
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+
+        self.te_content = QTextEdit(self)
+        self.te_content.setReadOnly(True)
+        self.te_content.setPlainText(content_text)
+        self.te_content.setStyleSheet("""
+            QTextEdit {
+                background-color: #121212;
+                color: #d4d4d4;
+                border: 1px solid #444;
+                border-radius: 6px;
+                font-family: 'Consolas', monospace;
+                font-size: 11px;
+                padding: 8px;
+            }
+        """)
+        layout.addWidget(self.te_content)
+
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        
+        btn_close = QPushButton("닫기")
+        btn_close.setFixedWidth(90)
+        btn_close.setStyleSheet("""
+            QPushButton {
+                background-color: #333; color: #ddd; border: 1px solid #444;
+                border-radius: 4px; padding: 6px 16px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #444; }
+        """)
+        btn_close.clicked.connect(self.accept)
+        btn_layout.addWidget(btn_close)
+        layout.addLayout(btn_layout)
+
+
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, is_running=False):
         super().__init__(parent)
@@ -211,7 +255,7 @@ class SettingsDialog(QDialog):
             cb = CustomComboBox()
             cb.setFixedWidth(width)
             cb.setEnabled(not self.is_running)
-            cb.setStyleSheet("QComboBox { background-color: #1e1e1e; border: 1px solid #444; border-radius: 4px; padding: 0px 6px; font-size: 11px; min-height: 24px; max-height: 24px; } QComboBox:disabled { background-color: #161616; color: #555; border-color: #333; } QComboBox QAbstractItemView { background-color: #1e1e1e; color: #ffffff; selection-background-color: #1976d2; border: 1px solid #444; }")
+            cb.setStyleSheet("QComboBox { background-color: #1e1e1e; border: 1px solid #444; border-radius: 4px; padding: 0px 6px; font-size: 11px; min-height: 24px; max-height: 24px; } QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border: none; background: transparent; } QComboBox::down-arrow { image: none; } QComboBox:disabled { background-color: #161616; color: #555; border-color: #333; } QComboBox QAbstractItemView { background-color: #1e1e1e; color: #ffffff; selection-background-color: #1976d2; border: 1px solid #444; border-radius: 8px; padding: 4px; outline: 0px; }")
             for k, v in options: cb.addItem(v, k)
             return cb
 
@@ -401,6 +445,48 @@ class SettingsDialog(QDialog):
         preview_str = f"미리보기  :  {p_text}동영상제목{s_text}.{ext}"
         self.lbl_filename_preview.setText(preview_str)
 
+    def view_cookie(self):
+        cookie_src = self.cfg.get("browser_cookie", "none")
+        content = "로드된 쿠키가 없습니다."
+        if cookie_src == "cookie_file" and os.path.exists(self.cfg.get("cookie_file_path", "")):
+            try:
+                with open(self.cfg["cookie_file_path"], 'r', encoding='utf-8') as f:
+                    content = f.read(5000) + ("\n... (생략)" if os.path.getsize(self.cfg["cookie_file_path"]) > 5000 else "")
+            except Exception as ex: content = f"파일 읽기 오류: {ex}"
+        elif cookie_src not in ["none", "auto"]:
+            try:
+                from utils import get_browser_cookies
+                cookie_data = get_browser_cookies()
+                if cookie_data:
+                    lines = []
+                    for host, kv_dict in cookie_data.items():
+                        lines.append(f"[{host}]")
+                        for k, v in kv_dict.items():
+                            lines.append(f"  {k} = {v}")
+                        lines.append("")
+                    content = f"[{cookie_src}] 브라우저 추출 전체 쿠키 목록:\n\n" + "\n".join(lines)
+                else:
+                    content = f"[{cookie_src}] 브라우저에서 쿠키를 가져오지 못했습니다. (브라우저 실행 중 또는 권한 문제)"
+            except Exception as ex:
+                content = f"쿠키 조회 중 오류 발생: {ex}"
+        
+        viewer = CookieViewerDialog("쿠키 뷰어 (상세)", content, self)
+        viewer.exec()
+
+    def load_cookie(self):
+        dlg = CookieSelectDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.cfg["browser_cookie"] = dlg.selected_type
+            self.cfg["cookie_file_path"] = dlg.selected_path
+            self.parent_win.save_cfg()
+            QMessageBox.information(self, "성공", f"쿠키 설정이 완료되었습니다. ({dlg.selected_type})")
+
+    def reset_cookie(self):
+        self.cfg["browser_cookie"] = "none"
+        self.cfg["cookie_file_path"] = ""
+        self.parent_win.save_cfg()
+        QMessageBox.information(self, "초기화", "쿠키가 초기화되었습니다.")
+
     def accept_settings(self):
         if not self.is_running:
             self.saved = True
@@ -422,38 +508,3 @@ class SettingsDialog(QDialog):
             self.parent_win.save_cfg()
             self.parent_win.update_ui_state()
         self.accept()
-
-    def view_cookie(self):
-        cookie_src = self.cfg.get("browser_cookie", "none")
-        content = "로드된 쿠키가 없습니다."
-        if cookie_src == "cookie_file" and os.path.exists(self.cfg.get("cookie_file_path", "")):
-            try:
-                with open(self.cfg["cookie_file_path"], 'r', encoding='utf-8') as f:
-                    content = f.read(2000) + ("\n... (생략)" if os.path.getsize(self.cfg["cookie_file_path"]) > 2000 else "")
-            except Exception as ex: content = f"파일 읽기 오류: {ex}"
-        elif cookie_src not in ["none", "auto"]:
-            try:
-                from utils import get_browser_cookies
-                cookie_dict = get_browser_cookies()
-                if cookie_dict:
-                    lines = [f"{k} = {v}" for k, v in cookie_dict.items()]
-                    content = f"[{cookie_src}] 브라우저 추출 쿠키 목록:\n\n" + "\n".join(lines)
-                else:
-                    content = f"[{cookie_src}] 브라우저에서 쿠키를 가져오지 못했습니다. (브라우저 실행 중 또는 권한 문제)"
-            except Exception as ex:
-                content = f"쿠키 조회 중 오류 발생: {ex}"
-        QMessageBox.information(self, "쿠키 뷰어", content)
-
-    def load_cookie(self):
-        dlg = CookieSelectDialog(self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self.cfg["browser_cookie"] = dlg.selected_type
-            self.cfg["cookie_file_path"] = dlg.selected_path
-            self.parent_win.save_cfg()
-            QMessageBox.information(self, "성공", f"쿠키 설정이 완료되었습니다. ({dlg.selected_type})")
-
-    def reset_cookie(self):
-        self.cfg["browser_cookie"] = "none"
-        self.cfg["cookie_file_path"] = ""
-        self.parent_win.save_cfg()
-        QMessageBox.information(self, "초기화", "쿠키가 초기화되었습니다.")

@@ -8,6 +8,7 @@ import sqlite3
 import shutil
 import tempfile
 import platform
+import subprocess
 import datetime
 
 ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')

@@ -18,7 +18,7 @@ from dialogs import ExitConfirmDialog, ActionCountdownDialog, SettingsDialog
 from downloader import AnalyzeWorker, DownloadWorker
 
 APP_NAME = "ChzzkTube"
-APP_VERSION = "v2.0.0 (PyQt6)"
+APP_VERSION = "v2.0.1 (PyQt6)"
 
 if getattr(sys, 'frozen', False):
     BASE_DIR = sys._MEIPASS
@@ -72,6 +72,9 @@ class MainWindow(QMainWindow):
             QLineEdit { background-color: #1e1e1e; border: 1px solid #444; border-radius: 5px; padding: 8px; font-size: 13px; }
             QTextEdit { background-color: #000; border: 1px solid #333; border-radius: 5px; font-family: 'Consolas', monospace; padding: 5px; }
             QComboBox { background-color: #1e1e1e; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; min-height: 24px; max-height: 24px; }
+            QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 24px; border: none; background: transparent; }
+            QComboBox::down-arrow { image: none; }
+            QComboBox QAbstractItemView { background-color: #1e1e1e; color: #ffffff; selection-background-color: #1976d2; border: 1px solid #444; border-radius: 8px; padding: 4px; outline: 0px; }
             QProgressBar { text-align: center; border: 1px solid #444; border-radius: 4px; background-color: #111; height: 10px; }
             QProgressBar::chunk { background-color: #1976d2; border-radius: 3px; }
         """)
@@ -100,7 +103,6 @@ class MainWindow(QMainWindow):
         
         parent_dlg = self.settings_dlg if (hasattr(self, 'settings_dlg') and self.settings_dlg and self.settings_dlg.isVisible()) else self
         dlg = ExitConfirmDialog(parent_dlg)
-        dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         if platform.system() == "Windows":
             try:
