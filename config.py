@@ -22,7 +22,7 @@ def resolve_dirs():
 
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.0.2"
+_APP_VERSION = "v3.1.0"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
