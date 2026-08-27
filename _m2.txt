@@ -1,0 +1,17 @@
+﻿[갱신] main.py -> main.md (41637 bytes)
+[갱신] downloader.py -> downloader.md (66566 bytes)
+[동일] dialogs.md 최신 상태
+[동일] utils.md 최신 상태
+[동일] ui_components.md 최신 상태
+[동일] bump_version.md 최신 상태
+[동일] config.md 최신 상태
+[갱신] media.py -> media.md (10083 bytes)
+[동일] cookies.md 최신 상태
+[동일] chzzk_api.md 최신 상태
+[동일] theme.md 최신 상태
+[동일] log_console.md 최신 상태
+[동일] controller.md 최신 상태
+[갱신] updater.py -> updater.md (3366 bytes)
+[갱신] pot_provider.py -> pot_provider.md (3981 bytes)
+----------------------------------------
+총 15개 중 변경 5개 / 누락 0개

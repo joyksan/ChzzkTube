@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['dl.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[('icon.ico', '.')],
