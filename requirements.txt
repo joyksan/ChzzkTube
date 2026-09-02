@@ -1,0 +1,11 @@
+# ChzzkTube v3.0.2 실행 환경 (Python 3.12.14 / Windows)
+# 설치: pip install -r requirements.txt  (macOS 개발검증은 .venv 사용, .python-version 참조)
+# 주의: FFmpeg는 pip 패키지가 아니므로 별도 설치 필요 (media.py 리먹싱에서 사용)
+PyQt6==6.11.0
+PyQt6-Fluent-Widgets==1.11.3
+yt-dlp==2026.8.19
+streamlink==8.5.0
+# 유튜브 PO Token 플러그인 (yt_dlp_plugins 네임스페이스로 설치됨)
+# 서버 실행에는 별도로 Node.js(>=22) 또는 Docker 필요 → pot_provider.py 가 자동 구성
+bgutil-ytdlp-pot-provider==1.3.2
+    

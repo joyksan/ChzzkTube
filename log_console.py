@@ -39,7 +39,7 @@ class ConciseLogConsole:
             self._budget_key = key
             update_tree_budget(self.te)
 
-    def append(self, msg, is_status=False, is_error=False):
+    def append(self, msg, is_status=False, is_error=False, fg_color=None):
         """빈 줄 생성 차단 및 정밀 문단 삭제 파이프라인."""
         self._sync_budget()  # 현재 뷰포트/폰트 기준 예산 보장 — 자동랩 침범 방지
         doc = self.te.document()
@@ -85,12 +85,18 @@ class ConciseLogConsole:
                 if idx > 0 or f_idx > 0:
                     cursor.insertBlock()
                 inserted += 1
-                # 색 위계 — 한 줄을 (텍스트, 색) 세그먼트로 나눠 삽입
-                for seg, color in _line_segments(line, is_error, is_status):
+                # 색 위계 — fg_color가 지정되면 우선 사용, 아니면 자동 색상
+                if fg_color is not None:
                     fmt = QTextCharFormat()
                     fmt.setFont(self.te.font())
-                    fmt.setForeground(QColor(color))
-                    cursor.insertText(seg, fmt)
+                    fmt.setForeground(QColor(fg_color))
+                    cursor.insertText(line, fmt)
+                else:
+                    for seg, color in _line_segments(line, is_error, is_status):
+                        fmt = QTextCharFormat()
+                        fmt.setFont(self.te.font())
+                        fmt.setForeground(QColor(color))
+                        cursor.insertText(seg, fmt)
 
         # 4. 상태 플래그 및 블록 수 기록 — wrap 포함 실제 삽입 블록 수
         self.last_log_was_status = is_status
