@@ -20,6 +20,7 @@ dl_config.json
 logs/
 
 #사용자파일
+.clinerules
 versions/
 build/
 dist/
