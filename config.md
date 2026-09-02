@@ -1,14 +1,6 @@
-# config.py - 설정 관리 (기존값, 경로 계산, 로드/저장)
-"""
-main.py 및 SettingsDialog가 공유하는 설정 모듈.
-경로 계산(frozen/개발), 기본값, 파일 로드/저장을 담당한다.
-기능은 기존 main.py 로직을 그대로 이관한 것.
-"""
-
 import json
 import os
 import sys
-
 
 def resolve_dirs():
     """실행 모드에 따라 소스/설정 Base 경로를 결정. (frozen 여부 기반)"""
@@ -20,14 +12,22 @@ def resolve_dirs():
         config_dir = base_dir
     return base_dir, config_dir
 
+def writable_base():
+    """쓰기 보장 런타임 캐시 루트 — node/PO 서버/플러그인/ffmpeg 등
+    실행 시 수급하는 구성요소의 단일 경로 출처 (pot_provider·components 공용).
+    """
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    if local_appdata:
+        return os.path.join(local_appdata, "ChzzkTube")
+    return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.0.2"
+_APP_VERSION = "v3.1.0"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
 ICON_PATH = os.path.join(BASE_DIR, "icon.ico")
-
+LOG_DIR = os.path.join(CONFIG_DIR, "logs")
 
 def default_config():
     """기본 설정 딕셔너리 생성. (download_path 는 현재 설정 디렉토리 기준)"""
@@ -49,7 +49,6 @@ def default_config():
         "yt_player_client": "auto",
     }
 
-
 def load_config():
     """기본 설정에 기존 config 파일을 병합(다운로드 경로 유효 시)."""
     cfg = default_config()
@@ -64,7 +63,6 @@ def load_config():
         except Exception:
             pass
     return cfg
-
 
 def save_config(cfg):
     """현재 설정을 config 파일로 저장."""

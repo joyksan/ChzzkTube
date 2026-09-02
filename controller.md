@@ -1,20 +1,15 @@
-# controller.py - 다운로드 세션의 상태 머신 및 DownloadWorker 생명주기 관리
-
+### controller.py - 다운로드 세션의 상태 머신 및 DownloadWorker 생명주기 관리
 import os
 import re
 
 from downloader import DownloadWorker
 
-
 class DownloadController:
     """다운로드 세션의 상태(state)와 워커 생명주기를 담당하는 컨트롤러.
 
     계약:
-    - state 딕셔너리는 DownloadWorker에 **참조 그대로** 전달된다.
-      즉, 워커 스레드와 UI 스레드가 동일 객체를 공유하며
-      기존 MainWindow.dl_state와 완전히 동치이다.
-    - UI 조작(버튼/로그/진행바)은 view(MainWindow)의 메서드를 통해서만 수행한다.
-    """
+    *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유하며 기존 MainWindow.dl_state와 완전히 동치이다.
+    *  UI 조작(버튼/로그/진행바)은 view(MainWindow)의 메서드를 통해서만 수행한다. """
 
     def __init__(self, view):
         self.view = view
@@ -30,18 +25,14 @@ class DownloadController:
     def running(self):
         return self.state["running"]
 
-    # ── 순수 로직: 타겟 파싱 ──────────────────────────────────
-
+    ### ── 순수 로직: 타겟 파싱 ──────────────────────────────────
     @staticmethod
     def parse_targets(raw_text, dedup=False):
         """URL/TXT 입력을 다운로드 타겟 목록으로 파싱.
-
-        - TXT 파일 경로면 줄 단위로 읽는다 (# 주석 제외). 실패 시 ValueError.
-        - www. 로 시작하는 항목은 https:// 접두사를 보정한다.
-        - watch?v= 단일 영상 주소 뒤 &list= / &index= / &start_radio=
-          플레이리스트 파라미터를 강제 제거한다.
-        - dedup=True 이면 중복 타겟을 제거한다.
-        """
+        *  TXT 파일 경로면 줄 단위로 읽는다 (# 주석 제외). 실패 시 ValueError.
+        *  www. 로 시작하는 항목은 https:// 접두사를 보정한다.
+        *  watch?v= 단일 영상 주소 뒤 &list= / &index= / &start_radio= 플레이리스트 파라미터를 강제 제거한다.
+        *  dedup=True 이면 중복 타겟을 제거한다. """
         targets = []
         if os.path.isfile(raw_text) and raw_text.lower().endswith(".txt"):
             try:
@@ -74,8 +65,7 @@ class DownloadController:
             targets = list(dict.fromkeys(targets))
         return targets
 
-    # ── 세션 상태 머신 ────────────────────────────────────────
-
+    ### ── 세션 상태 머신 ────────────────────────────────────────
     def begin(self):
         self.state.update(
             {"running": True, "canceled": False, "skip": False, "force_discard": False}
@@ -94,8 +84,7 @@ class DownloadController:
         if self.running:
             self.state["skip"] = True
 
-    # ── 워커 생명주기 ─────────────────────────────────────────
-
+    ### ── 워커 생명주기 ─────────────────────────────────────────
     def spawn_worker(
         self,
         targets,

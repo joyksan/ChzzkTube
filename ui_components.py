@@ -1,7 +1,5 @@
-# 커스텀 위젯
-
+### 커스텀 위젯
 from qfluentwidgets import ComboBox
-
 
 class CustomComboBox(ComboBox):
     def __init__(self, parent=None):

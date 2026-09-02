@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§5 불변식**과 **§6 검증 워크플로우**를 읽을 것.
-> 마지막 갱신: 설정창 라이브 적용 전환 (변경 즉시 저장 — 취소/완료 버튼 폐지)
+> 마지막 갱신: 로그 정책 개편(간결=요약 1줄) + 분석 정체(GIL 사망)·URL 클리어 잔여 로그·드래그 선택 버그 수리
 
 ---
 
@@ -10,7 +10,7 @@
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로더 GUI 앱 (Windows 우선)
 - **버전**: `v3.0.2 (PyQt6안정화버전)` — 정의 위치 `config._APP_VERSION`
-- **스택**: Python + PyQt6 + qfluentwidgets(Dark 테마) + yt-dlp + streamlink + FFmpeg(리먹싱)
+- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PyQt6 + qfluentwidgets(Dark 테마) + yt-dlp + streamlink + FFmpeg(리먹싱)
 - **진입점**: `main.py` (`python main.py`)
 - **빌드**: PyInstaller — `ChzzkTube.spec` (entry: `main.py` ✓ 수정됨)
 - **설정 파일**: `dl_config.json` (CONFIG_DIR에 생성, UTF-8 / indent=4)
@@ -126,6 +126,8 @@ UI 프레임워크 교체 시 이 계약표만 맞추면 된다. 연결은 `cont
 ② python smoke_test.py                    # headless(Qt offscreen) 실구동 [PASS], exit 0
 ③ python sync_mirrors.py                  # 누락 0 확인
 ```
+> macOS 검증 환경: `.venv/bin/python` 사용 (Python 3.12.14, `python3 -m venv .venv` 생성,
+> 의존성 `requirements.txt` — 2026-09-02 기준 3.10 → 3.12.14 마이그레이션 완료, 스모크 PASS).
 smoke_test가 검증하는 것: 전 모듈 import, config 로드, MainWindow 실제 생성,
 DownloadWorker 시그널/메서드 계약, 간결 로그 append 반영.
 임시 스크립트(`refactor_*.py`, `_t_*.py` 등)는 작업 후 삭제하는 것이 관례.
@@ -305,7 +307,76 @@ U+2028 문자로 남는다. 문서 끝 텍스트 비교 시 `\u2028` 정규화 �
 | 유튜브 성인제한 360p 한정 | 근본 원인 확정: 쿠키 감지 시 유튜브가 'tv downgraded' 플레이어로 강제 전환해 SABR 스트리밍만 남김 → itag 18(360p) 하나로 수렴(yt-dlp 이슈 #16226, 미해결). 우회 = 쿠키 + player_client 명시. `_apply_client_opts()` 신설 + cfg `yt_player_client`(기본 auto): tv/web_safari/tv_simply/mweb 선택. Analyze·_base_info_opts·일반 VOD·라이브 전 경로 적용, 설정창 컴보 추가. 실측: 그러므로 '성인 게이트 통과 여부'가 360p의 본질 — 브라우저에서 영상 재생(세션 갱신) 후 재시도가 핵심 |
 | 검증 | `_v_new.py` 11/11 PASS(cli 단일출처 v+muxed/v-only/a-only/치지직형·SpeedWindow avg/reset·clip/vod api fn·client tv/auto·vod url regex) + `_v_vod.py` 실측 14873912 → title/date/duration/progressive 3포맷(1080p60 8190kbps, 720p60, 144p) 정상 + compile 무결 + smoke PASS + chzzk_api vocab 정리(_chzzk_headers/_get_json 공용화) |
 
-## 9. 남은 과제 (우선순위순)
+### 유튜브 PO Token(bgutil) 프로바이더 — 설계 결함 수리 + 포터블 무결 (v3.1.x)
+
+**표면 증상**: 앱 시작 시 `[!] PO Token 프로바이더 서버 기동 실패` (bgutil 백그라운드 작동 실패)
+
+**근본 원인 (설계 결함)**: `pot_provider.py`가 bgutil v1.x 구조를 오해.
+1. `plugin_installed()`가 `find_spec("bgutil_ytdlp_pot_provider")`를 검사했지만, **1.x 플러그인은 `yt_dlp_plugins/extractor/getpot_bgutil*.py` 네임스페이스로만 존재**하고 `bgutil_ytdlp_pot_provider` 파이썬 패키지는 아예 없다 → 설치돼 있어도 항상 '미설치' 오판.
+2. `_spawn_server()`가 `python -m bgutil_ytdlp_pot_provider.server`로 서버를 띄우려 했지만 **그런 모듈은 존재하지 않음**.
+3. 더 근본적으로 **bgutil HTTP 서버는 TypeScript/Node.js(또는 Docker) 전용**이다. (Dockerfile ENTRYPOINT `node build/main.js`, 빌드 산출물 `server/build/main.js`) — 파이썬 기동 불가능.
+4. `server_running()`이 TCP 프로브만 수행 → 다른 프로그램이 4416 점유 시 오판.
+
+**진단(재현) 방법**: `im.version("bgutil-ytdlp-pot-provider")`=1.3.2 설치 확인, `find_spec("bgutil_ytdlp_pot_provider")`=None, 배포 휠 내 파일 = `yt_dlp_plugins/extractor/getpot_bgutil*.py`만 존재.
+
+**해결 설계 (`pot_provider.py` 재작성)**:
+- `server_running()` → `/ping` HTTP 프로브 기반 `probe_server()` 3-state(`ok`/`conflict`/`down`) — 포트 점유 오판 제거.
+- `plugin_installed()` → 패키지 메타데이터 + `yt_dlp_plugins.extractor.getpot_bgutil` 네임스페이스 검사.
+- 기동 파이프라인 (QThread, **구성요소 업데이트/업그레이드 완료 뒤에만 `main._start_pot_provider` 호출** → 실행 순서 보장):
+  1) `probe_server()` ok → "감지됨" 종료  2) `conflict` → 포트 충돌 안내
+  3) 플러그인 부재 → 미설치 안내  4) 준비된 서버를 `node`로 기동(`_spawn_existing`)
+  5) 부재 시 원본 실행에서만 소스 zipball 다운로드 → `npm ci` → `npx tsc` 1회 빌드 → 기동
+  6) 실패 시 안내 로그만 — PO 토큰 없이 진행(기능 저하). 실측 기동 5.6초 후 `/ping 200 {"version":"1.3.2"}`.
+
+**로그 UX (기존 콘솔 패턴과 통일)**:
+- `POTProviderWorker.line` 시그널을 `(str, is_status, is_error)`로 확장. `main._start_pot_provider`가 QTimer(200ms)로 `[~] PO Token 서버 구동 중...` 상태줄 마침표 애니메이션.
+- 최종 판정은 `outcome(state, msg)` — **실제 서버 준비 성공일 때만 `[v]`**, 실패/충돌/미설치는 `[!]`. (기존의 무조건적 `[v] 준비 완료.` 박제는 폐지)
+- 완료 후 `add_concise_task_separator()`로 여백 보장.
+
+**포터블 무결 (exe 배포) — node.exe 번들까지 완결 (v3.1.x 후속)**:
+- `_is_portable()`(`sys.frozen`) 감지: 포터블에선 `%USERPROFILE%` 등 **앱 폴더 밖을 절대 쓰지 않음**. `server_home()` = 원본 실행 `%USERPROFILE%\bgutil-ytdlp-pot-provider` / 포터블 `<exe>\_internal\bgutil-ytdlp-pot-provider`(번들 서버만 사용).
+- 포터블 자동 빌드 금지(`ensure_node_server`가 frozen이면 거부) — 자동 npm은 원본 실행 전용.
+- `ChzzkTube.spec` 번들 3종 (spec 시점 스테이징):
+  1. **서버(프루닝)**: `_stage_pruned_server()` — `server/build` + `package.json` + `node_modules` 중 **런타임 deps만**(dependencies/optionalDependencies/peerDependencies 를 고정점까지 추적) 복사. `npm ci`가 설치한 devDeps(typescript 23MB/@swc 27MB/prettier/jsdom/canvas 등) 제외 → 서버 번들 165.9MB→87MB, dist 389→310MB.
+  2. **node.exe**: 시스템 node 바이너리를 `_internal\node.exe` 로 심고 `pot_provider.node_exe()` 가 최우선 사용 → **시스템 Node 미설치 포터블에서도 자동 기동 완결**. (node.exe 단독으로 서버 기동 가능 — npm/npx 불필요)
+  3. **플러그인 폴더**: `yt_dlp_plugins` 네임스페이스 폴더 전체를 `_internal` 에 심음. frozen 에서 PEP420 네임스페이스의 PYZ `find_spec` 이 실패해 **서버 스폰 전 '플러그인 미설치' 게이트에서 조기 종료하던 1차 결함** 해소. `_MEIPASS`(sys.path) 파일시스템 탐색 + yt-dlp 플러그인 로더 탐색 모두 커버.
+- `plugin_installed()` 보강: frozen 에서 PYZ 네임스페이스 탐색 실패 대비 `_internal/yt_dlp_plugins/extractor/getpot_bgutil*.py` 파일 존재 검사 추가(2차 안전망).
+- `_spawn_node_server` 포트 대기 20s→**45s**(첫 실행 시 AV가 번들 node_modules 수천 파일을 스캔해 기동이 늦어질 수 있음).
+- `dialogs._do_check`: frozen에서 bgutil-ytdlp-pot-provider 검사 스킵 — 포터블은 pip 설치 대상이 아니므로 '미설치 감지 → 자동 설치' 오표시 노이즈 제거.
+- Docker 로컬 이미지/컨테이너 있으면 자동 사용(자동 pull 없음). `requirements.txt`에 `bgutil-ytdlp-pot-provider==1.3.2`(원본 실행 의존성 명시).
+
+| 검증 | **e2e 실측(재빌드 dist)**: frozen exe 기동 → 업데이트 체크 완료 후 자동 스폰 → 번들 node.EXE 프로세스로 `/ping 200 {"server_uptime":..,"version":"1.3.2"}` → **`POST /get_pot`(v1.3.2 라우트 — 옛 문서의 `/get_pot_token`은 0.x API로 404) 200, 실제 poToken 발급 확인**. `yt_dlp_plugins/extractor` 번들 확인, dist 310.3MB, py_compile + smoke PASS |
+
+### PO 서버 Node 22 재구성 + 로그 히스토리 패스 (2026-08-31)
+
+| 항목 | 내용 |
+|------|------|
+| 근본 원인 | PO 서버 기동 실패 = bgutil 서버의 `require(esm)` 요구(Node ≥ 22) — 구버전 `ensure_node_runtime`이 Node v20.18.0을 받아 `ERR_REQUIRE_ESM` 크래시. 빌드 산출물 존재 시 `ensure_node_server`가 무조건 조기 리턴해 사유 로그도 0건 |
+| Node 22 수급 | pot_provider: `NODE_MIN_MAJOR=22`, `node_exe()`가 전 후보 버전 검사 후 미달 배제(판별 전면 실패 시 첫 후보 폴백 — 무한 재설치 방지), `latest_lts_node_url()` nodejs.org dist index 최신 v22(조회 실패 시 폴백 v22.23.2), `ensure_node_runtime` 재구성 + `_prune_outdated_node_dirs`로 구형 node-v20.* 캐시 정리 |
+| 조기 리턴 결함 | `ensure_node_server` 빌드 존재 분기에 `node_ok()` 게이트 추가 — 기존 빌드 + Node 미달/부재 케이스가 err=None으로 무음 실패하던 것 수리 |
+| 실패 원인 가시화 | `_spawn_node_server` 스폰 실패 사유(main.js 부재/node 부재/45s ping 타임아웃)를 log_full로 출력 + err 유무와 무관하게 `read_server_log_tail(6)`(bgutil_server.log) 테일 노출 |
+| ffmpeg 자동 수급 | `components.ensure_ffmpeg` 신설 — 시스템 which 우선, 없으면 BtbN GitHub latest zip → `<writable_base>/ffmpeg/bin`, `_wire_ffmpeg_path`로 세션 PATH 선두 연결(media/downloader의 bare `'ffmpeg'` subprocess 대응). POT 워커 `_run` 선두에서 호출 |
+| 로그 히스토리 | `log_history.py` 신설 — `config.LOG_DIR`/`chzzktube_YYYY-MM-DD.log`(하루 1파일 UTF-8 append, 세션 마커, 30일 자동 정리, 스레드 세이프, 실패 흡수). main: `session_begin`(MainWindow init)/`excepthook`(미처리 예외 전체 트레이스백)/`session_end`(closeEvent), `append_concise_log`에서 전건 이중 기록(상세탭 te_full + 히스토리) — 상세탭이 yt-dlp/streamlink 원본만 담던 결함 보완. POT 워커 line/log_full·UpdateWorker line도 히스토리 연결 |
+| UpdateWorker 결함 | `_start_update_check`의 확인 모드 line 시그널 미연결 — '[v] pkg 최신/미설치 감지/버전 확인 실패' 로그가 전건 증발하던 것 수리(업그레이드 모드만 연결돼 있었음) |
+| 경로 단일화 | `config.writable_base()` 신설(pot_provider 위임), `config.LOG_DIR` 추가. 미러 목록에 components/log_history 추가 |
+| 검증 | e2e 실측: Node v22.23.2 수급 → bgutil v1.3.2 스폰 → `probe_server()=('ok','')`. ffmpeg 시스템 감지 스킵 확인. py_compile 18종 ALL=0, smoke PASS, 미러 동기화 완료. 개발 런 히스토리는 `<repo>/logs/`(gitignore)에 기록 |
+
+### 로그 정책 개편(요약 1줄) + 콘솔·분석 버그 3건 수리 (2026-08-31)
+
+**로그 정책(단일 출처)**: 간결 로그 = "요약 1줄"(유저가 매 실행 봐야 할 판정만),
+상세 로그·히스토리 파일 = "전체". 구성요소별 `[v] ~최신/건너뜀` 루틴 라인은 간결 생략하고
+`[v] 구성요소 최신` 요약 1줄만 남긴다(`_on_update_check_done`, 구버전 감지 시엔
+업데이트 진행 라인이 이미 간결에 떠서 도장깨기 안 함). 설치·업데이트·오류 라인은 간결 통과.
+
+| 항목 | 내용 |
+|------|------|
+| `_component_line` 필터 | main.py의 단일 관문 — UpdateWorker.line·POTProviderWorker.line 연결을 `append_concise_log` 직행에서 이 필터 경유로 변경. 루틴 '최신/건너뜀' 라인은 `te_full`(상세)+`log_history`(히스토리)만 기록하고 간결 스킵, 그 외는 `append_concise_log` 위임 |
+| 히스토리 단일 기록점 | `append_concise_log` 내부 log_history 기록을 유일 기록점으로 통합(별도 어댑터 폐지). components.py는 각 ensure_* 내부에서 log_history 기록하므로 line 시그널의 log_history 직결은 제거 — 이중 기록 방지 |
+| URL 삭제 잔여 로그 | `clear_status_line`이 `_remove_status_blocks`를 바로 호출해 **바닥 여백 빈 블록 2개를 상태 블록으로 오인 삭제** → '분석중' 텍스트 잔존. `_strip_tail_padding` 선행으로 수리(append 경로와 전제 일치) |
+| 분석 정체(GIL 사망) | 재분석/URL 삭제 시 `QThread.terminate()`가 **GIL 보유 상태로 파이썬 스레드 강제 종료** → 죽은 스레드가 GIL을 영원히 미반환 → GUI 전체 파이썬 실행 정지("미디어 스트림 분석중"에서 다운로드 불능). `_abandon_analyze_worker()` zombie 패턴(시그널 차단 후 자연 종료·회수) + `_discard_analysis_result()`로 대체. **`from downloader import AnalyzeWorker, DownloadWorker` import 유실도 복구**(이것만으로도 분석 자체가 죽는 상태였음) |
+| 드래그 선택 보존 v2 | 2겹 결함: ①렌더러가 사용자 커서를 끌어다 써서 선택이 문서 끝까지 늘어남 → `_end_cursor()` 독립 커서 격리 ②그래도 '선택 끝 == 문서 끝' 순간 삽입 시 Qt 커서 자동조정이 선택 끝을 삽입물 뒤로 밀어냄 → append 진입 시 선택 절대 오프셋 스냅샷, finally에서 `_restore_user_selection` 복원(+과선택 클램프). `add_task_separator`·`clear_status_line` 문서 변경자에도 공통 적용 |
+| 검증 | PASS 1(드래그 중 로그 유입 시 선택 불변)·1b(문서 변경자 선택 보존)·2(URL 클리어 잔여물 0)·3(클리어 직후 재분석 수용 — 정체 부재), smoke PASS, py_compile ALL=0, 미러 17개 동기화(변경 0) |
+
 ## 9. 남은 과제 (우선순위순)
 
 1. **`.gitattributes` eol 정규화** — diff 노이즈 제거
@@ -315,6 +386,7 @@ U+2028 문자로 남는다. 문서 끝 텍스트 비교 시 `\u2028` 정규화 �
 5. 유튜브 라이브: 배치(txt) 안의 watch?v= 라이브 URL은 힌트가 없어 VOD
    경로로 감(다운로드 자체는 되지만 ffmpeg 강제 다운로더 문제가 재발).
    필요 시 다운로드 전 경량 is_live 프리체크 도입을 검토할 것.
+   (→ 구 PO Token node 번들 과제는 §8 'node.exe 번들까지 완결'로 **완료**)
 
 ## 10. 하지 말 것
 

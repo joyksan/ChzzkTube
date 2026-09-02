@@ -1,4 +1,4 @@
-### updater.py - 구성요소(yt-dlp / streamlink / bgutil) 버전 확인 및 업데이트 헬퍼
+##### updater.py - 구성요소(yt-dlp / streamlink / bgutil) 버전 확인 및 업데이트 헬퍼
 """PyPI 메타데이터로 최신 버전을 조회하고, 필요 시 pip로 업그레이드한다.
 *  버전 확인: PyPI JSON API (네트워크 가벼운 조회, pip 불필요)
 *  업그레이드: python -m pip install -U <pkg> 서브프로세스 → 반드시 워커 스레드에서 호출할 것 (수십 초 블로킹)
@@ -7,9 +7,13 @@ import importlib.metadata as im
 import json
 import subprocess
 import sys
+import socket
 import urllib.request
 
 PACKAGES = ["yt-dlp", "streamlink", "bgutil-ytdlp-pot-provider"]
+# [DNS hang 가드] urlopen timeout은 DNS resolve에 적용되지 않으므로 소켓 레벨 기본값 설정
+socket.setdefaulttimeout(2)
+
 _PYPI_API = "https://pypi.org/pypi/{pkg}/json"
 
 def installed_version(pkg):
@@ -19,13 +23,19 @@ def installed_version(pkg):
     except Exception:
         return None
 
-def latest_version(pkg, timeout=5):
-    """PyPI 최신 안정 버전 문자열. 조회 실패 시 None."""
+def latest_version(pkg, timeout=2):
+    """PyPI 최신 안정 버전 문자열. 조회 실패 시 None.
+
+    [DNS hang 방어] socket.setdefaulttimeout은 getaddrinfo에 적용 안 되므로
+    ThreadPoolExecutor + future.result로 DNS 단계까지 강제 끊는다.
+    """
+    def _fetch():
+        with urllib.request.urlopen(_PYPI_API.format(pkg=pkg), timeout=timeout) as resp:
+            return json.load(resp)
     try:
-        with urllib.request.urlopen(
-            _PYPI_API.format(pkg=pkg), timeout=timeout
-        ) as resp:
-            data = json.load(resp)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(_fetch)
+            data = fut.result(timeout=timeout + 1)
             return (data.get("info") or {}).get("version")
     except Exception:
         return None
@@ -50,7 +60,6 @@ def outdated_packages():
     stale = []
     for pkg in PACKAGES:
         cur, latest = installed_version(pkg), latest_version(pkg)
-        # 네트워크 지연/차단 시에도 미설치 항목은 무조건 감지해야 하므로 cur가 없으면 즉시 스케줄링!
         if not cur:
             stale.append((pkg, "미설치", latest or "1.3.2"))
         elif latest and is_outdated(cur, latest):
@@ -58,15 +67,11 @@ def outdated_packages():
     return stale
 
 def upgrade_packages(packages):
-    """pip로 업그레이드 실행. (returncode, 출력 꼬리) 반환 — 워커 스레드 전용.
-    frozen 빌드는 자체 실행 파일 안에 파이썬이 묶여 pip를 쓸 수 없으므로
-    실패(1)를 반환한다.
-    """
+    """pip로 업그레이드 실행. (returncode, 출력 꼬리) 반환 — 워커 스레드 전용."""
     if getattr(sys, "frozen", False):
         return (
             1,
-            "포터블 빌드에서는 자동 업데이트를 지원하지 않습니다.\n"
-            "새 배포판을 받아 교체해주세요.",
+            "포터블 빌드에서는 자동 업데이트를 지원하지 않습니다.\n새 배포판을 받아 교체해주세요.",
         )
     cmd = [
         sys.executable,

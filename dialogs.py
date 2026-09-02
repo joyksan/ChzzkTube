@@ -1,7 +1,6 @@
-### 팝업 다이얼로그 모음
+##### 팝업 다이얼로그 모음
 import os
 import sys
-
 import updater
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -18,7 +17,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
 from ui_components import CustomComboBox
 import theme
 
@@ -36,7 +34,6 @@ def show_info_message(parent, title, text, detail=None, is_error=False):
     msg_box.setText(prefix + text)
     if detail:
         msg_box.setDetailedText(detail)
-
     msg_box.setStyleSheet(theme.MSGBOX_QSS)
     msg_box.addButton(
         "확인" if not is_error else "닫기", QMessageBox.ButtonRole.AcceptRole
@@ -54,6 +51,7 @@ def show_info_message(parent, title, text, detail=None, is_error=False):
 
     msg_box.exec()
 
+
 class ExitConfirmDialog(QDialog):
     def __init__(self, parent=None, is_running=False):
         super().__init__(parent)
@@ -63,7 +61,6 @@ class ExitConfirmDialog(QDialog):
         self.setWindowFlags(
             self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
         )
-
         vbox = QVBoxLayout(self)
         vbox.setSpacing(15)
         vbox.setContentsMargins(20, 20, 20, 20)
@@ -95,6 +92,7 @@ class ExitConfirmDialog(QDialog):
 
         vbox.addLayout(btn_box)
 
+
 class CookieSelectDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -103,7 +101,6 @@ class CookieSelectDialog(QDialog):
         self.setWindowTitle("쿠키 불러오기...")
         self.setFixedSize(300, 380)
         self.setStyleSheet(theme.DIALOG_BG_QSS)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(8)
@@ -157,6 +154,7 @@ class CookieSelectDialog(QDialog):
             self.selected_path = ""
             self.accept()
 
+
 class ActionCountdownDialog(QDialog):
     def __init__(self, action_type, parent=None):
         super().__init__(parent)
@@ -168,7 +166,6 @@ class ActionCountdownDialog(QDialog):
             "exit_app": "프로그램 종료",
         }
         self.action_name = action_names.get(action_type, "설정된 작업")
-
         self.setWindowTitle("작업 완료 후 동작 안내")
         self.setFixedSize(380, 160)
         self.setStyleSheet("background-color: #121212; color: #ffffff;")
@@ -226,13 +223,13 @@ class ActionCountdownDialog(QDialog):
         self.timer.stop()
         self.reject()
 
+
 class CookieViewerDialog(QDialog):
     def __init__(self, title_text, content_text, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title_text)
         self.setFixedSize(650, 500)
         self.setStyleSheet(theme.DIALOG_BG_QSS)
-
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(10)
@@ -253,14 +250,8 @@ class CookieViewerDialog(QDialog):
         btn_layout.addWidget(btn_close)
         layout.addLayout(btn_layout)
 
-class UpdateWorker(QThread):
-    """구성요소(yt-dlp / streamlink / bgutil) 확인·업데이트 워커 — UI 비블로킹용.
-    시그널 계약:
-        line(str)               : 진행 로그 한 줄 (메인 간결 로그로 중계)
-        check_done(list)        : 버전 확인 완료 — 업데이트 있는 목록 [(pkg, cur, latest)]
-        upgrade_done(bool, str) : 업데이트 완료 — (성공 여부, 요약)
-    """
 
+class UpdateWorker(QThread):
     line = pyqtSignal(str)
     check_done = pyqtSignal(list)
     upgrade_done = pyqtSignal(bool, str)
@@ -276,27 +267,34 @@ class UpdateWorker(QThread):
             self._do_check()
 
     def _do_check(self):
+        """버전 확인 — 메인 콘솔에는 결론 한 줄, 상세로그에 raw emit.
+
+        [min profile] 메인 콘솔에 진행률 바/스텝 라인을 절대 emit하지
+        않는다. 그저 '확인 완료' 한 줄 — fzf/lazygit 톤은 공백이 곧 정보.
+        패키지별 raw 라인은 line 시그널을 통해 _component_line으로 가서
+        상세로그(F12)에만 쌓인다.
+        """
         stale = []
-        for pkg in updater.PACKAGES:
+        frozen = bool(getattr(sys, "frozen", False))
+        pkgs = [p for p in updater.PACKAGES
+                if not (frozen and p == "bgutil-ytdlp-pot-provider")]
+        for pkg in pkgs:
+            # raw emit — _component_line을 통해 상세로그에만
+            self.line.emit(f"[~] {pkg} 확인 중")
             cur = updater.installed_version(pkg)
             latest = updater.latest_version(pkg)
-            if not latest:
-                self.line.emit(f"[?] {pkg} 버전 확인 실패")
-                continue
+            if latest is None:
+                continue  # [silent] 메인에 일시 장애 표시 안 함
             if not cur:
-                # 미설치 감지 시 자동 설치 대상으로 스케줄링
                 stale.append((pkg, "미설치", latest))
-                self.line.emit(f"[~] {pkg} 미설치 감지 → 백그라운드 자동 설치를 시작합니다")
             elif updater.is_outdated(cur, latest):
                 stale.append((pkg, cur, latest))
-                self.line.emit(f"[~] {pkg} {cur} → {latest} 업데이트 있음")
-            else:
-                self.line.emit(f"[v] {pkg} {cur} 최신 버전입니다.")
+        # [결론 한 줄] — 사용자가 보는 유일한 메인 콘솔 라인
+        self.line.emit("[v] DEPS 확인 완료")
         self.check_done.emit(stale)
 
     def _do_upgrade(self):
         code, tail = updater.upgrade_packages(updater.PACKAGES)
-        # 들여쓰기 없이 그대로 중계
         for l in tail.splitlines():
             if l.strip():
                 self.line.emit(l.strip())
@@ -308,6 +306,7 @@ class UpdateWorker(QThread):
         )
         self.upgrade_done.emit(ok, summary)
 
+
 class SettingsDialog(QDialog):
     def __init__(self, parent=None, is_running=False):
         super().__init__(parent)
@@ -317,7 +316,7 @@ class SettingsDialog(QDialog):
         self._loading = True  # 초기 값 주입 중에는 저장 스킵
         self.setWindowTitle("설정")
         self.setFixedSize(480, 640)
-        self.setStyleSheet("QDialog { background-color: #121212; color: #ffffff; }")
+        self.setStyleSheet( "QDialog { background-color: #0d0d0d; color: #d4d4d4; }" "QLabel { color: #cccccc; font-size: 11px; }" "QLabel[role=\"key\"] { color: #4ec9b0; font-weight: bold; }" "QCheckBox { color: #d4d4d4; spacing: 6px; }" "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #2a2a2a; background: #161616; border-radius: 2px; }" "QCheckBox::indicator:checked { background: #4ec9b0; border-color: #4ec9b0; }" "QPushButton { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; padding: 4px 12px; font-size: 11px; }" "QPushButton:hover { border-color: #4ec9b0; color: #4ec9b0; }" "QPushButton:disabled { color: #555555; border-color: #1a1a1a; }" )
         self.init_ui()
         self.load_settings()
         self._loading = False
@@ -339,8 +338,9 @@ class SettingsDialog(QDialog):
         outer.addWidget(scroll, 1)
 
         layout = QVBoxLayout(body)
-        layout.setSpacing(12)
-        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(10)
+        layout.setContentsMargins(16, 14, 16, 14)
+        # TUI 패널 일체화 — 다크 콘솔 + 민트 액센트
 
         def make_combo(options, width):
             cb = CustomComboBox()
@@ -350,6 +350,9 @@ class SettingsDialog(QDialog):
             return cb
 
         row1 = QHBoxLayout()
+        _sec1 = QGroupBox("Container")
+        _sec1.setProperty("class", "tui-panel")
+        _sec1.setLayout(row1)
         row1.addWidget(QLabel("포맷 컨테이너"))
         row1.addStretch()
         self.cb_container = make_combo(
@@ -364,9 +367,15 @@ class SettingsDialog(QDialog):
             lambda: self._apply_change("container", self.cb_container.currentData())
         )
         row1.addWidget(self.cb_container)
-        layout.addLayout(row1)
+        layout.addWidget(_sec1)
 
         cookie_box = QFrame()
+        cookie_box.setObjectName("cookie_section")
+        cookie_box.setProperty("class", "tui-panel")
+        try:
+            cookie_box.setTitle("Cookie")
+        except Exception:
+            pass
         cookie_box.setObjectName("cookie_box")
         cookie_box.setStyleSheet(
             "QFrame#cookie_box { border: 1px solid #3d3d3d; border-radius: 6px; background-color: #1e1e1e; }"
@@ -550,6 +559,9 @@ class SettingsDialog(QDialog):
             layout.addWidget(row_widget)
 
         row2 = QHBoxLayout()
+        _sec2 = QGroupBox("Video Quality")
+        _sec2.setProperty("class", "tui-panel")
+        _sec2.setLayout(row2)
         row2.addWidget(QLabel("작업 완료 후 동작"))
         row2.addStretch()
         self.cb_completion = make_combo(
@@ -567,10 +579,15 @@ class SettingsDialog(QDialog):
             )
         )
         row2.addWidget(self.cb_completion)
-        layout.addLayout(row2)
+        layout.addWidget(_sec2)
 
         format_layout = QHBoxLayout()
-        format_layout.addWidget(QLabel("파일명 형식"))
+        _sec_filename = QGroupBox("Filename")
+        _sec_filename.setProperty("class", "tui-panel")
+        _flay = QVBoxLayout(_sec_filename)
+        _flay.setContentsMargins(10, 6, 10, 6)
+        _flay.setSpacing(6)
+        _flay.addWidget(QLabel("파일명 형식"))
         format_layout.addStretch()
         self.cb_prefix = make_combo(
             [
@@ -586,7 +603,7 @@ class SettingsDialog(QDialog):
         self.cb_prefix.currentIndexChanged.connect(
             lambda: self._apply_change("filename_prefix", self.cb_prefix.currentData())
         )
-        format_layout.addWidget(self.cb_prefix)
+        format__flay.addWidget(self.cb_prefix)
 
         lbl_title = QLabel("제목")
         lbl_title.setFixedWidth(45)
@@ -594,7 +611,7 @@ class SettingsDialog(QDialog):
         lbl_title.setStyleSheet(
             "font-weight: bold; background: transparent; border: none;"
         )
-        format_layout.addWidget(lbl_title)
+        format__flay.addWidget(lbl_title)
 
         self.cb_suffix = make_combo(
             [
@@ -607,14 +624,15 @@ class SettingsDialog(QDialog):
         self.cb_suffix.currentIndexChanged.connect(
             lambda: self._apply_change("filename_suffix", self.cb_suffix.currentData())
         )
-        format_layout.addWidget(self.cb_suffix)
-        layout.addLayout(format_layout)
+        format__flay.addWidget(self.cb_suffix)
+        _flay.addLayout(format_layout)
 
         self.lbl_filename_preview = QLabel("미리보기  :  동영상제목.mp4")
         self.lbl_filename_preview.setStyleSheet(
             "color: #64b5f6; font-size: 11px; padding-left: 2px;"
         )
-        layout.addWidget(self.lbl_filename_preview)
+        _flay.addWidget(self.lbl_filename_preview)
+        layout.addWidget(_sec_filename)
 
         self.cb_prefix.currentIndexChanged.connect(self.update_filename_preview)
         self.cb_suffix.currentIndexChanged.connect(self.update_filename_preview)
@@ -752,3 +770,45 @@ class SettingsDialog(QDialog):
     def _on_audio_only_toggled(self, on):
         self._apply_change("audio_only", on)
         self.parent_win.update_ui_state()
+class VerboseLogWindow(QDialog):
+    """상세(Full Detailed) 로그 전용 서브 윈도우 — 메인 뷰에서 상세 로그 탭을
+    분리해 접근한다(F12). MainWindow가 외부로 유출하는 상세 로그를 그대로
+    미러링하며, 항상 하단(최신)을 팔로우한다."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Full Log — 상세 로그 (F12)")
+        self.resize(760, 480)
+
+        self.te = QTextEdit(self)
+        self.te.setReadOnly(True)
+        self.te.setStyleSheet(theme.TE_CONTENT_QSS)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(self.te)
+
+        btn_row = QHBoxLayout()
+        self.lbl_info = QLabel("")
+        self.lbl_info.setStyleSheet(theme.DLG_STATUS_QSS)
+        btn_close = QPushButton("닫기")
+        btn_close.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+        btn_close.clicked.connect(self.close)
+        btn_row.addWidget(self.lbl_info)
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+    def append(self, msg):
+        """MainWindow.append_full_log 와 동일 계약 — 텍스트 원본 그대로 미러링."""
+        if not msg:
+            return
+        self.te.append(msg)
+        sb = self.te.verticalScrollBar()
+        sb.setValue(sb.maximum())
+        self.lbl_info.setText(f"실시간 미러링 중 — 라인 {self.te.document().blockCount()}")
+
+    def set_content(self, text):
+        """전체 내용을 한 번에 교체 (초기 표시용)."""
+        self.te.setPlainText(text)
+        self.lbl_info.setText(f"라인 {self.te.document().blockCount()}")

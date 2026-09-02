@@ -1,12 +1,10 @@
-# cookies.py - 브라우저 쿠키 추출 (Firefox / Chromium 계열)
-
+### cookies.py - 브라우저 쿠키 추출 (Firefox / Chromium 계열)
 import glob
 import os
 import platform
 import shutil
 import sqlite3
 import tempfile
-
 
 def get_browser_cookies():
     # 도메인별 쿠키를 담기 위해 {domain: {name: value}} 구조로 변경
@@ -25,9 +23,7 @@ def get_browser_cookies():
             ]
         elif sys_name == "Darwin":
             paths = [
-                os.path.join(
-                    home, "Library", "Application Support", "Firefox", "Profiles"
-                )
+                os.path.join(home, "Library", "Application Support", "Firefox", "Profiles")
             ]
 
         for p in paths:

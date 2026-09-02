@@ -1,6 +1,7 @@
 ### log_console.py - 간결 로그 콘솔 렌더러
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
+import time
 import unicodedata
 import theme
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
@@ -70,11 +71,9 @@ class ConciseLogConsole:
             and not doc.lastBlock().text()
         )
         if not doc.isEmpty() and (not cursor.atBlockStart() or on_kept_blank):
-            # 새 로그가 ' └─' 가지 바로 아래 붙으면 ├─로 승격 + 연속 줄에 │ 줄기 복원
-            self._flip_trailing_branch()
             cursor.insertBlock()
 
-        clean_msg = msg.replace("[✓]", "[v]")
+        clean_msg = msg
 
         # 3. [핵심] 줄바꿈(\n) 사이에만 insertBlock()을 호출하여 문장 끝 불필요한 빈 줄 생성 완전 차단
         #    비트리 일반 라인(pip 출력 등)은 예산 폭을 넘기면 여기서 wrap한다 —
@@ -283,53 +282,6 @@ class ConciseLogConsole:
             b = b.previous()
         return False
 
-    def _flip_trailing_branch(self):
-        """새 로그가 ' └─' 가지 바로 아래 붙을 때 트리 문법을 복원한다.
-
-        └─(마지막 가지)는 '밑에 아무 것도 없다'는 약속이므로, 새 로그가
-        붙는 순간 ├─로 승격시키고, 그 아래에 매달린 연속 줄들에 │ 줄기를
-        그어 세로로 연결한다. 연속 줄은 '들여쓰기 2칸(줄기 없음)'과
-        '줄기 있는 │' 두 형태 모두를 인정한다 — ├─ 항목의 연속 줄은
-        처음부터 ' │'로 조판되기 때문.
-        가지 헤더가 아니거나 빈 블록(작업 구분 여백)에 닿으면 탐색을 멈춘다.
-        """
-        doc = self.te.document()
-        block = doc.lastBlock()
-        if not block.isValid() or not block.text():
-            return
-        conts = []
-        b = block
-        steps = 0
-        while b.isValid() and steps < 64:  # 상한 — 비정상 문서에서의 전체 탐색 방지
-            t = b.text()
-            if t.startswith("  ") or t.startswith(" │"):
-                conts.append(b)
-                b = b.previous()
-                steps += 1
-                continue
-            break
-        if not b.isValid():
-            return
-        head = b.text()
-        if head.startswith(" └─"):
-            self._replace_char(b, 1, "├")
-        elif head.startswith(" ├─"):
-            pass  # 이미 승격된 가지 — 연속 줄 줄기 정리만 수행
-        else:
-            return  # 트리 가지가 아닌 로그 아래 — 건드리지 않는다
-        for cb in conts:
-            self._replace_char(cb, 1, "│")
-
-    @staticmethod
-    def _replace_char(block, index, ch):
-        """블록 내 index 위치의 문자 1개를 교체 (색상 서식은 해당 위치의 것을 승계)."""
-        cursor = QTextCursor(block)
-        cursor.movePosition(
-            QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.MoveAnchor, index
-        )
-        cursor.movePosition(QTextCursor.MoveOperation.Right, QTextCursor.MoveMode.KeepAnchor)
-        cursor.insertText(ch)
-
 def display_width(text):
     """콘솔 표시 폭 계산 (한글 등 전각 문자는 2칸)."""
     return sum(
@@ -455,3 +407,108 @@ def format_analysis_counts(v_count, a_count):
     if a_count:
         return f" (오디오 {a_count}개)"
     return ""
+
+### ──────────────────────────────────────────────────────────────
+### 컬럼 로그 라인 — TUI 스타일 고정 칼럼 포맷
+### ──────────────────────────────────────────────────────────────
+# 포맷: [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ PERCENT │ [BAR] │ MSG
+#   STAGE   : SYS / ANAL / DL / MERG / BATCH
+#   STATUS  : OK / READY / RUN / DONE / ABORT / FAIL / END
+#   BAR     : 텍스트 진행 바 (bar_frac 0.0~1.0)
+
+def _log_ts():
+    """현재 시각 — [HH:MM:SS] 형식."""
+    return time.strftime("[%H:%M:%S]")
+
+def _log_pct(pct):
+    """퍼센트 컬럼 — None 이면 '-', 아니면 '42.1%'."""
+    if pct is None:
+        return "-"
+    try:
+        return f"{float(pct):5.1f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+def _log_bar(bar_frac, width=10):
+    """텍스트 진행 바 — None 이면 '-', 아니면 '[████░░░░░░]'."""
+    if bar_frac is None:
+        return "-"
+    try:
+        frac = min(max(float(bar_frac), 0.0), 1.0)
+    except (TypeError, ValueError):
+        return "-"
+    filled = int(round(frac * width))
+    return f"[{'█' * filled}{'░' * (width - filled)}]"
+
+def format_log_line(stage, status, platform="", spec="", pct=None, bar_frac=None, msg=""):
+    """TUI 스타일 컬럼 로그 라인 — 단일 라인, 고정 칼럼 정렬.
+
+    인자:
+        stage    : SYS / ANAL / DL / MERG / BATCH
+        status   : OK / READY / RUN / DONE / ABORT / FAIL / END
+        platform : chzzk / youtube / streamlink / yt-dlp 등
+        spec     : 해상도·속도 등 사양 문자열
+        pct      : 진행률 (0~100, None 가능)
+        bar_frac : 진행 바 (0.0~1.0, None 가능)
+        msg      : 제목·부가 메시지
+    """
+    stage_s = str(stage).upper()[:8].ljust(8)
+    status_s = str(status).upper()[:8].ljust(8)
+    plat_s = (str(platform) or "-")[:12].ljust(12)
+    spec_s = str(spec or "-")
+    pct_s = _log_pct(pct)
+    bar_s = _log_bar(bar_frac)
+    head = _log_ts() + " " + stage_s
+    rest = [status_s, plat_s]
+    if str(spec or "-") not in ("-", ""):
+        rest.append(spec_s)
+    if pct is not None:
+        rest.append(pct_s)
+        rest.append(bar_s)
+    line = head + " │ " + " │ ".join(rest)
+    if msg:
+        line += f" │ {msg}"
+    return line
+
+def _log_line_segments(line):
+    """컬럼 로그 라인의 색상 — STATUS 기반 단색 분기."""
+    if " │ FAIL" in line:
+        return [(line, theme.LOG_COLOR_ERROR)]
+    if " │ WARN" in line:
+        return [(line, theme.LOG_COLOR_WARN)]
+    if " │ ABORT" in line:
+        return [(line, theme.LOG_COLOR_WARN)]
+    if " │ DONE" in line or " │ OK " in line or " │ END" in line or " │ READY" in line:
+        return [(line, theme.LOG_COLOR_SUCCESS)]
+    if " │ RUN" in line:
+        return [(line, theme.LOG_COLOR_ACCENT)]
+    return [(line, theme.LOG_COLOR_INFO)]
+
+
+# ════════════════════════════════════════════════════════════════════════
+# 새 TUI 컬럼 로그 — emit_event / emit_progress / emit_component
+# 메인/워커에서 호출하면 [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ ... 한 줄 출력
+# ════════════════════════════════════════════════════════════════════════
+
+def emit_event(stage, status, platform="-", msg=""):
+    """단순 이벤트 1줄 — POT/Update/사용자 액션/에러 모두 공통."""
+    return format_log_line(
+        stage=stage, status=status, platform=platform, spec="-", pct=None, bar_frac=None, msg=msg,
+    )
+
+
+def emit_progress(stage, status, platform="-", spec="-", pct=None, bar_frac=None, msg=""):
+    """진행률 표시 라인 — ANAL/DL 단계."""
+    return format_log_line(
+        stage=stage, status=status, platform=platform, spec=spec, pct=pct, bar_frac=bar_frac, msg=msg,
+    )
+
+
+def emit_component(stage, status, platform, msg):
+    """컴포넌트/워커 결과 — DEPS / POT / READY 등 system 단계.
+
+    [16:20:01] SYS  │ OK   │ DEPS  │ Components up-to-date
+    """
+    return format_log_line(
+        stage=stage, status=status, platform=platform, spec="-", pct=None, bar_frac=None, msg=msg,
+    )
