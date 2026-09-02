@@ -1,9 +1,26 @@
-versions/
-build/
-dist/
+# 가상환경
+.venv/
+venv/
+env/
+
+# 파이썬 캐시 파일
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# 환경변수 및 보안 파일
+.env
+
+# 기타 에디터/OS 파일
+.DS_Store
+.vscode/
 Untitled
 dl_config.json
 logs/
-.venv/
+
+#사용자파일
+versions/
+build/
+dist/
+개발 방향성.txt

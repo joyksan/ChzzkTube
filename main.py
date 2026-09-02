@@ -5,18 +5,19 @@ import sys
 
 from PyQt6.QtCore import qInstallMessageHandler
 
+
 def qt_message_handler(mode, context, message):
     if "must be a top level window" in message:
         return
     sys.stderr.write(message + "\n")
 
-qInstallMessageHandler(qt_message_handler)
 
-from PyQt6.QtWidgets import QApplication
+qInstallMessageHandler(qt_message_handler)
 
 from PyQt6.QtCore import Qt, QThread, QTimer
 from PyQt6.QtGui import QFont, QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -53,6 +54,7 @@ CONFIG_DIR = config.CONFIG_DIR
 CONFIG_FILE = config.CONFIG_FILE
 ICON_PATH = config.ICON_PATH
 DEFAULT_CONFIG = config.default_config()
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -251,7 +253,8 @@ class MainWindow(QMainWindow):
             "[ F1: Change ]", "저장 폴더 변경 (F1)", self.change_folder
         )
         self.btn_open = _tui_tag(
-            "[ F2: Open ]", "저장 폴더 열기 (F2)",
+            "[ F2: Open ]",
+            "저장 폴더 열기 (F2)",
             lambda: _open_windows_explorer(self.cfg["download_path"]),
         )
         hlay.addWidget(self.btn_change)
@@ -306,11 +309,13 @@ class MainWindow(QMainWindow):
         ilay.addWidget(self.btn_txt)
 
         self.btn_enter = _tui_tag(
-            "[ ENTER: Start ]", "URL 입력 후 시작 (Enter)",
+            "[ ENTER: Start ]",
+            "URL 입력 후 시작 (Enter)",
             self.toggle_download,
         )
         self.btn_esc = _tui_tag(
-            "[ ESC: Abort ]", "실행 중 중단 (Esc)",
+            "[ ESC: Abort ]",
+            "실행 중 중단 (Esc)",
             self.abort_download,
         )
         ilay.addWidget(self.btn_enter)
@@ -361,7 +366,6 @@ class MainWindow(QMainWindow):
         self._full_log_buf: list[str] = []
         self.update_ui_state()
 
-
     def _on_url_drop(self, mime_data):
         """드래그드롭된 .txt 파일 URL 자동 추출."""
         if not mime_data.hasUrls():
@@ -379,17 +383,23 @@ class MainWindow(QMainWindow):
         """선택된 .txt 파일 URL 로드."""
         try:
             with open(path, "r", encoding="utf-8") as f:
-                lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+                lines = [
+                    l.strip() for l in f if l.strip() and not l.strip().startswith("#")
+                ]
             if lines:
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
-                    log_console.emit_event("SYS", "OK", "TXT", f"로드 완료 — {len(lines)}개 URL"),
-                    is_status=False, is_error=False,
+                    log_console.emit_event(
+                        "SYS", "OK", "TXT", f"로드 완료 — {len(lines)}개 URL"
+                    ),
+                    is_status=False,
+                    is_error=False,
                 )
         except Exception:
             self.append_concise_log(
                 log_console.emit_event("SYS", "FAIL", "TXT", "파일 읽기 실패"),
-                is_status=False, is_error=True,
+                is_status=False,
+                is_error=True,
             )
 
     def abort_download(self):
@@ -398,15 +408,15 @@ class MainWindow(QMainWindow):
             self.ctrl.request_cancel()
             self.append_concise_log(
                 log_console.emit_event("DL", "ABORT", "-", "사용자에 의해 중단 요청됨"),
-                is_status=False, is_error=True,
+                is_status=False,
+                is_error=True,
             )
 
     def _update_path_label(self):
         """PATH 라벨 TUI 텍스트 갱신 — `path_label` 위젯 갱신."""
         path = self.cfg.get("download_path", "")
         self.path_label.setText(
-            f"<span style='color:#4ec9b0; font-weight:bold;'>PATH:</span> "
-            f"{path}"
+            f"<span style='color:#4ec9b0; font-weight:bold;'>PATH:</span> {path}"
         )
 
     def change_folder(self):
@@ -420,8 +430,11 @@ class MainWindow(QMainWindow):
             self._update_path_label()
             self.save_cfg()
             self.append_concise_log(
-                log_console.emit_event("SYS", "OK", "CFG", f"경로 변경 → {self.cfg['download_path']}"),
-                is_status=False, is_error=False,
+                log_console.emit_event(
+                    "SYS", "OK", "CFG", f"경로 변경 → {self.cfg['download_path']}"
+                ),
+                is_status=False,
+                is_error=False,
             )
 
     def format_target_url(self, url, max_len=50):
@@ -474,10 +487,7 @@ class MainWindow(QMainWindow):
 
     def _start_pot_provider(self):
         """앱 시작 시 bgutil PO Token 서버가 있도록 준비 (유튜브 성인제한/봇 확인 대응)."""
-        if (
-            hasattr(self, "_pot_worker")
-            and self._pot_worker.isRunning()
-        ):
+        if hasattr(self, "_pot_worker") and self._pot_worker.isRunning():
             return  # 중복 기동 방지
         try:
             self._pot_worker = pot_provider.POTProviderWorker(self)
@@ -498,8 +508,11 @@ class MainWindow(QMainWindow):
         self._startup_completed = True
         self.update_ui_state()
         self.append_concise_log(
-            log_console.emit_event("SYS", "SKIP", "DEPS", "구성요소 확인 지연 — 입력 선개방"),
-            is_status=False, is_error=False,
+            log_console.emit_event(
+                "SYS", "SKIP", "DEPS", "구성요소 확인 지연 — 입력 선개방"
+            ),
+            is_status=False,
+            is_error=False,
         )
 
     def _on_pot_provider_finished(self):
@@ -514,26 +527,35 @@ class MainWindow(QMainWindow):
         if state == "ok" and not getattr(self, "_stale_updates", False):
             self.append_concise_log(
                 log_console.emit_event("SYS", "OK", "DEPS", "Components up-to-date"),
-                is_status=False, is_error=False,
+                is_status=False,
+                is_error=False,
             )
 
         # 실제 성공/실패 여부를 설계 사양과 일치하게 출력
         if state == "ok":
             if msg:
                 self.append_concise_log(
-                log_console.emit_event("SYS", "OK", "POT", msg),
-                is_status=False, is_error=False,
-            )
+                    log_console.emit_event("SYS", "OK", "POT", msg),
+                    is_status=False,
+                    is_error=False,
+                )
         else:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "POT", "Server bind failed — 연령제한 영상 다운로드 불가"),
-                is_status=False, is_error=True,
+                log_console.emit_event(
+                    "SYS",
+                    "FAIL",
+                    "POT",
+                    "Server bind failed — 연령제한 영상 다운로드 불가",
+                ),
+                is_status=False,
+                is_error=True,
             )
 
         self.append_concise_log(
-                log_console.emit_event("SYS", "READY", "ENGINE", "Ready for download"),
-                is_status=False, is_error=False,
-            )
+            log_console.emit_event("SYS", "READY", "ENGINE", "Ready for download"),
+            is_status=False,
+            is_error=False,
+        )
 
         # 락 가드 해제 및 UI 기동
         self._startup_completed = True
@@ -581,9 +603,10 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-                log_console.emit_event("ANAL", "RUN", "-", "분석 시작..."),
-                is_status=True, is_error=False,
-            )
+            log_console.emit_event("ANAL", "RUN", "-", "분석 시작..."),
+            is_status=True,
+            is_error=False,
+        )
 
         # [결함 수리] 구버전의 terminate()+wait() 대신 유기 패턴 — GIL 사망 방지
         self._abandon_analyze_worker()
@@ -617,9 +640,12 @@ class MainWindow(QMainWindow):
         )
         formatted_url = self.format_target_url(self.base_anim_url)
         self.append_concise_log(
-                log_console.emit_event("ANAL", "OK", "YT", f"분석 완료{counts} — {formatted_url}"),
-                is_status=False, is_error=False,
-            )
+            log_console.emit_event(
+                "ANAL", "OK", "YT", f"분석 완료{counts} — {formatted_url}"
+            ),
+            is_status=False,
+            is_error=False,
+        )
         # 마지막 블록 철회 가드
         self._analysis_block_active = True
         self._analysis_block_count = self.console.last_status_block_count
@@ -657,16 +683,19 @@ class MainWindow(QMainWindow):
         if stale:
             summary = ", ".join(f"{p} {c}→{l}" for p, c, l in stale)
             self.append_concise_log(
-                log_console.emit_event("DEPS", "WARN", "-",
-                                       f"업데이트 가능 — {summary}"),
-                is_status=False, is_error=False,
+                log_console.emit_event(
+                    "DEPS", "WARN", "-", f"업데이트 가능 — {summary}"
+                ),
+                is_status=False,
+                is_error=False,
             )
             self._stale_updates = True
         else:
             # 정상/네트워크 일시장애 모두 같은 결론 라인 — 사용자는 'OK/실패'만 알면 됨
             self.append_concise_log(
                 log_console.emit_event("DEPS", "OK", "-", "DEPS 확인 완료"),
-                is_status=False, is_error=False,
+                is_status=False,
+                is_error=False,
             )
             self._stale_updates = False
             self._start_pot_provider()
@@ -686,7 +715,8 @@ class MainWindow(QMainWindow):
         status = "OK" if ok else "FAIL"
         self.append_concise_log(
             log_console.emit_event("SYS", status, "DEPS", f"업데이트 {summary}"),
-            is_status=False, is_error=not ok,
+            is_status=False,
+            is_error=not ok,
         )
         self._start_pot_provider()
 
@@ -701,9 +731,10 @@ class MainWindow(QMainWindow):
     def on_analyze_error(self, err_msg):
         self.stop_analysis_anim(ok=False)
         self.append_concise_log(
-                log_console.emit_event("ANAL", "FAIL", "-", err_msg),
-                is_status=False, is_error=True,
-            )
+            log_console.emit_event("ANAL", "FAIL", "-", err_msg),
+            is_status=False,
+            is_error=True,
+        )
 
     def update_ui_state(self):
         # URL 필드 활성도만 관리 — 진행바/콤보/버튼은 존재하지 않음
@@ -756,7 +787,8 @@ class MainWindow(QMainWindow):
         # 같은 중복이 시각적 노이즈가 된다.
         self.append_concise_log(
             log_console.emit_event(stage, status, "-", payload),
-            is_status=is_status, is_error=is_error,
+            is_status=is_status,
+            is_error=is_error,
         )
 
     def _mirror_full_log(self, msg):
@@ -764,7 +796,10 @@ class MainWindow(QMainWindow):
         self._full_log_buf.append(msg)
         if len(self._full_log_buf) > 5000:
             del self._full_log_buf[: len(self._full_log_buf) - 5000]
-        if getattr(self, "verbose_win", None) is not None and self.verbose_win.isVisible():
+        if (
+            getattr(self, "verbose_win", None) is not None
+            and self.verbose_win.isVisible()
+        ):
             try:
                 self.verbose_win.append(msg)
             except Exception:
@@ -784,7 +819,10 @@ class MainWindow(QMainWindow):
 
     def toggle_verbose_log(self):
         """F12 상세 로그 창 토글 — 최초 진입 시 누적 버퍼로 초기화 후 미러링."""
-        if getattr(self, "verbose_win", None) is not None and self.verbose_win.isVisible():
+        if (
+            getattr(self, "verbose_win", None) is not None
+            and self.verbose_win.isVisible()
+        ):
             self.verbose_win.close()
             return
         if self.verbose_win is None:
@@ -792,7 +830,10 @@ class MainWindow(QMainWindow):
             content = "\n".join(self._full_log_buf)
             if not content.strip():
                 content = log_console.emit_event(
-                    "SYS", "OK", "LOG", "상세 로그 버퍼 비어 있음 — 다운로드 시작 시 채워짐"
+                    "SYS",
+                    "OK",
+                    "LOG",
+                    "상세 로그 버퍼 비어 있음 — 다운로드 시작 시 채워짐",
                 )
             self.verbose_win.set_content(content)
         self.verbose_win.show()
@@ -844,7 +885,8 @@ class MainWindow(QMainWindow):
 
         self.append_concise_log(
             log_console.emit_event("ANAL", "RUN", "-", "분석 시작..."),
-            is_status=True, is_error=False,
+            is_status=True,
+            is_error=False,
         )
 
         self.url_input.setEnabled(False)
@@ -856,10 +898,10 @@ class MainWindow(QMainWindow):
         self.ctrl.spawn_worker(
             targets,
             self.cfg,
-            "auto",          # video_id — 최고 품질 자동
-            "auto",          # audio_id — 최고 품질 자동
+            "auto",  # video_id — 최고 품질 자동
+            "auto",  # audio_id — 최고 품질 자동
             is_live_hint=live_hint,
-            v_spec=None,     # 사양 미지정 — 분석 결과 선두 포맷 기준
+            v_spec=None,  # 사양 미지정 — 분석 결과 선두 포맷 기준
             audio_desc="",
         )
 
@@ -868,7 +910,8 @@ class MainWindow(QMainWindow):
             self.ctrl.request_skip()
             self.append_concise_log(
                 log_console.emit_event("DL", "SKIP", "-", "현재 항목 건너뛰기 요청됨"),
-                is_status=False, is_error=False,
+                is_status=False,
+                is_error=False,
             )
 
     def add_concise_task_separator(self):
@@ -895,11 +938,13 @@ class MainWindow(QMainWindow):
             if self.cfg.get("auto_open_folder"):
                 _open_windows_explorer(self.cfg["download_path"])
 
+
 if __name__ == "__main__":
     # [히스토리] 미처리 예외 전체 트레이스백을 히스토리 파일로 유출 — 디버깅 1차 증거
     sys.excepthook = lambda t, v, tb: log_history.exception("미처리 예외", t, v, tb)
     if platform.system() == "Windows":
         import ctypes
+
         myappid = "chzzktube.subapp.v2"
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     app = QApplication(sys.argv)
