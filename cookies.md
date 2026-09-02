@@ -6,6 +6,8 @@ import shutil
 import sqlite3
 import tempfile
 
+import log_history
+
 def get_browser_cookies():
     # 도메인별 쿠키를 담기 위해 {domain: {name: value}} 구조로 변경
     cookie_data = {}
@@ -65,7 +67,13 @@ def get_browser_cookies():
                             cookie_data[host][n] = v
                         conn.close()
                         shutil.rmtree(td, ignore_errors=True)
-            except Exception:
+            except Exception as e:
+                # [증거 남김] DB 잠금/권한 실패는 '쿠키가 있는데도 401' 증상의
+                # 유일한 추적 단서 — 흡수는 유지하고 원인만 히스토리에 남긴다.
+                log_history.log(
+                    f"쿠키 DB 읽기 실패 ({os.path.basename(p)}): {type(e).__name__}: {e}",
+                    "WARN",
+                )
                 continue
     except Exception:
         pass

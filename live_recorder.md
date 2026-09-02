@@ -162,9 +162,6 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                         is_status=False,
                         is_error=False,
                     )
-                    worker.progress_update.emit(
-                        0.0, f"{format_bytes(rate)}/s" if rate else "-"
-                    )
 
                 # 취소 요청 — 자식 죽이고 stdout queue drain ('truncated' 오탐 방지)
                 if worker.state.get("canceled") and proc.poll() is None:

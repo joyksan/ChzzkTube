@@ -13,7 +13,6 @@ def qt_message_handler(mode, context, message):
 qInstallMessageHandler(qt_message_handler)
 
 from PyQt6.QtWidgets import QApplication
-# (qfluentwidgets.setTheme 제거 — 실제 위젯 미사용 + dark palette 충돌로 paint 루프 가능)
 
 from PyQt6.QtCore import Qt, QThread, QTimer
 from PyQt6.QtGui import QFont, QFontDatabase, QIcon
@@ -40,15 +39,7 @@ import theme
 from controller import DownloadController
 from dialogs import ExitConfirmDialog, SettingsDialog, UpdateWorker, VerboseLogWindow
 from downloader import AnalyzeWorker
-from media import audio_spec
 from utils import _open_windows_explorer
-
-_audio_spec = audio_spec  # 구호명 유지 — 헤더 가지/배지 공용 단일 출처(media.audio_spec)
-
-# [TUI Refactor] fzf-style minimalist QSS — main window 전역에 적용.
-# 3-Layer TUI(QGroupBox 3개 + tui-tag 버튼 + #url_input + #console_log)의
-# 단일 스타일 출처. theme.TUI_STYLE로 이동 (2026-Q3 모듈화).
-TUI_STYLE = theme.TUI_STYLE
 
 try:
     import winsound
@@ -73,7 +64,7 @@ class MainWindow(QMainWindow):
         if os.path.exists(ICON_PATH):
             self.setWindowIcon(QIcon(ICON_PATH))
 
-        self.setStyleSheet(TUI_STYLE)
+        self.setStyleSheet(theme.TUI_STYLE)
 
         self.cfg = self._load_config()
 
@@ -139,6 +130,32 @@ class MainWindow(QMainWindow):
             if getattr(self, "verbose_win", None) is not None:
                 self.verbose_win.close()
             self.ctrl.shutdown(1000)
+            if self.ctrl.worker is not None and self.ctrl.worker.isRunning():
+                log_history.log(
+                    "종료: 다운로드 워커 미종료(1s) — 취소 플래그로 자연 종료 예정, 프로세스 종료 진행",
+                    "WARN",
+                )
+            # [스레드 경계] 종료 전 러닝 QThread 회수 — 좀비 분석 워커/기동 워커가
+            # 살아있으면 Qt가 "QThread: Destroyed while thread is still running"
+            # 경고와 함께 종료 크래시를 낼 수 있다. terminate 금지 원칙 유지,
+            # 짧은 wait만 시도 (워커들은 취소 플래그로 자연 종료를 약속받는다).
+            for w in list(getattr(self, "_zombie_workers", []) or []):
+                if w is not None and w.isRunning():
+                    w.wait(1500)
+                    if w.isRunning():
+                        log_history.log(
+                            "종료: 유기된 분석 워커 미종료(1.5s) — 프로세스 종료 진행",
+                            "WARN",
+                        )
+            for name in ("_pot_worker", "update_worker"):
+                w = getattr(self, name, None)
+                if w is not None and w.isRunning():
+                    w.wait(1500)
+                    if w.isRunning():
+                        log_history.log(
+                            f"종료: 기동 워커({name}) 미종료(1.5s) — 프로세스 종료 진행",
+                            "WARN",
+                        )
             log_history.session_end()
             event.accept()
 
@@ -281,7 +298,6 @@ class MainWindow(QMainWindow):
         self.url_input.acceptDrops()
         self.url_input.dropEvent = lambda e: self._on_url_drop(e.mimeData())
         self.url_input.returnPressed.connect(self.toggle_download)
-        self.le_url = self.url_input  # 레거시 별칭 보존
         ilay.addWidget(self.url_input, 1)
 
         self.btn_txt = _tui_tag(
@@ -319,14 +335,14 @@ class MainWindow(QMainWindow):
         clay.setSpacing(0)
 
         # [ObjectName] console_log — TUI_STYLE의 QTextEdit#console_log 선택자 타겟
-        self.concise_log_text_edit = QTextEdit()
-        self.concise_log_text_edit.setObjectName("console_log")
-        self.concise_log_text_edit.setReadOnly(True)
-        self.concise_log_text_edit.document().setDocumentMargin(0)
+        self.te_concise = QTextEdit()
+        self.te_concise.setObjectName("console_log")
+        self.te_concise.setReadOnly(True)
+        self.te_concise.document().setDocumentMargin(0)
         # 모던 TUI 미니멀 헤더 — 한 줄로 통합 (배너 + 메타)
         # [paint 루프 방지] table/float 없이 순차 span만 사용 — QTextEdit의
         # 제한된 HTML 서브셋에서 float:right는 layout이 깨진다.
-        self.concise_log_text_edit.setHtml(
+        self.te_concise.setHtml(
             f'<span style="color:#4ec9b0;font-weight:bold;">[{APP_NAME} {APP_VERSION}]</span>'
             f'<span style="color:#888888;">  by Miorine  </span>'
             f'<span style="color:#4ec9b0;">── live console monitor ──</span>'
@@ -334,12 +350,11 @@ class MainWindow(QMainWindow):
         font = QFont("D2Coding", 10)
         font.setStyleHint(QFont.StyleHint.Monospace)
         font.setFamilies(["D2Coding", "Consolas", "Malgun Gothic", "Segoe UI"])
-        self.concise_log_text_edit.setFont(font)
-        self.te_concise = self.concise_log_text_edit  # 레거시 별칭 보존
-        self.console = log_console.ConciseLogConsole(self.concise_log_text_edit)
+        self.te_concise.setFont(font)
+        self.console = log_console.ConciseLogConsole(self.te_concise)
         # update_tree_budget은 showEvent에서 위젯 실측 폭으로 1회 계산 (paint 루프 방지)
 
-        clay.addWidget(self.concise_log_text_edit, 1)
+        clay.addWidget(self.te_concise, 1)
         main_layout.addWidget(self.console_group, stretch=1)
 
         # ── 보조 상태 초기화 ──
@@ -357,7 +372,7 @@ class MainWindow(QMainWindow):
                 self.pick_txt_from_path(path)
                 return
             if path.startswith("http://") or path.startswith("https://"):
-                self.le_url.setText(path)
+                self.url_input.setText(path)
                 return
 
     def pick_txt_from_path(self, path):
@@ -366,7 +381,7 @@ class MainWindow(QMainWindow):
             with open(path, "r", encoding="utf-8") as f:
                 lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
             if lines:
-                self.le_url.setText("\n".join(lines))
+                self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
                     log_console.emit_event("SYS", "OK", "TXT", f"로드 완료 — {len(lines)}개 URL"),
                     is_status=False, is_error=False,
@@ -434,20 +449,15 @@ class MainWindow(QMainWindow):
             "Text Files (*.txt);;All Files (*.*)",
         )
         if path:
-            self.le_url.setText(os.path.normpath(path))
-
-    def _reset_stream_ui(self):
-        """[1단계] 콤보 제거됨 — no-op (URL 비웠을 때의 메타 초기화는 on_url_changed가 처리)."""
-        self._all_integrated = False
+            self.url_input.setText(os.path.normpath(path))
 
     def on_url_changed(self):
         self.analyze_timer.stop()
-        text = self.le_url.text().strip()
+        text = self.url_input.text().strip()
 
         # [핵심] URL을 지웠을 때 분석 타이머·로그 즉시 초기화
         if not text:
             self.extracted_data = {"info": None, "v_list": [], "a_list": []}
-            self._reset_stream_ui()
 
             # [결함 수리] terminate()+wait()는 GIL을 보유한 파이썬 스레드를
             # 야매 종료시켜 GUI 전체의 파이썬 실행을 영구 정지시켰다 — 이 뒤의
@@ -460,7 +470,6 @@ class MainWindow(QMainWindow):
             return
 
         if not self.ctrl.running and getattr(self, "_startup_completed", False):
-            # [1단계] btn_download 제거됨 — 텍스트/활성도 관리 삭제
             self.analyze_timer.start(500)
 
     def _start_pot_provider(self):
@@ -508,7 +517,7 @@ class MainWindow(QMainWindow):
                 is_status=False, is_error=False,
             )
 
-        # 실제 성공/실패 여부를 Miorine님 설계 사양과 통치하게 출력
+        # 실제 성공/실패 여부를 설계 사양과 일치하게 출력
         if state == "ok":
             if msg:
                 self.append_concise_log(
@@ -549,7 +558,7 @@ class MainWindow(QMainWindow):
         if not w:
             return
         if w.isRunning():
-            for sig in (w.result_ready, w.error_occurred, w.log_concise, w.log_full):
+            for sig in (w.result_ready, w.error_occurred, w.log_full):
                 try:
                     sig.disconnect()
                 except TypeError:
@@ -568,7 +577,7 @@ class MainWindow(QMainWindow):
             pass
 
     def run_analysis(self):
-        url = self.le_url.text().strip()
+        url = self.url_input.text().strip()
         if not url:
             return
         self.append_concise_log(
@@ -584,10 +593,16 @@ class MainWindow(QMainWindow):
 
         self.base_anim_url = url
 
+        # [스레드 경계 / 경쟁상태 수리] 이전 분석 워커가 아직 러닝 중일 수 있다
+        # (500ms 디바운스보다 yt-dlp 추출이 길면 항상 그렇다). 참조를 그냥
+        # 덮어쓰면 옛 워커가 시그널 연결된 채 생존해 나중에 result_ready를
+        # 쏘아 낡은 URL의 결과로 extracted_data를 오염시킨다(stale callback
+        # race). 유기(disconnect + 좀비 등록) 후에 새 워커를 만든다.
+        self._abandon_analyze_worker()
+
         self.worker_analyze = AnalyzeWorker(url, self.cfg)
         self.worker_analyze.result_ready.connect(self.on_analyze_success)
         self.worker_analyze.error_occurred.connect(self.on_analyze_error)
-        self.worker_analyze.log_concise.connect(self.append_concise_log)
         self.worker_analyze.log_full.connect(self.append_full_log)
         self.worker_analyze.start()
 
@@ -605,7 +620,7 @@ class MainWindow(QMainWindow):
                 log_console.emit_event("ANAL", "OK", "YT", f"분석 완료{counts} — {formatted_url}"),
                 is_status=False, is_error=False,
             )
-        # [수정사항] 마지막 블록 철회 가드
+        # 마지막 블록 철회 가드
         self._analysis_block_active = True
         self._analysis_block_count = self.console.last_status_block_count
         self._analysis_last_line = formatted_url.split("\n")[-1]
@@ -678,9 +693,8 @@ class MainWindow(QMainWindow):
     def on_analyze_success(self, data):
         self.extracted_data = data
         self.stop_analysis_anim()
-        # [1단계] 콤보/버튼 제거 — 콜백은 결과만 보관
+        # 콜백은 결과만 보관 — 콤보/버튼이 없으므로 UI 갱신 없음
         if data.get("is_playlist"):
-            self._reset_stream_ui()
             return
         # 좌측 패널이 자동 처리 — 별도 UI 갱신 없음
 
@@ -690,13 +704,12 @@ class MainWindow(QMainWindow):
                 log_console.emit_event("ANAL", "FAIL", "-", err_msg),
                 is_status=False, is_error=True,
             )
-        # [1단계] btn_download 제거됨
 
     def update_ui_state(self):
-        # [1단계] 콤보/버튼 제거 — URL 필드 활성도만 관리
+        # URL 필드 활성도만 관리 — 진행바/콤보/버튼은 존재하지 않음
         is_running = self.ctrl.running
         startup_completed = getattr(self, "_startup_completed", False)
-        self.le_url.setEnabled(not is_running and startup_completed)
+        self.url_input.setEnabled(not is_running and startup_completed)
         self.console.reset_status_flag()
 
     def showEvent(self, event):
@@ -813,18 +826,12 @@ class MainWindow(QMainWindow):
             return
         super().keyPressEvent(event)
 
-    def on_progress_update(self, val, msg):
-        return
-
-    def on_status_update(self, current, total, url):
-        return
-
     def toggle_download(self):
         if self.ctrl.running:
             return
         try:
             targets = DownloadController.parse_targets(
-                self.le_url.text().strip(),
+                self.url_input.text().strip(),
                 dedup=self.cfg.get("remove_duplicates"),
             )
         except ValueError as e:
@@ -840,26 +847,21 @@ class MainWindow(QMainWindow):
             is_status=True, is_error=False,
         )
 
-        self.le_url.setEnabled(False)
+        self.url_input.setEnabled(False)
 
         live_hint = len(targets) == 1 and bool(
             (self.extracted_data.get("info") or {}).get("is_live")
         )
-        # [1단계] 콤보 박스 제거 — 기본값 자동 선택
+        # 최고 품질 자동 선택 — 콤보 박스 없이 기본값 사용
         self.ctrl.spawn_worker(
             targets,
             self.cfg,
-            "auto",          # video_sel (이전: cb_video.currentData())
-            "auto",          # audio_sel (이전: _worker_a_sel())
+            "auto",          # video_id — 최고 품질 자동
+            "auto",          # audio_id — 최고 품질 자동
             is_live_hint=live_hint,
-            v_spec=None,     # 이전: _selected_video()
-            audio_desc="",   # 이전: _audio_stream_desc()
+            v_spec=None,     # 사양 미지정 — 분석 결과 선두 포맷 기준
+            audio_desc="",
         )
-
-    def stop_download(self):
-        # [1단계] 버튼 제거됨 — 키보드 F6 단축키로 호출
-        if self.ctrl.running:
-            self.ctrl.request_cancel()
 
     def skip_current(self):
         if self.ctrl.running:
@@ -873,15 +875,13 @@ class MainWindow(QMainWindow):
         self.console.add_task_separator()
 
     def on_download_finished(self, success_count, fail_count):
-        # [1단계] 버튼 제거됨
         self.ctrl.end()
 
         if success_count > 0:
-            self.le_url.clear()
+            self.url_input.clear()
             self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
-        self.le_url.setEnabled(True)
-        # [10번] btn_txt / btn_change 제거됨
+        self.url_input.setEnabled(True)
         self.update_ui_state()
 
         self.add_concise_task_separator()

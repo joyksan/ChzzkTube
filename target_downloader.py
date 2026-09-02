@@ -63,8 +63,6 @@ def _http_download(worker, url, out_path):
             f.write(chunk)
             done += len(chunk)
             worker._speed_win.add(done)
-            if total:
-                worker.progress_update.emit(done / total * 100.0, "chzzk")
     return out_path
 
 

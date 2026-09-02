@@ -5,9 +5,11 @@ import updater
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -17,7 +19,6 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from ui_components import CustomComboBox
 import theme
 
 try:
@@ -50,6 +51,25 @@ def show_info_message(parent, title, text, detail=None, is_error=False):
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     msg_box.exec()
+
+
+class CustomComboBox(QComboBox):
+    """표준 QComboBox 기반 콤보 — addItem(text, userData, icon) 계약 유지.
+
+    [qfluentwidgets 의존 제거] 실제로 쓰던 기능은 시그니처 정규화뿐이었고,
+    표준 위젯 + 다이얼로그 QSS로 통일해 PyQt6-Fluent-Widgets 의존을 뗀다.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def addItem(self, text, userData=None, icon=None):
+        if icon is not None:
+            super().addItem(icon, text)
+        else:
+            super().addItem(text)
+        if userData is not None:
+            self.setItemData(self.count() - 1, userData)
 
 
 class ExitConfirmDialog(QDialog):
@@ -316,7 +336,7 @@ class SettingsDialog(QDialog):
         self._loading = True  # 초기 값 주입 중에는 저장 스킵
         self.setWindowTitle("설정")
         self.setFixedSize(480, 640)
-        self.setStyleSheet( "QDialog { background-color: #0d0d0d; color: #d4d4d4; }" "QLabel { color: #cccccc; font-size: 11px; }" "QLabel[role=\"key\"] { color: #4ec9b0; font-weight: bold; }" "QCheckBox { color: #d4d4d4; spacing: 6px; }" "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #2a2a2a; background: #161616; border-radius: 2px; }" "QCheckBox::indicator:checked { background: #4ec9b0; border-color: #4ec9b0; }" "QPushButton { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; padding: 4px 12px; font-size: 11px; }" "QPushButton:hover { border-color: #4ec9b0; color: #4ec9b0; }" "QPushButton:disabled { color: #555555; border-color: #1a1a1a; }" )
+        self.setStyleSheet( "QDialog { background-color: #0d0d0d; color: #d4d4d4; }" "QLabel { color: #cccccc; font-size: 11px; }" "QLabel[role=\"key\"] { color: #4ec9b0; font-weight: bold; }" "QCheckBox { color: #d4d4d4; spacing: 6px; }" "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #2a2a2a; background: #161616; border-radius: 2px; }" "QCheckBox::indicator:checked { background: #4ec9b0; border-color: #4ec9b0; }" "QPushButton { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; padding: 4px 12px; font-size: 11px; }" "QPushButton:hover { border-color: #4ec9b0; color: #4ec9b0; }" "QPushButton:disabled { color: #555555; border-color: #1a1a1a; }" "QComboBox { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; padding: 4px 8px; font-size: 11px; }" "QComboBox:hover { border-color: #4ec9b0; }" "QComboBox::drop-down { border: none; width: 18px; }" "QComboBox QAbstractItemView { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; selection-background-color: #264f78; outline: none; }" )
         self.init_ui()
         self.load_settings()
         self._loading = False
@@ -603,7 +623,7 @@ class SettingsDialog(QDialog):
         self.cb_prefix.currentIndexChanged.connect(
             lambda: self._apply_change("filename_prefix", self.cb_prefix.currentData())
         )
-        format__flay.addWidget(self.cb_prefix)
+        format_layout.addWidget(self.cb_prefix)
 
         lbl_title = QLabel("제목")
         lbl_title.setFixedWidth(45)
@@ -611,7 +631,7 @@ class SettingsDialog(QDialog):
         lbl_title.setStyleSheet(
             "font-weight: bold; background: transparent; border: none;"
         )
-        format__flay.addWidget(lbl_title)
+        format_layout.addWidget(lbl_title)
 
         self.cb_suffix = make_combo(
             [
@@ -624,7 +644,7 @@ class SettingsDialog(QDialog):
         self.cb_suffix.currentIndexChanged.connect(
             lambda: self._apply_change("filename_suffix", self.cb_suffix.currentData())
         )
-        format__flay.addWidget(self.cb_suffix)
+        format_layout.addWidget(self.cb_suffix)
         _flay.addLayout(format_layout)
 
         self.lbl_filename_preview = QLabel("미리보기  :  동영상제목.mp4")

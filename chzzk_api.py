@@ -4,6 +4,7 @@ import json
 import re
 import urllib.request
 
+import log_history
 from cookies import get_browser_cookies
 from media import get_video_codec_rank
 
@@ -51,8 +52,12 @@ def analyze_chzzk_clip_api(target_url):
         # 채널명 파싱
         owner = d_data.get("ownerChannel") or {}
         channel_name = owner.get("channelName") or d_data.get("channelName")
-    except Exception:
-        pass
+    except Exception as e:
+        # [증거 남김] 세부 정보 폴백(제목=ID 표기)으로 계속 진행 — 원인은 히스토리에.
+        log_history.log(
+            f"치지직 클립 detail API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+            "WARN",
+        )
 
     play_info_url = f"https://api.chzzk.naver.com/service/v1/play-info/clip/{clip_id}"
     video_formats = []
@@ -95,8 +100,12 @@ def analyze_chzzk_clip_api(target_url):
                         "acodec": a_codec,
                     }
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        # [증거 남김] play-info 실패 → formats 비어 상위에서 RuntimeError fail-fast.
+        log_history.log(
+            f"치지직 클립 play-info API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+            "WARN",
+        )
 
     video_formats.sort(
         key=lambda x: (x["height"], get_video_codec_rank(x["vcodec"]), x["bitrate"]),
@@ -177,8 +186,12 @@ def analyze_chzzk_vod_api(target_url):
                                 "acodec": codecs[1] if len(codecs) > 1 else "AAC",
                             }
                         )
-    except Exception:
-        pass
+    except Exception as e:
+        # [증거 남김] VOD API 실패 → formats 비어 상위에서 RuntimeError fail-fast.
+        log_history.log(
+            f"치지직 VOD API 실패 (video/{video_no}): {type(e).__name__}: {e}",
+            "WARN",
+        )
 
     video_formats.sort(
         key=lambda x: (x["height"], get_video_codec_rank(x["vcodec"]), x["bitrate"]),

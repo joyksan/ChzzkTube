@@ -1,8 +1,12 @@
 ### media.py - 순수 미디어 처리 헬퍼 (해상도 라벨 / 임시파일 정리 / FFmpeg 리먹싱 / 코덱 랭킹)
 import glob
 import os
+import re
 import subprocess
 import unicodedata
+
+# 침묵 실패(리먹싱 등)의 증거 기록용 — log_history는 config leaf만 의존(비Qt·스레드 안전)
+import log_history
 
 ### 코덱 품질 랭킹 데이터 테이블 (높을수록 우선순위 높음)
 _VIDEO_CODEC_RANKS = [
@@ -256,12 +260,30 @@ def format_bytes(size):
     return f"{size:.2f} PB"
 
 def cleanup_temp_files(filepath):
-    """작업 중단 시 .part, .ytdl, .f*** 스트림 조각 및 임시 썸네일 일괄 삭제"""
+    """작업 중단 시 .part, .ytdl, .f*** 스트림 조각 및 임시 썸네일 일괄 삭제.
+
+    [cleanup.py 통합] .f251 등 yt-dlp 스트림 조각(f코드)과 mp4/webm 등
+    출력 확장자를 정규식으로 먼저 벗겨 base 경로를 산정한다 — splitext만
+    쓰는 구버전은 '제목.f251.mp4' 형태의 조각을 잡지 못했다.
+    """
     if not filepath:
         return
     try:
-        base_path = os.path.splitext(filepath)[0]
-        directory = os.path.dirname(filepath) or "."
+        dir_name = os.path.dirname(filepath)
+        file_name = os.path.basename(filepath)
+
+        # f코드 검출 및 제거 (예: .f251, .f137, .f401)
+        file_name_clean = re.sub(r"\.f\d+.*$", "", file_name)
+
+        # 일반 확장자 제거 (예: .part, .ytdl, .webm, .mp4)
+        file_name_clean = re.sub(
+            r"\.(part|ytdl|temp|mp4|webm|mkv|3gp|flv|ts)$",
+            "",
+            file_name_clean,
+            flags=re.IGNORECASE,
+        )
+
+        base_path = os.path.join(dir_name, file_name_clean)
         search_pattern = base_path + "*"
 
         for target in glob.glob(search_pattern):
@@ -285,36 +307,6 @@ def cleanup_temp_files(filepath):
     except Exception:
         pass
 
-def remux_stream(ts_path, output_path, thumb_path=None):
-    cmd = ["ffmpeg", "-y", "-i", ts_path]
-    if thumb_path and os.path.exists(thumb_path):
-        cmd.extend(
-            [
-                "-i",
-                thumb_path,
-                "-map",
-                "0",
-                "-map",
-                "1",
-                "-disposition:v:1",
-                "attached_pic",
-            ]
-        )
-
-    if output_path.lower().endswith(".mp4"):
-        cmd.extend(["-c", "copy", "-movflags", "+faststart", output_path])
-    else:
-        cmd.extend(["-c", "copy", output_path])
-
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    for path in [ts_path, thumb_path]:
-        if path and os.path.exists(path):
-            try:
-                os.remove(path)
-            except Exception:
-                pass
-
 def remux_live_to_container(ts_path, container_setting="mp4"):
     if not ts_path or not os.path.exists(ts_path):
         return None
@@ -331,6 +323,12 @@ def remux_live_to_container(ts_path, container_setting="mp4"):
             os.remove(ts_path)
             return out_path
     except Exception as e:
-        print(f"Live Remuxing error: {e}")
+        # [증거 남김] windowed 빌드에선 print가 소멸하므로 히스토리에 기록 —
+        # 임시 ts는 실패 시 보존되므로 사용자가 재시도할 수 있다.
+        log_history.log(
+            f"라이브 리먹싱 실패 — 원본 ts 보존됨 ({os.path.basename(ts_path)}): "
+            f"{type(e).__name__}: {e}",
+            "ERROR",
+        )
 
     return ts_path

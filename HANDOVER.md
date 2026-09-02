@@ -10,7 +10,7 @@
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로더 GUI 앱 (Windows 우선)
 - **버전**: `v3.0.2 (PyQt6안정화버전)` — 정의 위치 `config._APP_VERSION`
-- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PyQt6 + qfluentwidgets(Dark 테마) + yt-dlp + streamlink + FFmpeg(리먹싱)
+- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PyQt6 + yt-dlp + streamlink + FFmpeg(리먹싱)
 - **진입점**: `main.py` (`python main.py`)
 - **빌드**: PyInstaller — `ChzzkTube.spec` (entry: `main.py` ✓ 수정됨)
 - **설정 파일**: `dl_config.json` (CONFIG_DIR에 생성, UTF-8 / indent=4)
@@ -19,16 +19,16 @@
 
 | 항목 | 상태 |
 |------|------|
-| PyQt6, PyQt6-Fluent-Widgets, yt-dlp | 현재 환경에 설치 완료 |
-| streamlink | 설치됨 (8.5.0) |
-| requirements.txt | **생성 완료** — PyQt6 6.11.0 / PyQt6-Fluent-Widgets 1.11.3 / yt-dlp 2026.8.19 / streamlink 8.5.0 고정 |
+| PyQt6, yt-dlp, streamlink | `uv sync`로 설치 완료 (uv.lock 잠금) |
+| pyproject.toml / uv.lock | **의존성 단일 출처** — PyQt6 6.11.0 / yt-dlp 2026.8.19 / streamlink 8.5.0 / bgutil-ytdlp-pot-provider 1.3.2 고정 |
+| FFmpeg | 런타임 필요 (media.py 리먹싱) |
 | FFmpeg | 런타임 필요 (media.py 리먹싱) |
 | D2Coding-Regular.ttf | BASE_DIR에 있으면 로드 (콘솔 폰트) |
 
 ## 3. 아키텍처 (4계층 · 역방향 참조 0 · 순환 import 0)
 
 ```
-[View]      main(825) ─ dialogs(799) · theme(283) · log_console(327) · ui_components(11)
+[View]      main(825) ─ dialogs(799) · theme(283) · log_console(327)
 [Control]   controller(117)
 [Worker]    downloader(1159)
 [Domain]    media(196) · chzzk_api(94) · cookies(76) · config(71) · utils(65) · updater(102)
@@ -42,12 +42,11 @@
 | `dialogs` | ExitConfirm·Settings·CookieSelect·CookieViewer·ActionCountdown 5종 |
 | `theme` | 색상 토큰 + QSS 상수 20종 (**QSS 단일 출처**) |
 | `log_console` | ConciseLogConsole — 간결 로그 덮어쓰기 파이프라인 |
-| `media` | map_res, format_bytes, codec rank, remux_stream, remux_live_to_container |
+| `media` | map_res, format_bytes, codec rank, cleanup_temp_files, remux_live_to_container |
 | `chzzk_api` | 치지직 클립 공개 API 분석 (yt-dlp 우회 경로) |
 | `cookies` | Firefox/Chromium 쿠키 DB 추출 |
 | `config` | 경로(frozen/dev), 기본값, 로드/저장 — 제로 의존 leaf |
 | `utils` | clean_ansi, get_filename_template, _open_windows_explorer, parse_sec |
-| `ui_components` | CustomComboBox |
 | `updater` | 구성요소(yt-dlp/streamlink) 버전 확인(PyPI) 및 pip 업그레이드 — frozen 빌드 거부 |
 
 ## 4. 핵심 데이터 구조
@@ -71,14 +70,13 @@ browser_cookie("auto"), cookie_file_path("")
 AnalyzeWorker:
     result_ready(dict)           : 분석 성공 — 스트림/포맷 정보 딕셔너리
     error_occurred(str)          : 분석 실패 — 오류 메시지
-    log_concise(str, bool, bool) : (텍스트, is_status, is_error) 간결 로그
     log_full(str)                : yt-dlp 원본 로그 라인
 
 DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False, v_spec=None):
-    progress_update(float, str)  : (진행률 %, 속도 문자열)
-    status_update(int, int, str) : (현재 인덱스, 전체 수, 현재 URL)
-    log_concise / log_full       : 동일
+    log_concise(str, bool, bool) : (텍스트, is_status, is_error) 간결 로그
+    log_full(str)                : yt-dlp 원본 로그 라인
     finished_all(int, int)       : (성공 수, 실패 수)
+    (progress_update/status_update는 [1단계] 진행바 제거와 함께 유적으로 삭제됨)
 
     is_live_hint : 분석 결과(info.is_live)에서 온 라이브 힌트 — 단일 타겟일
                    때만 UI가 설정한다. a_sel == "integrated"면 통합 포맷을
@@ -120,16 +118,18 @@ UI 프레임워크 교체 시 이 계약표만 맞추면 된다. 연결은 `cont
 ## 6. 검증 워크플로우 (수정 후 필수 3단계)
 
 ```
-① python -m py_compile main.py downloader.py dialogs.py utils.py ui_components.py \
+① uv run python -m py_compile main.py downloader.py dialogs.py utils.py \
    config.py media.py cookies.py chzzk_api.py theme.py log_console.py controller.py \
    bump_version.py sync_mirrors.py updater.py        # ALL = 0
-② python smoke_test.py                    # headless(Qt offscreen) 실구동 [PASS], exit 0
-③ python sync_mirrors.py                  # 누락 0 확인
+② uv run python smoke_test.py              # headless(Qt offscreen) 실구동 [PASS], exit 0
+③ uv run python sync_mirrors.py            # 누락 0 확인
 ```
-> macOS 검증 환경: `.venv/bin/python` 사용 (Python 3.12.14, `python3 -m venv .venv` 생성,
-> 의존성 `requirements.txt` — 2026-09-02 기준 3.10 → 3.12.14 마이그레이션 완료, 스모크 PASS).
+> macOS 검증 환경: `uv run` 사용 (Python 3.12.14, `.python-version` 고정).
+> 의존성은 `pyproject.toml` + `uv.lock` 단일 출처 (2026-09-02 기준 uv 전환 완료, 스모크 PASS).
+> Windows 빌드: `uv sync --group build` → `uv run pyinstaller ChzzkTube.spec`.
 smoke_test가 검증하는 것: 전 모듈 import, config 로드, MainWindow 실제 생성,
-DownloadWorker 시그널/메서드 계약, 간결 로그 append 반영.
+SettingsDialog 실생성(콤보 초기화·파일명 프리뷰), DownloadWorker 시그널/메서드 계약,
+간결 로그 append 반영.
 임시 스크립트(`refactor_*.py`, `_t_*.py` 등)는 작업 후 삭제하는 것이 관례.
 
 ## 7. 파일 규칙
@@ -263,6 +263,13 @@ U+2028 문자로 남는다. 문서 끝 텍스트 비교 시 `\u2028` 정규화 �
 
 | 항목 | 내용 |
 |------|------|
+| qfluentwidgets 의존 제거 | `ui_components.py`/`ui_components.md` 삭제(26모듈 체제) — 유일한 qfluentwidgets 소비점이던 `CustomComboBox`를 dialogs.py로 이동+**표준 QComboBox 기반** 재작성(addItem(text, userData, icon) 계약 유지). SettingsDialog QSS에 QComboBox 다크 규칙(입력·드롭다운 뷰) 추가. requirements.txt에서 PyQt6-Fluent-Widgets 제거, venv uninstall(Fluent+Frameless) 후 스모크·다이얼로그 생성 통과로 증명 |
+| SettingsDialog 잠복 결함 2건 수리 | ①init_ui에서 `QGroupBox` 미import — [TUI 패널 일체화] 패치 시점부터 잠복(스모크가 다이얼로그를 생성하지 않아 미검출) ②파일명 섹션 `format__flay` 오타 3곳(선언은 `_flay`) — 원 의도(QVBox 라벨 위 + QHBox 콤보줄 아래)대로 수리. 재발 방지: smoke_test에 SettingsDialog 실생성 커버 영구 추가 |
+| 종료 방치 로그화 | closeEvent — wait 타임아웃 후에도 미종료인 워커(다운로드/좀비 분석/POT/업데이트)를 `log_history` WARN으로 기록. terminate 금지 원칙은 유지, "방치했음"이 관측 가능해짐 |
+| facade 잔재 제거(가독성 최종) | downloader의 위임 wrapper 4종(`normalize_youtube_channel_url`/`_apply_client_opts`/`_apply_cookie_opts`/`_dedupe_by_label`) 제거 — 하위 모듈 직접 import(`as _impl` 별칭 import 소멸), 무의미해진 SpeedWindow 재노출·[모듈 평면화] 주석 삭제. main의 `TUI_STYLE = theme.TUI_STYLE` 별칭 제거(theme 단일 출처 직접 사용). DownloadWorker의 thin wrapper는 분할 모듈 위임 계약이라 유지 |
+| 중복·죽은 코드 제거(P1~P3) | `_dl_spec` 이중 정의 → progress_emitter 단일 출처로 통합, downloader의 `_dl_platform`/`detect_content_type` wrapper 제거(하위 모듈 직접 import로). **`format_desc.py` 모듈 전체 삭제**(재노출 체인 외 호출 0건) + 미러 목록 제거(27모듈 체제). 레거시 별칭 `le_url`/`concise_log_text_edit` 제거 → `url_input`/`te_concise` 단일 명명(24곳 교체). 만료 주석 10곳 현행화(`[1단계]`/`[10번]`/`[수정사항 3]` 표기·'이전: cb_video' 참조 제거, '통치하게' 어투 교정) |
+| 침묵 실패 증거화 | chzzk_api 3곳(detail/play-info/VOD)·cookies DB 읽기 실패는 흡수 유지 + `log_history` WARN 기록 — '쿠키 있는데 401'류 증상의 추적 단서 확보. `media.remux_stream`(실패해도 원본 ts 삭제하는 미사용 위험 유적, 호출 0건) 삭제, `remux_live_to_container` 실패 print → log_history ERROR(windowed 빌드 print 소멸 대응), downloader 죽은 import(remux_stream/remux_live_to_container) 정리 |
+| 유적 정리(죽은 시그널·임시코드) | `DownloadWorker.progress_update/status_update` 전부 제거(정의·connect·emit 5곳·no-op 슬롯 — [1단계] 진행바 제거 잔재), `AnalyzeWorker.log_concise`(정의만 존재) 제거, `stop_download`(F6 유적)·`_reset_stream_ui`/`_all_integrated`(읽는 곳 0)·`_audio_spec` 별칭 제거. `cleanup.py` → `media.cleanup_temp_files` 통합(.f코드 조각 정규식 로직 승격) 후 cleanup.py/md·fix_console.py·out/err.txt 삭제. **[스레드 경계]** closeEvent에 러닝 QThread 회수 wait 추가(좀비/POT/업데이트 워커 — "QThread: Destroyed" 종료 크래시 방지), DownloadController 계약에 단방향 플래그·QueuedConnection 명세 |
 | 클립 오디오 콤보 통합 | `update_stream_dropdowns`가 `_all_integrated`(v_list 전체가 acodec 보유 — 치지직 클립·라이브 HLS)로 판정되면 `on_video_stream_changed`로 오디오 콤보를 '비디오 스트림에 통합됨 (CODEC)' 단일 항목(userData='integrated')으로 재구성. 혼합 소스(유튜브 VOD)는 통합 포맷 명시 선택 시에만 동기화(기존 동작 유지). 배지도 '720p \| H264 \| AAC (통합)'로 표기 |
 | 클립 API 필드 보강 | chzzk_api — height는 encodingOption.height 직접 사용(name 정규식은 IGNORECASE 폴백, '720P' 대문자 P 대응), bitrate는 rmcnmv v2.0이 이미 kbps 단위라 /1000 금지(구버전 '720p \| 1kbps' 라벨의 원인), acodec='AAC' 명시(클립은 오디오 내장 단일 스트림) → 'None \| H264 (예상)' 배지도 실스펙으로 수정 |
 | a_sel='integrated' 내성 | 클립 다운로드 경로는 v_sel(CDN URL) + v_spec 재매칭 기반이라 a_sel을 참조하지 않음 — 통합 동기화와 무관하게 안전. 유튜브 VOD에서는 a_sel='integrated'가 통합 포맷 단독 다운로드 신호('+ba' 병합 금지) |
@@ -343,7 +350,7 @@ U+2028 문자로 남는다. 문서 끝 텍스트 비교 시 `\u2028` 정규화 �
 - `plugin_installed()` 보강: frozen 에서 PYZ 네임스페이스 탐색 실패 대비 `_internal/yt_dlp_plugins/extractor/getpot_bgutil*.py` 파일 존재 검사 추가(2차 안전망).
 - `_spawn_node_server` 포트 대기 20s→**45s**(첫 실행 시 AV가 번들 node_modules 수천 파일을 스캔해 기동이 늦어질 수 있음).
 - `dialogs._do_check`: frozen에서 bgutil-ytdlp-pot-provider 검사 스킵 — 포터블은 pip 설치 대상이 아니므로 '미설치 감지 → 자동 설치' 오표시 노이즈 제거.
-- Docker 로컬 이미지/컨테이너 있으면 자동 사용(자동 pull 없음). `requirements.txt`에 `bgutil-ytdlp-pot-provider==1.3.2`(원본 실행 의존성 명시).
+- Docker 로컬 이미지/컨테이너 있으면 자동 사용(자동 pull 없음). `pyproject.toml`에 `bgutil-ytdlp-pot-provider==1.3.2`(원본 실행 의존성 명시).
 
 | 검증 | **e2e 실측(재빌드 dist)**: frozen exe 기동 → 업데이트 체크 완료 후 자동 스폰 → 번들 node.EXE 프로세스로 `/ping 200 {"server_uptime":..,"version":"1.3.2"}` → **`POST /get_pot`(v1.3.2 라우트 — 옛 문서의 `/get_pot_token`은 0.x API로 404) 200, 실제 poToken 발급 확인**. `yt_dlp_plugins/extractor` 번들 확인, dist 310.3MB, py_compile + smoke PASS |
 
@@ -376,6 +383,15 @@ U+2028 문자로 남는다. 문서 끝 텍스트 비교 시 `\u2028` 정규화 �
 | 분석 정체(GIL 사망) | 재분석/URL 삭제 시 `QThread.terminate()`가 **GIL 보유 상태로 파이썬 스레드 강제 종료** → 죽은 스레드가 GIL을 영원히 미반환 → GUI 전체 파이썬 실행 정지("미디어 스트림 분석중"에서 다운로드 불능). `_abandon_analyze_worker()` zombie 패턴(시그널 차단 후 자연 종료·회수) + `_discard_analysis_result()`로 대체. **`from downloader import AnalyzeWorker, DownloadWorker` import 유실도 복구**(이것만으로도 분석 자체가 죽는 상태였음) |
 | 드래그 선택 보존 v2 | 2겹 결함: ①렌더러가 사용자 커서를 끌어다 써서 선택이 문서 끝까지 늘어남 → `_end_cursor()` 독립 커서 격리 ②그래도 '선택 끝 == 문서 끝' 순간 삽입 시 Qt 커서 자동조정이 선택 끝을 삽입물 뒤로 밀어냄 → append 진입 시 선택 절대 오프셋 스냅샷, finally에서 `_restore_user_selection` 복원(+과선택 클램프). `add_task_separator`·`clear_status_line` 문서 변경자에도 공통 적용 |
 | 검증 | PASS 1(드래그 중 로그 유입 시 선택 불변)·1b(문서 변경자 선택 보존)·2(URL 클리어 잔여물 0)·3(클리어 직후 재분석 수용 — 정체 부재), smoke PASS, py_compile ALL=0, 미러 17개 동기화(변경 0) |
+
+### uv 전환 + Python 3.12 마이그레이션 (v3.1.0)
+
+| 항목 | 내용 |
+|------|------|
+| uv 도입 | `requirements.txt` 제거 → `pyproject.toml` + `uv.lock` 단일 출처. `uv sync`로 설치, `uv run`으로 실행(활성화 불필요). Windows 해시 28건 포함 → macOS에서 잠그면 Windows가 동일 조합. `[dependency-groups] build = ["pyinstaller"]` — Windows 빌드는 `uv sync --group build` → `uv run pyinstaller ChzzkTube.spec` |
+| Python 3.12.14 | `.python-version` 생성(pyenv 자동 고정). 3.10에서 마이그레이션 — 제거된 모듈(`distutils`/`imp`/`asynchat` 등) 사용 0건으로 소스 수정 불필요. venv 재구성 후 전 의존성 cp312 휠 설치 검증 |
+| pyobjc 제거 검증 | `uv sync`에서 `pyobjc-framework-*` 제거됨 — PyQt6는 pyobjc 없이 macOS에서 정상 동작(`import PyQt6.QtWidgets` + 스모크 PASS로 증명). pip도 uv venv에 존재(`updater.updater_packages` 동작 유지) |
+| 검증 | py_compile 전체 OK · smoke PASS · 미러 26개 변경 3/누락 0 |
 
 ## 9. 남은 과제 (우선순위순)
 

@@ -7,7 +7,6 @@ from progress_emitter import emit_dl, emit_err
 def finalize(worker, total, failed_targets, success_count):
     """완료 요약 — TUI 컬럼 라인 1줄 + 개별 실패는 ERR 라인."""
     fail_count = len(failed_targets)
-    worker.status_update.emit(total, total, "완료")
 
     if worker.state["canceled"]:
         if getattr(worker, "live_partially_saved", False):

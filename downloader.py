@@ -18,86 +18,24 @@ from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
 from log_console import format_kv_line, format_tree_item
 from media import (
     audio_spec,
-    cleanup_temp_files,
     cli_format_desc,
     format_bytes,
     format_dropdown_label,
     get_audio_codec_rank,
     get_video_codec_rank,
-    remux_live_to_container,
-    remux_stream,
     short_codec,
     codec_detail,
 )
 from utils import clean_ansi, get_filename_template
 import log_console
-# [모듈 평면화] downloader_helpers/downloader_workers 패키지 → 메인 폴더 직접 import.
-from dl_platform import (
-    _dl_platform as _dl_platform_impl,
-    detect_content_type as _detect_content_type,
-)
-from playlist import normalize_youtube_channel_url as _normalize_youtube_channel_url
+from dl_platform import detect_content_type
+from playlist import normalize_youtube_channel_url
 from speed_window import SpeedWindow
-from cleanup import safe_cleanup_temp_files as _safe_cleanup_temp_files
-from client_opts import (
-    _apply_client_opts as _apply_client_opts_impl,
-    _apply_cookie_opts as _apply_cookie_opts_impl,
-    _dedupe_by_label as _dedupe_by_label_impl,
-)
-from format_desc import (
-    get_unified_video_desc as _get_unified_video_desc,
-    get_unified_audio_desc as _get_unified_audio_desc,
-)
+from client_opts import _apply_client_opts, _apply_cookie_opts, _dedupe_by_label
 import progress_emitter as _pe
 import live_recorder as _lr
 import target_downloader as _td
 import finalizer as _fin
-
-def _dl_platform(worker):
-    """다운로더 워커에서 플랫폼 문자열 추출 (youtube/chzzk/streamlink)."""
-    url = getattr(worker, "target_url", "") or ""
-    return _dl_platform_impl(url)
-
-def _dl_spec(worker):
-    """다운로더 워커에서 사양 문자열 추출 (해상도·fps)."""
-    v = getattr(worker, "v_spec", None) or {}
-    h = v.get("height") or 0
-    fps = v.get("fps") or 0
-    if h:
-        return f"{h}p{fps}" if fps else f"{h}p"
-    a_desc = getattr(worker, "audio_desc", "") or ""
-    if a_desc and ("(" in a_desc or "AAC" in a_desc or "OPUS" in a_desc):
-        return a_desc
-    return ""
-
-def detect_content_type(url, info=None):
-    return _detect_content_type(url, info)
-
-
-def safe_cleanup_temp_files(filepath):
-    return _safe_cleanup_temp_files(filepath)
-
-def normalize_youtube_channel_url(url):
-    return _normalize_youtube_channel_url(url)
-
-### [수정사항 3 반영] 비디오 및 오디오 포맷 표기 통일 규격 헬퍼 함수 정의
-def get_unified_video_desc(info):
-    return _get_unified_video_desc(info)
-
-def get_unified_audio_desc(info):
-    return _get_unified_audio_desc(info)
-
-# SpeedWindow은 인스턴스 메서드(add/reset/speed)와 상태(_samples, _window)를 가지므로
-# 단순 함수형 위임이 불가능. speed_window.SpeedWindow를 그대로 재노출한다 (위 import 참조).
-
-def _apply_client_opts(opts, cfg):
-    return _apply_client_opts_impl(opts, cfg)
-
-def _apply_cookie_opts(opts, cfg):
-    return _apply_cookie_opts_impl(opts, cfg)
-
-def _dedupe_by_label(formats):
-    return _dedupe_by_label_impl(formats)
 
 class YtLoggerBridge:
     def __init__(self, log_full_signal, log_concise_signal=None):
@@ -145,7 +83,6 @@ class YtLoggerBridge:
 class AnalyzeWorker(QThread):
     result_ready = pyqtSignal(dict)
     error_occurred = pyqtSignal(str)
-    log_concise = pyqtSignal(str, bool, bool)
     log_full = pyqtSignal(str)
 
     def __init__(self, target_url, cfg):
@@ -365,8 +302,6 @@ class AnalyzeWorker(QThread):
                 self.error_occurred.emit(f"분석 오류 발생: {str(ex)}")
 
 class DownloadWorker(QThread):
-    progress_update = pyqtSignal(float, str)
-    status_update = pyqtSignal(int, int, str)
     log_concise = pyqtSignal(str, bool, bool)
     log_full = pyqtSignal(str)
     finished_all = pyqtSignal(int, int)
@@ -475,7 +410,6 @@ class DownloadWorker(QThread):
                 self._speed_win.reset()
                 self._tick_file = None
                 self._tick_last = 0
-                self.status_update.emit(idx - 1, self.total_count, url)
 
                 ok = self._download_target(url, failed_targets)
                 if ok:

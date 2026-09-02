@@ -18,7 +18,6 @@ MIRROR_MODULES = [
     "bump_version",
     "chzzk_api",
     "client_opts",
-    "cleanup",
     "components",
     "config",
     "controller",
@@ -27,7 +26,6 @@ MIRROR_MODULES = [
     "dl_platform",
     "downloader",
     "finalizer",
-    "format_desc",
     "live_recorder",
     "log_console",
     "log_history",
@@ -41,7 +39,6 @@ MIRROR_MODULES = [
     "sync_mirrors",
     "target_downloader",
     "theme",
-    "ui_components",
     "updater",
     "utils",
 ]

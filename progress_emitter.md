@@ -73,7 +73,7 @@ _TICK_INTERVAL = 0.5  # VOD 틱 0.5초 스로틀
 
 
 def emit_progress_tick(worker, d):
-    """VOD 진행 틱 — 0.5초 스로틀, SpeedWindow 평균 속도, 컬럼 라인 + progress_update."""
+    """VOD 진행 틱 — 0.5초 스로틀, SpeedWindow 평균 속도, 컬럼 라인."""
     now = time.monotonic()
     last = getattr(worker, "_last_tick_t", 0) or 0
     if last and now - last < _TICK_INTERVAL:
@@ -103,7 +103,6 @@ def emit_progress_tick(worker, d):
         is_status=False,
         is_error=False,
     )
-    worker.progress_update.emit(pct, speed_s)
 
 
 def log_success_info(worker, file_path):
