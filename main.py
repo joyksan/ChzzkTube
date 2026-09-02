@@ -876,7 +876,10 @@ class MainWindow(QMainWindow):
                 dedup=self.cfg.get("remove_duplicates"),
             )
         except ValueError as e:
-            self.append_concise_log(str(e), False, True)
+            self.append_concise_log(
+                log_console.emit_event("SYS", "FAIL", "-", f"입력 파싱 오류: {e}"),
+                False, True
+            )
             return
         if not targets:
             return

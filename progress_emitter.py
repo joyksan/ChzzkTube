@@ -10,9 +10,8 @@ import os
 import time
 
 from log_console import (
-    format_kv_line,
+    emit_event,
     format_log_line,
-    format_tree_item,
 )
 from media import cli_format_desc, format_bytes
 from dl_platform import _dl_platform
@@ -111,11 +110,8 @@ def log_success_info(worker, file_path):
     if file_path and os.path.exists(file_path):
         size = os.path.getsize(file_path)
     worker.log_concise.emit(
-        format_kv_line(
-            "[v]",
-            "완료",
-            f"{os.path.basename(file_path)} ({format_bytes(size)})" if file_path else "완료",
-        ),
+        emit_event("DL", "OK", _dl_platform(getattr(worker, "current_url", "") or ""),
+                   f"완료 — {os.path.basename(file_path)} ({format_bytes(size)})" if file_path else "완료"),
         is_status=False,
         is_error=False,
     )
@@ -129,51 +125,47 @@ def _title_of(info):
 
 
 def emit_download_header(worker, info):
-    """VOD 다운로드 시작 헤더 — 제목/포맷 트리. 통합 포맷은 오디오 가지 미표기."""
+    """VOD 다운로드 시작 헤더 — 컬럼 포맷 통일."""
     title = _title_of(info)
-    worker.log_concise.emit("[+] 다운로드 시작", is_status=False, is_error=False)
-    worker.log_concise.emit(
-        format_tree_item("제목", title), is_status=False, is_error=False
-    )
     fmt = info.get("format") or {}
-    if fmt and isinstance(fmt, dict):
-        worker.log_concise.emit(
-            format_tree_item("포맷", cli_format_desc(fmt), branch="└─"),
-            is_status=False,
-            is_error=False,
-        )
+    fmt_desc = cli_format_desc(fmt) if fmt and isinstance(fmt, dict) else ""
+    msg = f"다운로드 시작 — {title}"
+    if fmt_desc:
+        msg += f" ({fmt_desc})"
+    worker.log_concise.emit(
+        emit_event("DL", "RUN", _dl_platform(getattr(worker, "current_url", "") or ""), msg),
+        is_status=False,
+        is_error=False,
+    )
     worker._meta_logged = True
 
 
 def emit_live_header(worker, info, res_label=""):
-    """라이브 녹화 시작 헤더 — 제목/화질 트리."""
+    """라이브 녹화 시작 헤더 — 컬럼 포맷 통일."""
     title = _title_of(info)
-    worker.log_concise.emit("[+] 라이브 녹화 시작", is_status=False, is_error=False)
-    worker.log_concise.emit(
-        format_tree_item("제목", title), is_status=False, is_error=False
-    )
+    msg = f"라이브 녹화 시작 — {title}"
     if res_label:
-        worker.log_concise.emit(
-            format_tree_item("화질", res_label, branch="└─"),
-            is_status=False,
-            is_error=False,
-        )
+        msg += f" ({res_label})"
+    worker.log_concise.emit(
+        emit_event("DL", "RUN", _dl_platform(getattr(worker, "current_url", "") or ""), msg),
+        is_status=False,
+        is_error=False,
+    )
     worker._meta_logged = True
 
 
 def emit_chzzk_header(worker, ch_info, fmt):
-    """치지직(클립/VOD) 헤더 — API 결과로 직접 조판 (CDN info_dict 제목 오염 대응)."""
+    """치지직(클립/VOD) 헤더 — 컬럼 포맷 통일."""
     title = ch_info.get("videoTitle") or ch_info.get("title") or "치지직 영상"
-    worker.log_concise.emit("[+] 치지직 다운로드 시작", is_status=False, is_error=False)
+    fmt_desc = cli_format_desc(fmt) if fmt else ""
+    msg = f"치지직 다운로드 시작 — {title}"
+    if fmt_desc:
+        msg += f" ({fmt_desc})"
     worker.log_concise.emit(
-        format_tree_item("제목", title), is_status=False, is_error=False
+        emit_event("DL", "RUN", "chzzk", msg),
+        is_status=False,
+        is_error=False,
     )
-    if fmt:
-        worker.log_concise.emit(
-            format_tree_item("포맷", cli_format_desc(fmt), branch="└─"),
-            is_status=False,
-            is_error=False,
-        )
     worker._meta_logged = True
 
 

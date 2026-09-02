@@ -60,13 +60,9 @@ class YtLoggerBridge:
                     .strip()
                 )
                 self.log_concise_signal.emit(
-                    format_kv_line(
-                        "[!]",
-                        "건너뜀",
-                        f"이미 존재하는 파일입니다. ({os.path.basename(fname)})",
-                    ),
+                    log_console.emit_event("DL", "OK", "-", f"건너뜀 — 이미 존재하는 파일 ({os.path.basename(fname)})"),
                     False,
-                    True,
+                    False,
                 )
 
     def info(self, msg):

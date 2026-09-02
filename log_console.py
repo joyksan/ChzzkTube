@@ -70,7 +70,8 @@ class ConciseLogConsole:
             and cursor.atBlockStart()
             and not doc.lastBlock().text()
         )
-        if not doc.isEmpty() and (not cursor.atBlockStart() or on_kept_blank):
+        # [버그 수정] 마지막 블록에 텍스트가 있으면 항상 새 블록 삽입 — 연속 메시지가 같은 줄에 붙는 현상 방지
+        if not doc.isEmpty() and (not cursor.atBlockStart() or on_kept_blank or doc.lastBlock().text()):
             cursor.insertBlock()
 
         clean_msg = msg
@@ -446,6 +447,24 @@ def _log_bar(bar_frac, width=10):
     filled = int(round(frac * width))
     return f"[{'█' * filled}{'░' * (width - filled)}]"
 
+def _truncate_msg(msg, max_width):
+    """msg를 max_width 표시폭으로 절단 — 초과 시 '…' 부호 부착."""
+    if max_width < 4:
+        max_width = 4
+    w = 0
+    out = []
+    for ch in msg:
+        ch_w = 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
+        if w + ch_w + 1 > max_width:  # +1 for ellipsis
+            break
+        out.append(ch)
+        w += ch_w
+    result = "".join(out)
+    if len(result) < len(msg):
+        result += "…"
+    return result
+
+
 def format_log_line(stage, status, platform="", spec="", pct=None, bar_frac=None, msg=""):
     """TUI 스타일 컬럼 로그 라인 — 단일 라인, 고정 칼럼 정렬.
 
@@ -456,7 +475,7 @@ def format_log_line(stage, status, platform="", spec="", pct=None, bar_frac=None
         spec     : 해상도·속도 등 사양 문자열
         pct      : 진행률 (0~100, None 가능)
         bar_frac : 진행 바 (0.0~1.0, None 가능)
-        msg      : 제목·부가 메시지
+        msg      : 제목·부가 메시지 (예산 초과 시 자동 절단)
     """
     stage_s = str(stage).upper()[:8].ljust(8)
     status_s = str(status).upper()[:8].ljust(8)
@@ -471,10 +490,14 @@ def format_log_line(stage, status, platform="", spec="", pct=None, bar_frac=None
     if pct is not None:
         rest.append(pct_s)
         rest.append(bar_s)
-    line = head + " │ " + " │ ".join(rest)
+    fixed = head + " │ " + " │ ".join(rest)
     if msg:
-        line += f" │ {msg}"
-    return line
+        # 고정 부분 폭을 제외한 예산 — msg 영역
+        fixed_w = display_width(fixed) + 3  # " │ " separator
+        msg_budget = max(8, TREE_TOTAL_WIDTH - fixed_w)
+        msg = _truncate_msg(msg, msg_budget)
+        return fixed + " │ " + msg
+    return fixed
 
 def _log_line_segments(line):
     """컬럼 로그 라인의 색상 — STATUS 기반 단색 분기."""

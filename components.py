@@ -28,6 +28,8 @@ import zipfile
 
 import config
 import log_history
+import platform
+from log_console import emit_component
 
 # --- 배포자 설정 (릴리스 에셋 URL) -----------------------------------------------
 # pot-pack.zip / streamlink-pack.zip 은 make_components.py 로 만들어 자체 GitHub
@@ -78,7 +80,14 @@ def pot_server_dir():
 
 
 def pot_node_exe():
-    return os.path.join(components_root(), "node", "node.exe")
+    """Node.js 실행 파일 경로 — 팩 번들 or 시스템 PATH."""
+    # 팩 번들 우선 (윈도우: node.exe)
+    pack_node = os.path.join(components_root(), "node", "node.exe")
+    if os.path.isfile(pack_node):
+        return pack_node
+    # 번들 없으면 시스템 PATH의 node 사용
+    system_node = shutil.which("node")
+    return system_node
 
 
 def streamlink_dir():
@@ -96,7 +105,7 @@ def _http_get(url, timeout=30):
 
 def _download(url, dest, log, label=""):
     """파일 다운로드(진행 로그 포함). 성공 시 dest 경로 반환."""
-    log(f"[~] {label or os.path.basename(url)} 내려받는 중...")
+    log(emit_component("DEPS", "RUN", "-", f"{label or os.path.basename(url)} 내려받는 중..."))
     tmp = dest + ".part"
     with _http_get(url, timeout=60) as resp, open(tmp, "wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
@@ -111,9 +120,9 @@ def _download(url, dest, log, label=""):
             if total >= 8 * 1024 * 1024 and mb != last_mb:
                 last_mb = mb
                 pct = f" ({done * 100 // total}%)" if total else ""
-                log(f"[~] {label or '다운로드'} {mb} MB{pct}")
+                log(emit_component("DEPS", "RUN", "-", f"{label or '다운로드'} {mb} MB{pct}"))
     os.replace(tmp, dest)
-    log(f"[v] {label or os.path.basename(dest)} 완료 ({done / 1048576:.1f} MB)")
+    log(emit_component("DEPS", "OK", "-", f"{label or os.path.basename(dest)} 완료 ({done / 1048576:.1f} MB)"))
     return dest
 
 
@@ -156,7 +165,7 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
             os.makedirs(os.path.dirname(d) or ".", exist_ok=True)
             shutil.move(s, d)
         _rmtree(tmp)
-    log(f"[v] {label} 전개 완료 → {os.path.relpath(dest_dir, components_root())}")
+    log(emit_component("DEPS", "OK", "-", f"{label} 전개 완료 → {os.path.relpath(dest_dir, components_root())}"))
 
 
 FFMPEG_DIRNAME = "ffmpeg"
@@ -203,33 +212,43 @@ def ensure_ffmpeg(log, force=False):
     """
     log = _logcb(log)
     try:
+        # [맥 지원] 맥에서는 시스템 ffmpeg 우선 사용, 없으면 Homebrew 권유
+        if os.name != "nt":
+            which = shutil.which("ffmpeg")
+            if which:
+                log(emit_component("DEPS", "OK", "-", f"ffmpeg 시스템 설치 확인 — 건너뜀 ({which})"))
+                return None
+            log(emit_component("DEPS", "WARN", "-", "ffmpeg 미설치 — brew install ffmpeg 로 설치 권장 (병합/리먹싱 제한)"))
+            return "ffmpeg 미설치 — macOS에서는 brew install ffmpeg 로 설치하세요"
+
         if not force:
             which = shutil.which("ffmpeg")
             if which:
-                log("[v] ffmpeg 시스템 설치 확인 — 건너뜀")
+                log(emit_component("DEPS", "OK", "-", "ffmpeg 시스템 설치 확인 — 건너뜀"))
                 return None
             cached = ffmpeg_exe()
             if cached:
                 _wire_ffmpeg_path(os.path.dirname(cached))
-                log("[v] ffmpeg 캐시 존재 — 건너뜀 (PATH 연결 완료)")
+                log(emit_component("DEPS", "OK", "-", "ffmpeg 캐시 존재 — 건너뜀 (PATH 연결 완료)"))
                 return None
         dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
         bin_dir = os.path.join(dest, "bin")
-        if not force and os.path.isfile(os.path.join(bin_dir, "ffmpeg.exe")):
+        _exe = ".exe" if os.name == "nt" else ""
+        if not force and os.path.isfile(os.path.join(bin_dir, f"ffmpeg{_exe}")):
             _wire_ffmpeg_path(bin_dir)
-            log("[v] ffmpeg 캐시 존재 — 건너뜀 (PATH 연결 완료)")
+            log(emit_component("DEPS", "OK", "-", "ffmpeg 캐시 존재 — 건너뜀 (PATH 연결 완료)"))
             return None
         os.makedirs(dest, exist_ok=True)
-        log("[~] ffmpeg GitHub 바이너리 내려받는 중... (수십 MB)")
+        log(emit_component("DEPS", "RUN", "-", "ffmpeg GitHub 바이너리 내려받는 중... (수십 MB)"))
         with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
             zp = _download(
                 FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg"
             )
             _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
-        exe = os.path.join(bin_dir, "ffmpeg.exe")
+        exe = os.path.join(bin_dir, f"ffmpeg{_exe}")
         if os.path.isfile(exe):
             _wire_ffmpeg_path(bin_dir)
-            log("[v] ffmpeg 설치 완료 (병합/리먹싱 준비됨, PATH 연결 완료)")
+            log(emit_component("DEPS", "OK", "-", "ffmpeg 설치 완료 (병합/리먹싱 준비됨, PATH 연결 완료)"))
             return None
         return "ffmpeg 전개 후 ffmpeg.exe 를 찾지 못했습니다"
     except Exception as e:
@@ -251,17 +270,17 @@ def ensure_ytdlp(log, force=False):
         os.makedirs(ytdlp_dir(), exist_ok=True)
         cur = ytdlp_installed_version()
         if not force and cur:
-            log(f"[~] yt-dlp 최신 릴리스 확인 중... (설치: {cur})")
+            log(emit_component("DEPS", "RUN", "yt-dlp", f"최신 릴리스 확인 중... (설치: {cur})"))
             log_history.log(f"yt-dlp 최신 릴리스 확인 중... (설치: {cur})")
             with _http_get(f"https://api.github.com/repos/{YTDLP_REPO}/releases/latest") as r:
                 meta = json.loads(r.read().decode("utf-8"))
             tag = meta.get("tag_name", "")
             if tag and tag == cur:
-                log(f"[v] yt-dlp {cur} 최신 — 건너뜀")
+                log(emit_component("DEPS", "OK", "yt-dlp", f"{cur} 최신 — 건너뜀"))
                 log_history.log(f"yt-dlp {cur} 최신 — 건너뜀")
                 return cur, None
         else:
-            log("[~] yt-dlp 최신 릴리스 확인 중...")
+            log(emit_component("DEPS", "RUN", "yt-dlp", "최신 릴리스 확인 중..."))
             log_history.log("yt-dlp 최신 릴리스 확인 중...")
             with _http_get(f"https://api.github.com/repos/{YTDLP_REPO}/releases/latest") as r:
                 meta = json.loads(r.read().decode("utf-8"))
@@ -291,11 +310,11 @@ def ensure_ytdlp(log, force=False):
                 got = _sha256(wl)
                 if want and got != want:
                     return None, f"yt-dlp 휠 해시 불일치({got[:12]}…) — 변조/전송 오류"
-                log("[v] SHA-256 검증 통과")
+                log(emit_component("DEPS", "OK", "-", "SHA-256 검증 통과"))
             _extract_zip(wl, ytdlp_dir(), log, "yt-dlp")
         with open(os.path.join(ytdlp_dir(), ".version"), "w", encoding="utf-8") as f:
             f.write(tag)
-        log(f"[v] yt-dlp {tag} 설치 완료")
+        log(emit_component("DEPS", "OK", "yt-dlp", f"{tag} 설치 완료"))
         log_history.log(f"yt-dlp {tag} 설치 완료")
         return tag, None
     except Exception as e:
@@ -325,10 +344,9 @@ def ensure_bgutil_plugin(log, force=False):
         with urllib.request.urlopen(req, timeout=30) as r:
             lm = r.headers.get("Last-Modified", "")
         if not force and cur and cur == lm:
-            log(f"[v] bgutil 플러그인 최신 — 건너뜀 ({cur[:22]}…)" if cur else
-                "[v] bgutil 플러그인 최신 — 건너뜀")
+            log(emit_component("DEPS", "OK", "bgutil", f"플러그인 최신 — 건너뜀 ({cur[:22]}…)" if cur else "플러그인 최신 — 건너뜀"))
             return None
-        log("[~] bgutil 플러그인 내려받는 중...")
+        log(emit_component("DEPS", "RUN", "bgutil", "플러그인 내려받는 중..."))
         os.makedirs(ytdlp_dir(), exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="cz_comp_") as td:
             zp = _download(BUTIL_PLUGIN_URL, os.path.join(td, "plugin.zip"), log,
@@ -336,7 +354,7 @@ def ensure_bgutil_plugin(log, force=False):
             _extract_zip(zp, ytdlp_dir(), log, "bgutil 플러그인")
         with open(marker, "w", encoding="utf-8") as f:
             f.write(lm)
-        log("[v] bgutil 플러그인 설치 완료 (PO Token Provider)")
+        log(emit_component("DEPS", "OK", "bgutil", "플러그인 설치 완료 (PO Token Provider)"))
         log_history.log("bgutil 플러그인 설치 완료 (PO Token Provider)")
         return None
     except Exception as e:
@@ -370,36 +388,59 @@ def ensure_pot_pack(log, force=False):
 
     URL 이 미설정/실패여도 기존 전개분 또는 번들(_internal)이 있으면 통과.
     성공/기존유지 시 None, 완전 실패 시 오류 문자열.
+
+    [맥 지원] 맥에서는 pot-pack.zip (윈도우 전용)을 다운로드하지 않고,
+    시스템 Node.js + bgutil 소스를 직접 빌드하여 사용한다.
     """
     log = _logcb(log)
     try:
         root = components_root()
         pack_json = os.path.join(root, "bgutil-ytdlp-pot-provider", "server", "pack.json")
-        node_ok = os.path.isfile(pot_node_exe())
+        node_ok = pot_node_exe() is not None
         srv_ok = os.path.isfile(os.path.join(pot_server_dir(), "build", "main.js"))
+
+        # [맥 지원] 맥에서는 시스템 Node.js 확인 후 bgutil 소스 빌드 경로 사용
+        if os.name != "nt":
+            if node_ok and srv_ok:
+                current, remote = _pack_current(POT_PACK_VER_URL, pack_json)
+                if not force and current:
+                    log(emit_component("DEPS", "OK", "POT", f"PO 서버 최신 — 건너뜀 ({remote or '알 수 없음'})"))
+                    return None
+            if not node_ok:
+                log(emit_component("DEPS", "WARN", "POT", "Node.js 미설치 — brew install node 로 설치 권한 (PO Token 제한)"))
+                return "Node.js 미설치 — macOS에서는 brew install node 로 설치하세요"
+            # 맥에서는 pot-pack.zip 다운로드 없이 bgutil 소스 빌드로 진행
+            if not POT_PACK_URL:
+                if srv_ok:
+                    log(emit_component("DEPS", "OK", "POT", "PO 서버 기존 빌드 사용"))
+                    return None
+                # bgutil 소스 빌드 시도 (pot_provider에서 처리)
+                log(emit_component("DEPS", "RUN", "POT", "bgutil 서버 소스 빌드 준비 (시스템 Node.js 사용)"))
+                return None
+
         current, remote = _pack_current(POT_PACK_VER_URL, pack_json)
         if not force and node_ok and srv_ok and current:
-            log(f"[v] PO 서버 팩 최신 — 건너뜀 ({remote or '알 수 없음'})")
+            log(emit_component("DEPS", "OK", "POT", f"PO 서버 팩 최신 — 건너뜀 ({remote or '알 수 없음'})"))
             log_history.log(f"PO 서버 팩 최신 — 건너뜀 ({remote or '알 수 없음'})")
             return None
         if not POT_PACK_URL:
             if node_ok and srv_ok:
-                log("[v] PO 서버 팩 기존 버전 사용 (URL 미설정)")
+                log(emit_component("DEPS", "OK", "POT", "PO 서버 팩 기존 버전 사용 (URL 미설정)"))
                 return None
             return (
                 "PO 서버 팩 URL이 설정되지 않았습니다 — 배포자가 pot-pack.zip 을"
                 " 릴리스에 올리고 POT_PACK_URL 을 지정해야 합니다"
             )
-        log("[~] PO 서버 팩 내려받는 중... (node.exe + bgutil 서버, 수십 MB)")
+        log(emit_component("DEPS", "RUN", "POT", "PO 서버 팩 내려받는 중... (node.exe + bgutil 서버, 수십 MB)"))
         os.makedirs(root, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="cz_comp_") as td:
             zp = _download(POT_PACK_URL, os.path.join(td, "pot-pack.zip"), log,
                            "PO 서버 팩")
             _extract_zip(zp, root, log, "PO 서버 팩", promote_single_root=True)
-        if not (os.path.isfile(pot_node_exe())
+        if not (os.path.isfile(os.path.join(components_root(), "node", "node.exe"))
                 and os.path.isfile(os.path.join(pot_server_dir(), "build", "main.js"))):
             return "PO 서버 팩에 node/node.exe 또는 server/build/main.js 가 없습니다"
-        log("[v] PO 서버 팩 설치 완료 (node.exe + bgutil 서버)")
+        log(emit_component("DEPS", "OK", "POT", "PO 서버 팩 설치 완료 (node.exe + bgutil 서버)"))
         log_history.log("PO 서버 팩 설치 완료 (node.exe + bgutil 서버)")
         return None
     except Exception as e:
@@ -415,23 +456,39 @@ def streamlink_ready():
 
 
 def ensure_streamlink_pack(log, force=False):
-    """streamlink 팩(치지직 라이브 녹화용) 전개. URL 미설정/실패 시 기존분 사용."""
+    """streamlink 팩(치지직 라이브 녹화용) 전개. URL 미설정/실패 시 기존분 사용.
+
+    [맥 지원] 맥에서는 streamlink-pip.zip (윈도우 전용)을 다운로드하지 않고,
+    pip로 설치된 streamlink를 사용한다.
+    """
     log = _logcb(log)
     try:
+        # [맥 지원] 맥에서는 pip 설치 streamlink 우선 사용
+        if os.name != "nt":
+            try:
+                import streamlink  # noqa: F401
+                log(emit_component("DEPS", "OK", "streamlink", "streamlink pip 설치 확인 — 건너뜀"))
+                return None
+            except ImportError:
+                pass
+            if not SL_PACK_URL:
+                log(emit_component("DEPS", "WARN", "streamlink", "streamlink 미설치 — pip install streamlink 로 설치 권장"))
+                return "streamlink 미설치 — macOS에서는 pip install streamlink 로 설치하세요"
+
         pack_json = os.path.join(streamlink_dir(), "pack.json")
         current, remote = _pack_current(SL_PACK_VER_URL, pack_json)
         if not force and streamlink_ready() and current:
-            log(f"[v] streamlink 팩 최신 — 건너뜀 ({remote or '알 수 없음'})")
+            log(emit_component("DEPS", "OK", "streamlink", f"팩 최신 — 건너뜀 ({remote or '알 수 없음'})"))
             return None
         if not SL_PACK_URL:
             if streamlink_ready():
-                log("[v] streamlink 팩 기존 버전 사용 (URL 미설정)")
+                log(emit_component("DEPS", "OK", "streamlink", "팩 기존 버전 사용 (URL 미설정)"))
                 return None
             return (
                 "streamlink 팩 URL이 설정되지 않았습니다 — 치지직 라이브 녹화에는"
                 " streamlink-pack.zip 이 필요합니다"
             )
-        log("[~] streamlink 팩 내려받는 중... (치지직 라이브 녹화 엔진)")
+        log(emit_component("DEPS", "RUN", "streamlink", "팩 내려받는 중... (치지직 라이브 녹화 엔진)"))
         os.makedirs(streamlink_dir(), exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="cz_comp_") as td:
             zp = _download(SL_PACK_URL, os.path.join(td, "streamlink-pack.zip"), log,
@@ -440,7 +497,7 @@ def ensure_streamlink_pack(log, force=False):
                          promote_single_root=True)
         if not streamlink_ready():
             return "streamlink 팩에 streamlink_cli 가 없습니다"
-        log("[v] streamlink 팩 설치 완료")
+        log(emit_component("DEPS", "OK", "streamlink", "팩 설치 완료"))
         return None
     except Exception as e:
         return f"{type(e).__name__}: {e}"
@@ -458,7 +515,7 @@ def ensure_all(log, force=False):
     """
     global _last_error
     _ready_event.clear()
-    log("[~] 외부 구성요소 동기화 시작 (yt-dlp / 플러그인 / PO 서버 / streamlink)")
+    log(emit_component("DEPS", "RUN", "-", "외부 구성요소 동기화 시작 (yt-dlp / 플러그인 / PO 서버 / streamlink)"))
     errs = []
     _ver, err = ensure_ytdlp(log, force)
     if err:
@@ -476,11 +533,11 @@ def ensure_all(log, force=False):
     ok = not errs
     _ready_event.set()
     if ok:
-        log("[v] 구성요소 준비 완료 — 모든 기능 사용 가능")
+        log(emit_component("DEPS", "OK", "-", "구성요소 준비 완료 — 모든 기능 사용 가능"))
     else:
-        log("[!] 일부 구성요소 미준비 — 관련 기능만 제한됩니다", True)
+        log(emit_component("SYS", "FAIL", "DEPS", f"일부 구성요소 미준비 — {len(errs)}개 오류"))
         for e in errs:
-            log(f"      {e}", True)
+            log(emit_component("SYS", "FAIL", "DEPS", e))
     return ok, _last_error
 
 
