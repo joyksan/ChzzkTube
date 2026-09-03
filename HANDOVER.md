@@ -411,3 +411,160 @@ U+2028 문자로 남는다. 문서 끝 텍스트 비교 시 `\u2028` 정규화 �
 - .md 미러를 손으로 고치는 것 (항상 .py가 원본)
 - GUI 없는 CI 가정으로 Qt 코드를 임포트만으로 검증 끝이라 착각하는 것 — smoke_test(offscreen)를 돌릴 것
 - 배포 시의 완벽한 포터블(Portable) 무결성을 침범하는 행위
+
+---
+
+## 11. TUI 레이아웃 + 로그 미니멀화 (2026-09-03)
+
+| 항목 | 내용 |
+|------|------|
+| 폰트 통일 | 전체 `JetBrains Mono` → `Cascadia Mono 11px`. `theme.py` / `main.py` / `progress_emitter.py` 모든 QSS와 QFont 참조 수정 |
+| Flat 레이아웃 | `QGroupBox` 보더/반경 제거 → flat. 섹션 타이틀 투명 처리. 1px 구분선(`QFrame.tui-separator`)으로 섹션 구분 |
+| 세로 정렬 | 모든 레이아웃의 `left margin: 0`, `main_layout`의 `left margin: 12px`로 `Path`/`>`/`[10:54:14]` 정렬 통일 |
+| 프롬프트 | `Input & Action`에 `>` 프롬프트 라벨 추가 (Cascadia Mono Bold, 액센트 색상) |
+| 입력 필드 | `QLineEdit#url_input` 언더라인 스타일 (1px border-bottom, 포커스 시 액센트) |
+| MSG 미니멀화 | 모든 `emit_event`/`emit_dl`/`format_log_line` MSG를 영어 1-3단어로 축소 (한국어 → 영어) |
+| PLATFORM 칼럼 | `finalizer.py` / `live_recorder.py` / `downloader.py`의 하드코딩 `"-"`를 `_dl_platform()` 호출로 교체 |
+| SPEC 칼럼(라이브) | 라이브 진행 틱에서 파일명(SPEC) → MSG로 이동, SPEC에 `-` |
+| format_analysis_counts | `(비디오 3개, 오디오 2개)` → `(v:3, a:2)` |
+
+### MSG 대조표 (Before → After)
+
+| 위치 | Before | After |
+|------|--------|-------|
+| main.py:408 | `로드 완료 — {n}개 URL` | `{n} URLs` |
+| main.py:415 | `파일 읽기 실패` | `read fail` |
+| main.py:425 | `사용자에 의해 중단 요청됨` | `user abort` |
+| main.py:449 | `경로 변경 → {path}` | `path → {path}` |
+| main.py:527 | `구성요소 확인 지연 — 입력 선개방` | `deps delayed — unlock` |
+| main.py:544 | `Components up-to-date` | `deps ok` |
+| main.py:567 | `Server bind failed — ...` (길게) | `bind fail — age-only` |
+| main.py:574 | `Ready for download` | `ready` |
+| main.py:625,918 | `분석 시작...` | `analyzing...` |
+| main.py:662 | `분석 완료{counts} — {url}` | `analysis ok{counts}` |
+| main.py:705 | `업데이트 가능 — {summary}` | `update — {summary}` |
+| main.py:714 | `DEPS 확인 완료` | `deps ok` |
+| main.py:735 | `업데이트 {summary}` | `update {summary}` |
+| main.py:864 | `상세 로그 버퍼 비어 있음 — ...` | `empty buffer` |
+| main.py:908 | `입력 파싱 오류: {e}` | `parse error: {e}` |
+| main.py:943 | `현재 항목 건너뛰기 요청됨` | `skip request` |
+| progress_emitter.py:100 | `"{title}"` | `{title}` (따옴표 제거) |
+| progress_emitter.py:114 | `완료 — {bn} ({sz})` | `{bn} ({sz})` |
+| progress_emitter.py:132 | `다운로드 시작 — {title}` | `{title}` |
+| progress_emitter.py:146 | `라이브 녹화 시작 — {title}` | `live — {title}` |
+| progress_emitter.py:161 | `치지직 다운로드 시작 — {title}` | `chzzk — {title}` |
+| progress_emitter.py:184 | `라이브 녹화 완료` | `live done` |
+| finalizer.py:17 | `사용자 중단` | `abort` |
+| finalizer.py:46 | `종료 — 성공 N개, 실패 M개` | `done — {s}/{total}` |
+| live_recorder.py:70 | `녹화 종료 코드 오류` | `exit code error` |
+| live_recorder.py:89 | `라이브 저장 완료 — {bn}` | `saved — {bn}` |
+| live_recorder.py:160 | `라이브 녹화 중` | `recording — {spec}` |
+| live_recorder.py:198 | `{tag} 라이브 녹화 실패` | `{tag} fail` |
+| downloader.py:49 | `비디오와 오디오 스트림 병합 중...` | `merging` |
+| downloader.py:63 | `건너뜀 — 이미 존재하는 파일 ({bn})` | `skip — exists ({bn})` |
+| downloader.py:154 | `치지직 스트림 정보를 가져오지 못했습니다 (...)` | `chzzk stream fail (cookie)` |
+| downloader.py:283 | `미디어 정보를 가져오지 못했습니다.` | `media info fail` |
+| downloader.py:293 | `연령 제한/멤버십...` (4줄) | `age/membership restricted` |
+| downloader.py:298 | `분석 오류 발생: {ex}` | `analysis error: {ex}` |
+| target_downloader.py:78 | `치지직 스트림 정보를...` (길게) | `chzzk stream fail (cookie)` |
+| target_downloader.py:82 | `치지직 다운로드 URL 없음` | `chzzk URL missing` |
+| target_downloader.py:118 | `동영상 정보 추출 실패` | `info extract fail` |
+| live_recorder.py:40 | `라이브 정보 추출 실패` | `live info fail` |
+| live_recorder.py:44 | `라이브 스트림 URL 없음` | `live URL missing` |
+| controller.py:55 | `TXT 읽기 실패: {e}` | `TXT read fail: {e}` |
+
+### 검증
+- `smoke_test.py` PASS
+- `py_compile` 전체 OK
+
+---
+
+## 12. DEPS 로그 영문화 + PLATFORM 축약 + 폰트 통일 (2026-09-03)
+
+| 항목 | 내용 |
+|------|------|
+| raw 로그 타임스탬프 | `main.py _mirror_full_log()` — 모든 raw 로그 라인에 `[HH:MM:SS]` 자동 부착. 다중 라인 메시지 모든 줄에 동일 타임스탬프. F12 창 + 히스토리 버퍼 모두 적용. `import time` 추가 |
+| 폰트 통일 | `D2Coding-Regular.ttf` → `CascadiaMono-VariableFont_wght.ttf` 로드. `theme.py` 전체 QSS 폰트 체인 `'Cascadia Mono', monospace` (Consolas 제거). `main.py` setFamilies `["Cascadia Mono"]` 단일 폰트 |
+| dialog 영문화 | `dialogs.py` 전체 UI 라벨 영문화 — ExitConfirmDialog("Exit"/"Cancel"/경고문), CookieSelectDialog("Error" + 브라우저 쿠키 로드 실패 메시지), ActionCountdownDialog("Run Now"/"Cancel"/"Post-Download Action"/초 카운트다운), CookieViewerDialog("Close"), SettingsDialog(컨테이너/쿠키/유튜브 클라이언트/옵션 체크박스 라벨 전부) |
+| updater.PACKAGES 재구성 | `[("ytdlp", "yt-dlp"), ("streamlink", "streamlink"), ("bgutil", "bgutil-ytdlp-pot-provider")]` — 로그용 짧은 라벨 + PyPI 실명 분리. `dialogs._do_check`의 frozen 스킵도 `pypi_name` 기반으로 수정 |
+| main.py 툴팁 영문화 | F1~F12 버튼 tooltip, URL placeholder, QFileDialog 제목("Select Download Folder", "Select TXT File"), exit 콘솔 로그("shutdown: download worker not stopped...") 전부 영문화 |
+| pot_provider 영문화 보강 | `"Node.js 런타임 구성 후에도 요구 버전 미충족"` → `"Node.js still below requirement (>= 22) after configure"` 포함 8건 추가 수정. `probe_server` 리턴 디테일, `_spawn_node_server` 실패 사유, `download_and_install_source` RuntimeError 등 |
+| progress_emitter 제목 폴백 | `동영상` → `video` / `치지직` → `untitled` |
+| downloader.py | `재생목록/채널` → `playlist/channel` / `포맷 분석 시작` → `format analysis start` |
+| live_recorder.py | `프로세스 종료 코드` → `process exit code` |
+| cookies.py | `쿠키 DB 읽기 실패` → `cookie DB read failed` |
+| 검증 | `smoke_test.py` PASS, `py_compile` 11개 모듈 ALL OK |
+
+---
+
+## 13. 로그 컬럼 표준화 + LIVE 스테이지 분리 + 비주얼 폴리시 (2026-09-03)
+
+### 표준 포맷 (v3)
+```
+[HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ SPEED │ PCT │ BAR │ MSG
+```
+- **SPEED 칼럼 신설**: SPEC(스트림 속성 `1080p30`)과 SPEED(네트워크 `12.4M/s`) 분리.
+  기존 `emit_dl`이 spec 뒤에 speed를 문자열 병합하던 것을 `format_log_line(speed=)` 파라미터로 분리.
+  SPEC/SPEED 모두 `"-"`면 칼럼 자체를 생략(조건부 칼럼 유지).
+- **LIVE 스테이지 신설**: 라이브 녹화 틱/헤더/종료/실패가 `DL` 재사용하지 않고 `LIVE` 사용.
+  - `progress_emitter.emit_live_header` — 해상도는 SPEC, 제목은 MSG
+  - `progress_emitter.emit_live_final_stats` — 용량은 MSG `live done (1.2 GB)`, 평균속도는 SPEED
+  - `live_recorder` 4개 emit_dl 호출 전부 `stage="LIVE"`
+- **SPEC/MSG 엄격 매핑**: SPEC=스트림 속성 전용, MSG=제목·파일명·시스템 메시지 전용.
+  - `live_recorder.handle_stream_finish` DONE 라인: SPEC의 파일 크기 → MSG `saved — {name} ({size})` 이동
+  - `finalizer`: 배치 결론 라인의 SPEC(`batch done`)/SPEED(`1/3`) 오염 제거 → MSG `batch finished (success: N, fail: M)` 통합
+
+### 비주얼 폴리시
+| 항목 | 변경 |
+|------|------|
+| 소프트 레드 | `theme.ERROR` `#f44747` → `#e06c75` (Atom One Dark pastel). `LOG_COLOR_ERROR`/`BTN_DANGER_QSS` 자동 파생 |
+| (x) 버튼 제거 | `url_input.setClearButtonEnabled(False)` + `installEventFilter` — url_input 내부 ESC 입력 감지 |
+| ESC 컨텍스트 액션 | `_esc_action()`: 실행 중 → abort, 대기 중 → `url_input.clear()`. 전역 keyPressEvent와 eventFilter 양쪽 바인딩 |
+| 힌트 갱신 | 버튼 행: `[ F4: Load .txt ] │ [ ESC: Clear │ ENTER: Start ]` — 딤 `│` QLabel 구분자(`_tui_sep`) 추가. ESC 버튼 라벨은 `update_ui_state`에서 동적 갱신(`[ ESC: Abort ]` ↔ `[ ESC: Clear ]`) |
+| 영문 매핑 적용 | `deps check delayed — opening input` / `node.js >= 22 missing — downloading portable runtime` / `pot server bound (127.0.0.1:4416)` / `stream analyzed (v:21, a:4)` / `download canceled by user` / `batch finished (success: N, fail: M)` |
+
+
+---
+
+## 14. URL 분석 유령 로그 수리 + 인식 디바운스 (2026-09-03)
+
+### 증상
+URL 입력을 지울 때마다 `analysis` 로그가 한 번 더 출력됨. 타이핑 중에도 부분 URL로 분석이 점화.
+
+### 근본 원인 (경쟁상태)
+AnalyzeWorker의 `result_ready`/`error_occurred`는 워커 스레드 → GUI 스레드 **queued connection**.
+`_abandon_analyze_worker()`의 `disconnect()`는 '이후' 방출만 차단할 뿐 **이미 이벤트 큐에
+적재된 전달은 취소하지 못한다**. 지우기 직전 큐잉된 결과가 슬롯에 도착해
+`stop_analysis_anim` → `stream analyzed` 라인이 남았던 것이 유령 로그의 정체.
+
+### 수정 (main.py)
+| 항목 | 내용 |
+|------|------|
+| `_is_stale_analyze_signal()` 신설 | `on_analyze_success`/`on_analyze_error` 입구 가드. ① `self.sender() is not self.worker_analyze` → 유기된 워커의 큐잉 시그널 폐기. ② `url_input`이 비었으면(분석 도중 지워짐) 폐기. 폐기 시 `extracted_data` 오염도 차단 (stale URL의 `live_hint` 오염 부수 수리) |
+| 디바운스 500ms → 900ms | 모듈 상수 `_ANALYZE_DEBOUNCE_MS = 900` — 타이핑 멈춤 기준 지연 상향 |
+| URL 형태 가드 | `on_url_changed`에서 텍스트에 `://` 또는 `.`이 없으면 타이머 미가동 — 부분 타이핑/'그냥 단어'에 analyzing 점화 방지 |
+
+### 검증
+- 큐잉 경쟁상태 재현 테스트: 유기 워커 시그널 → 드랍(confirm), 활성 워커 시그널 → 정상 처리 — 둘 다 PASS
+- 타이핑/벌크 입력 판별 테스트: 키 입력 900ms, 붙여넣기/드롭/TXT 로드 150ms, 도메인 미완성 가드 차단 — 전부 PASS
+- `py_compile` OK, `smoke_test.py` PASS
+
+### 타이핑 인식 가드 (추가 보완)
+
+**이론적 한계**: "사용자가 타이핑을 끝냈다"는 미래 입력 부재를 감지해야만 알 수 있으므로
+키 입력 경로의 침묵 대기(디바운스)는 구조상 불가피하다. 단, 붙여넣기·드래그&
+드롭·TXT 로드는 한 이벤트에 텍스트가 통째로 들어오므로 **입력 증분(delta)으로
+즉시 식별 가능**하다.
+
+| 항목 | 내용 |
+|------|------|
+| `_BULK_INPUT_DELAY_MS = 150` | 벌크 입력(붙여넣기/드롭/TXT) 즉시 분석 — 0ms 대신 150ms는 프로그램적 다중 setText 병합용 |
+| 입력 증분 판별 | `on_url_changed`에서 `len(text) - _last_input_len > 1` → 벌크 입력으로 판정, 짧은 지연 적용. 1글자 증분이면 키 입력 → 900ms 디바운스 유지 |
+| URL 형태 가드 강화 | 기존 `":"` 또는 `"."` → `re.search(r"\S\.\S", text)` (도메인 형태) + `"://"` — 부분 타이핑에서의 불필요한 점화 차단 |
+| 검증 | 키 입력 900ms / 벌크 150ms / 도메인 미완성 가드 차단 — 전부 PASS |
+
+### 검증
+- `py_compile` 9개 모듈 OK, `smoke_test.py` PASS
+- `is_tui_line`이 SPEED 칼럼 포함 신규 라인도 정상 인식 (raw 로그 미러링/필터 무영향)
+- 샘플 렌더 확인: VOD 틱(SPEC/SPEED 분리), LIVE 틱/종료, 배치 결론, FAIL, 분석 라인 전부 규격 준수
+

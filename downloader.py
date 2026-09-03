@@ -46,7 +46,7 @@ class YtLoggerBridge:
         clean_msg = clean_ansi(msg)
         if "Merging formats into" in clean_msg and self.log_concise_signal:
             self.log_concise_signal.emit(
-                log_console.format_log_line('MERG', 'RUN', platform='-', spec='-', msg='비디오와 오디오 스트림 병합 중...'),
+                log_console.format_log_line('MERG', 'RUN', platform='-', spec='-', msg='merging'),
                 False, False,
             )
         if clean_msg.strip():
@@ -60,7 +60,7 @@ class YtLoggerBridge:
                     .strip()
                 )
                 self.log_concise_signal.emit(
-                    log_console.emit_event("DL", "OK", "-", f"건너뜀 — 이미 존재하는 파일 ({os.path.basename(fname)})"),
+                    log_console.emit_event("DL", "OK", "-", f"skip — exists ({os.path.basename(fname)})"),
                     False,
                     False,
                 )
@@ -70,11 +70,11 @@ class YtLoggerBridge:
 
     def warning(self, msg):
         if msg.strip():
-            self.log_full_signal.emit(f"[WARNING] {clean_ansi(msg)}")
+            self.log_full_signal.emit(clean_ansi(msg))
 
     def error(self, msg):
         if msg.strip():
-            self.log_full_signal.emit(f"[ERROR] {clean_ansi(msg)}")
+            self.log_full_signal.emit(clean_ansi(msg))
 
 class AnalyzeWorker(QThread):
     result_ready = pyqtSignal(dict)
@@ -88,7 +88,7 @@ class AnalyzeWorker(QThread):
         self.logger = YtLoggerBridge(self.log_full)
 
     def run(self):
-        self.log_full.emit(f"--- [포맷 분석 시작] {self.target_url} ---")
+        self.log_full.emit(f"--- [format analysis start] {self.target_url} ---")
 
         try:
             m_clip = re.search(r"chzzk\.naver\.com/clips?/", self.target_url)
@@ -151,7 +151,7 @@ class AnalyzeWorker(QThread):
                         })
                 if not v_list and not a_list:
                     self.error_occurred.emit(
-                        "치지직 스트림 정보를 가져오지 못했습니다 (치지직 로그인 쿠키 확인)"
+                        "chzzk stream fail (cookie)"
                     )
                     return
                 self.result_ready.emit(
@@ -174,7 +174,7 @@ class AnalyzeWorker(QThread):
                     
                     entries = info.get("entries") or []
                     video_count = len(entries)
-                    title = info.get("title") or "재생목록/채널"
+                    title = info.get("title") or "playlist/channel"
                     
                     self.result_ready.emit({
                         "is_playlist": True,
@@ -280,7 +280,7 @@ class AnalyzeWorker(QThread):
                         }
                     )
                 else:
-                    self.error_occurred.emit("미디어 정보를 가져오지 못했습니다.")
+                    self.error_occurred.emit("media info fail")
         except Exception as ex:
             ex_str = str(ex).lower()
             if (
@@ -290,12 +290,10 @@ class AnalyzeWorker(QThread):
                 or "members-only" in ex_str
             ):
                 self.error_occurred.emit(
-                    "연령 제한/멤버십 전용 동영상입니다 — 설정에서 유튜브에 로그인된\n"
-                    "브라우저의 쿠키를 지정하세요. (360p만 나오면 브라우저에서 해당\n"
-                    "영상을 재생해 세션을 새로 만든 뒤 재시도)"
+                    "age/membership restricted"
                 )
             else:
-                self.error_occurred.emit(f"분석 오류 발생: {str(ex)}")
+                self.error_occurred.emit(f"analysis error: {str(ex)}")
 
 class DownloadWorker(QThread):
     log_concise = pyqtSignal(str, bool, bool)

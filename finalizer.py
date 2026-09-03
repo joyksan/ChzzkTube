@@ -14,7 +14,7 @@ def finalize(worker, total, failed_targets, success_count):
         else:
             worker.log_concise.emit(
                 emit_dl("ABORT", "-", spec="-", speed="-", pct=0, bar_frac=0,
-                        msg="사용자 중단"),
+                        msg="download canceled by user"),
                 is_status=False, is_error=False,
             )
 
@@ -34,16 +34,16 @@ def finalize(worker, total, failed_targets, success_count):
                 is_status=False, is_error=True,
             )
 
-    # [결론 라인] ─ 성공/실패 카운트를 컬럼 메시지에 담음
+    # [결론 라인] — 성공/실패 카운트는 MSG 전용 (SPEC/SPEED 침범 금지)
     worker.log_concise.emit(
         emit_dl(
             status="DONE" if fail_count == 0 else "WARN",
             platform="-",
-            spec=f"batch done",
-            speed=f"{success_count}/{total}",
+            spec="-",
+            speed="-",
             pct=100,
             bar_frac=1.0,
-            msg=f"종료 — 성공 {success_count}개, 실패 {fail_count}개",
+            msg=f"batch finished (success: {success_count}, fail: {fail_count})",
         ),
         is_status=False, is_error=fail_count > 0,
     )

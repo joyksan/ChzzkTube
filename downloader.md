@@ -60,13 +60,9 @@ class YtLoggerBridge:
                     .strip()
                 )
                 self.log_concise_signal.emit(
-                    format_kv_line(
-                        "[!]",
-                        "건너뜀",
-                        f"이미 존재하는 파일입니다. ({os.path.basename(fname)})",
-                    ),
+                    log_console.emit_event("DL", "OK", "-", f"건너뜀 — 이미 존재하는 파일 ({os.path.basename(fname)})"),
                     False,
-                    True,
+                    False,
                 )
 
     def info(self, msg):
@@ -74,11 +70,11 @@ class YtLoggerBridge:
 
     def warning(self, msg):
         if msg.strip():
-            self.log_full_signal.emit(f"[WARNING] {clean_ansi(msg)}")
+            self.log_full_signal.emit(clean_ansi(msg))
 
     def error(self, msg):
         if msg.strip():
-            self.log_full_signal.emit(f"[ERROR] {clean_ansi(msg)}")
+            self.log_full_signal.emit(clean_ansi(msg))
 
 class AnalyzeWorker(QThread):
     result_ready = pyqtSignal(dict)

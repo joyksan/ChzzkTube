@@ -75,11 +75,11 @@ def _download_chzzk(worker, url, content_type):
     )
     formats = ch_info.get("formats") or []
     if not formats:
-        raise RuntimeError("치지직 스트림 정보를 가져오지 못했습니다 (치지직 로그인 쿠키 확인)")
+        raise RuntimeError("chzzk stream fail (cookie)")
     fmt = formats[0]  # 최고 품질 우선 (API 가 정렬)
     stream_url = fmt.get("url") or ""
     if not stream_url:
-        raise RuntimeError("치지직 다운로드 URL 없음")
+        raise RuntimeError("chzzk URL missing")
 
     if not worker._meta_logged:
         worker._emit_chzzk_header(ch_info, fmt)
@@ -115,7 +115,7 @@ def _download_vod(worker, url):
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     if not info:
-        raise RuntimeError("동영상 정보 추출 실패")
+        raise RuntimeError("info extract fail")
 
     if not worker._meta_logged:
         worker._emit_download_header(info)

@@ -52,7 +52,7 @@ class DownloadController:
                                 "https://" + t if t.startswith("www.") else t
                             )
             except Exception as e:
-                raise ValueError(f"TXT 읽기 실패: {e}") from e
+                raise ValueError(f"TXT read fail: {e}") from e
         else:
             for l in raw_text.splitlines():
                 t = l.strip()

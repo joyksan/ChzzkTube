@@ -274,6 +274,14 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
+
+/* [라벨 좌측 정렬] 콘솔 그룹 타이틀은 좌측 정렬 — 타임스탬프/컨텐츠 정렬에 맞춤 */
+QGroupBox#console_group::title {
+    text-align: left;
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding-left: 2px;
+}
 """
 
 

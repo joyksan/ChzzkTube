@@ -1,7 +1,9 @@
 ##### main.py - 메인 윈도우 및 앱 실행 진입점
 import os
 import platform
+import re
 import sys
+import time
 
 from PyQt6.QtCore import qInstallMessageHandler
 
@@ -14,7 +16,7 @@ def qt_message_handler(mode, context, message):
 
 qInstallMessageHandler(qt_message_handler)
 
-from PyQt6.QtCore import Qt, QThread, QTimer
+from PyQt6.QtCore import Qt, QThread, QTimer, QEvent
 from PyQt6.QtGui import QFont, QFontDatabase, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
@@ -41,6 +43,13 @@ from controller import DownloadController
 from dialogs import ExitConfirmDialog, SettingsDialog, UpdateWorker, VerboseLogWindow
 from downloader import AnalyzeWorker
 from utils import _open_windows_explorer
+
+# [URL 인식 디바운스] 키 입력(타이핑) 침묵 기준 지연 — "타이핑 끝남"은 미래 입력
+# 부재를 감지해야만 알 수 있어 키 입력 경로에선 구조상 필수다.
+_ANALYZE_DEBOUNCE_MS = 900
+# [벌크 입력 공출화] 붙여넣기·드래그&드롭·TXT 로드는 통째로 들어오므로 즉시 분석.
+# 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
+_BULK_INPUT_DELAY_MS = 150
 
 try:
     import winsound
@@ -134,7 +143,7 @@ class MainWindow(QMainWindow):
             self.ctrl.shutdown(1000)
             if self.ctrl.worker is not None and self.ctrl.worker.isRunning():
                 log_history.log(
-                    "종료: 다운로드 워커 미종료(1s) — 취소 플래그로 자연 종료 예정, 프로세스 종료 진행",
+                    "shutdown: download worker not stopped (1s) — cancelling then exiting",
                     "WARN",
                 )
             # [스레드 경계] 종료 전 러닝 QThread 회수 — 좀비 분석 워커/기동 워커가
@@ -146,7 +155,7 @@ class MainWindow(QMainWindow):
                     w.wait(1500)
                     if w.isRunning():
                         log_history.log(
-                            "종료: 유기된 분석 워커 미종료(1.5s) — 프로세스 종료 진행",
+                            "shutdown: orphaned analyze worker (1.5s) — forcing exit",
                             "WARN",
                         )
             for name in ("_pot_worker", "update_worker"):
@@ -155,7 +164,7 @@ class MainWindow(QMainWindow):
                     w.wait(1500)
                     if w.isRunning():
                         log_history.log(
-                            f"종료: 기동 워커({name}) 미종료(1.5s) — 프로세스 종료 진행",
+                            f"shutdown: startup worker ({name}) not stopped (1.5s) — forcing exit",
                             "WARN",
                         )
             log_history.session_end()
@@ -203,18 +212,22 @@ class MainWindow(QMainWindow):
         self.setup_ui()
 
     def setup_ui(self):
-        """[TUI Refactor] fzf-style minimalist 3-GroupBox 레이아웃.
+        """[TUI Refactor] Hyper-Minimal Modern TUI — flat, borderless, mono.
 
-        ├── Configuration ── PATH: ... │ [F1] [F2] │ [F12] [F3]
-        ├── Input & Action ── > [url_input] │ [F4] │ [ENTER │ ESC]
-        └── Live Console Monitor ── (stretch=1 → 100% 채움)
+        ├── Path ...  │ [F1] [F2] │ [F12] [F3]
+        ├── ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+        │ > [url_input..........................] [F4] [ENTER]
+        ├── ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
+        └── [10:54:14] DEPS  │ OK  │ ...        ← console (stretch=1)
         """
-        # ── 중앙 위젯 / 메인 레이아웃 (flat 3-panel, no master wrapper) ──
+        from PyQt6.QtWidgets import QFrame
+
+        # ── 중앙 위젯 / 메인 레이아웃 (flat, no master wrapper) ──
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         main_layout = QVBoxLayout(main_widget)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(12, 8, 12, 8)
+        main_layout.setSpacing(0)
 
         # ── 헬퍼: tui-tag 클래스 버튼 ──
         def _tui_tag(text, tooltip, slot):
@@ -227,16 +240,34 @@ class MainWindow(QMainWindow):
             b.style().polish(b)
             return b
 
+        # ── 헬퍼: 힌트 버튼 사이 딤 '│' 구분자 ──
+        def _tui_sep():
+            sep = QLabel("│")
+            sep.setStyleSheet(
+                f"color: {theme.FG_DIM}; border: none; background: transparent; padding: 0px;"
+            )
+            return sep
+
+        # ── 헬퍼: 1px 섹션 구분선 ──
+        def _separator():
+            line = QFrame()
+            line.setProperty("class", "tui-separator")
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setFrameShadow(QFrame.Shadow.Plain)
+            line.setStyleSheet("QFrame { background-color: #1a1a1a; max-height: 1px; min-height: 1px; border: none; }")
+            line.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            return line
+
         # ════════════════════════════════════════════════════════════════════
-        # Layer 1: Configuration (QGroupBox)
+        # Layer 1: Configuration (flat — no border, no title)
         # ════════════════════════════════════════════════════════════════════
-        self.header_group = QGroupBox("Configuration")
+        self.header_group = QGroupBox("")
         self.header_group.setObjectName("header_group")
         self.header_group.setProperty("class", "tui-panel")
         self.header_group.style().unpolish(self.header_group)
         self.header_group.style().polish(self.header_group)
         hlay = QHBoxLayout(self.header_group)
-        hlay.setContentsMargins(10, 6, 10, 6)
+        hlay.setContentsMargins(0, 0, 0, 0)
         hlay.setSpacing(6)
 
         self.path_label = QLabel()
@@ -250,11 +281,11 @@ class MainWindow(QMainWindow):
         hlay.addWidget(self.path_label, 1)
 
         self.btn_change = _tui_tag(
-            "[ F1: Change ]", "저장 폴더 변경 (F1)", self.change_folder
+            "[ F1: Change ]", "Change download folder (F1)", self.change_folder
         )
         self.btn_open = _tui_tag(
             "[ F2: Open ]",
-            "저장 폴더 열기 (F2)",
+            "Open download folder (F2)",
             lambda: _open_windows_explorer(self.cfg["download_path"]),
         )
         hlay.addWidget(self.btn_change)
@@ -266,36 +297,46 @@ class MainWindow(QMainWindow):
         hlay.addWidget(self.v_line)
 
         self.btn_full_log = _tui_tag(
-            "[ F12: Full Log ]", "전체 상세 로그 창 토글 (F12)", self.toggle_verbose_log
+            "[ F12: Full Log ]", "Toggle full log window (F12)", self.toggle_verbose_log
         )
         self.btn_settings = _tui_tag(
-            "[ F3: Settings ]", "설정 열기 (F3)", self.open_settings
+            "[ F3: Settings ]", "Open settings (F3)", self.open_settings
         )
         hlay.addWidget(self.btn_full_log)
         hlay.addWidget(self.btn_settings)
 
         main_layout.addWidget(self.header_group)
 
+        # ── 1px 구분선 ──
+        main_layout.addWidget(_separator())
+
         # ════════════════════════════════════════════════════════════════════
-        # Layer 2: Input & Action (QGroupBox)
+        # Layer 2: Input & Action (flat — no border, prompt-style)
         # ════════════════════════════════════════════════════════════════════
-        self.input_group = QGroupBox("Input && Action")
+        self.input_group = QGroupBox("")
         self.input_group.setObjectName("input_group")
         self.input_group.setProperty("class", "tui-panel")
         self.input_group.style().unpolish(self.input_group)
         self.input_group.style().polish(self.input_group)
         ilay = QHBoxLayout(self.input_group)
-        ilay.setContentsMargins(10, 6, 10, 6)
+        ilay.setContentsMargins(0, 0, 0, 0)
         ilay.setSpacing(6)
 
-        self.prompt_symbol = QLabel(">")
-        ilay.addWidget(self.prompt_symbol)
+        # 프롬프트 `>` 기호 — 콘솔 출력처럼 보이게
+        self.prompt_label = QLabel(">")
+        prompt_font = QFont("Cascadia Mono", 11)
+        prompt_font.setBold(True)
+        self.prompt_label.setFont(prompt_font)
+        self.prompt_label.setStyleSheet("color: #4ec9b0; border: none; background: transparent; padding: 0px;")
+        ilay.addWidget(self.prompt_label)
 
         # [ObjectName] url_input — TUI_STYLE의 QLineEdit#url_input 선택자 타겟
         self.url_input = QLineEdit()
         self.url_input.setObjectName("url_input")
-        self.url_input.setPlaceholderText("URL, 재생목록, 채널주소 입력...")
-        self.url_input.setClearButtonEnabled(True)
+        self.url_input.setPlaceholderText("URL, playlist, or channel URL...")
+        # [하이퍼미니멀] 네이티브 (x) 클리어 버튼 제거 — ESC 키로 대체
+        self.url_input.setClearButtonEnabled(False)
+        self.url_input.installEventFilter(self)
         self.url_input.textChanged.connect(self.on_url_changed)
         self.url_input.setDragEnabled(True)
         self.url_input.acceptDrops()
@@ -304,29 +345,34 @@ class MainWindow(QMainWindow):
         ilay.addWidget(self.url_input, 1)
 
         self.btn_txt = _tui_tag(
-            "[ F4: Load .txt ]", "TXT 파일에서 URL 목록 로드 (F4)", self.pick_txt
+            "[ F4: Load .txt ]", "Load URL list from TXT (F4)", self.pick_txt
         )
         ilay.addWidget(self.btn_txt)
+        ilay.addWidget(_tui_sep())
 
         self.btn_enter = _tui_tag(
             "[ ENTER: Start ]",
-            "URL 입력 후 시작 (Enter)",
+            "Start download (Enter)",
             self.toggle_download,
         )
         self.btn_esc = _tui_tag(
-            "[ ESC: Abort ]",
-            "실행 중 중단 (Esc)",
-            self.abort_download,
+            "[ ESC: Clear ]",
+            "Clear input (Esc) — abort when running",
+            self._esc_action,
         )
-        ilay.addWidget(self.btn_enter)
         ilay.addWidget(self.btn_esc)
+        ilay.addWidget(_tui_sep())
+        ilay.addWidget(self.btn_enter)
 
         main_layout.addWidget(self.input_group)
 
+        # ── 1px 구분선 ──
+        main_layout.addWidget(_separator())
+
         # ════════════════════════════════════════════════════════════════════
-        # Layer 3: Live Console Monitor (QGroupBox, stretch=1 → 100% 채움)
+        # Layer 3: Live Console Monitor (flat, stretch=1 → 100% 채움)
         # ════════════════════════════════════════════════════════════════════
-        self.console_group = QGroupBox("Live Console Monitor")
+        self.console_group = QGroupBox("")
         self.console_group.setObjectName("console_group")
         self.console_group.setProperty("class", "tui-panel")
         self.console_group.style().unpolish(self.console_group)
@@ -335,8 +381,7 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding
         )
         clay = QVBoxLayout(self.console_group)
-        # 콘솔 박스 안쪽: 좌 8, 우 8, 상 4, 하 8px 여백
-        clay.setContentsMargins(8, 4, 8, 8)
+        clay.setContentsMargins(0, 0, 0, 0)
         clay.setSpacing(0)
 
         # [ObjectName] console_log — TUI_STYLE의 QTextEdit#console_log 선택자 타겟
@@ -344,20 +389,11 @@ class MainWindow(QMainWindow):
         self.te_concise.setObjectName("console_log")
         self.te_concise.setReadOnly(True)
         self.te_concise.document().setDocumentMargin(0)
-        # 모던 TUI 미니멀 헤더 — 한 줄로 통합 (배너 + 메타)
-        # [paint 루프 방지] table/float 없이 순차 span만 사용 — QTextEdit의
-        # 제한된 HTML 서브셋에서 float:right는 layout이 깨진다.
-        self.te_concise.setHtml(
-            f'<span style="color:#4ec9b0;font-weight:bold;">[{APP_NAME} {APP_VERSION}]</span>'
-            f'<span style="color:#888888;">  by Miorine  </span>'
-            f'<span style="color:#4ec9b0;">── live console monitor ──</span>'
-        )
-        font = QFont("D2Coding", 10)
+        font = QFont("Cascadia Mono", 11)
         font.setStyleHint(QFont.StyleHint.Monospace)
-        font.setFamilies(["D2Coding", "Consolas", "Malgun Gothic", "Segoe UI"])
+        font.setFamilies(["Cascadia Mono"])
         self.te_concise.setFont(font)
         self.console = log_console.ConciseLogConsole(self.te_concise)
-        # update_tree_budget은 showEvent에서 위젯 실측 폭으로 1회 계산 (paint 루프 방지)
 
         clay.addWidget(self.te_concise, 1)
         main_layout.addWidget(self.console_group, stretch=1)
@@ -390,14 +426,14 @@ class MainWindow(QMainWindow):
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
                     log_console.emit_event(
-                        "SYS", "OK", "TXT", f"로드 완료 — {len(lines)}개 URL"
+                        "SYS", "OK", "TXT", f"{len(lines)} URLs"
                     ),
                     is_status=False,
                     is_error=False,
                 )
         except Exception:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "TXT", "파일 읽기 실패"),
+                log_console.emit_event("SYS", "FAIL", "TXT", "read fail"),
                 is_status=False,
                 is_error=True,
             )
@@ -407,23 +443,41 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_cancel()
             self.append_concise_log(
-                log_console.emit_event("DL", "ABORT", "-", "사용자에 의해 중단 요청됨"),
+                log_console.emit_event("DL", "ABORT", "-", "download canceled by user"),
                 is_status=False,
                 is_error=True,
             )
+
+    def _esc_action(self):
+        """ESC 컨텍스트 액션 — 실행 중이면 중단, 아니면 입력 필드 클리어."""
+        if self.ctrl.running:
+            self.abort_download()
+        else:
+            self.url_input.clear()
+
+    def eventFilter(self, obj, event):
+        """url_input 내부 ESC — 클리어(아이들) / 중단(실행 중) 처리."""
+        if (
+            obj is self.url_input
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Escape
+        ):
+            self._esc_action()
+            return True
+        return super().eventFilter(obj, event)
 
     def _update_path_label(self):
         """PATH 라벨 TUI 텍스트 갱신 — `path_label` 위젯 갱신."""
         path = self.cfg.get("download_path", "")
         self.path_label.setText(
-            f"<span style='color:#4ec9b0; font-weight:bold;'>PATH:</span> {path}"
+            f"<span style='color:#4ec9b0; font-weight:bold;'>Path</span> {path}"
         )
 
     def change_folder(self):
         if self.ctrl.running:
             return
         folder = QFileDialog.getExistingDirectory(
-            self, "저장 폴더 선택", self.cfg["download_path"]
+            self, "Select Download Folder", self.cfg["download_path"]
         )
         if folder:
             self.cfg["download_path"] = os.path.normpath(folder)
@@ -431,7 +485,7 @@ class MainWindow(QMainWindow):
             self.save_cfg()
             self.append_concise_log(
                 log_console.emit_event(
-                    "SYS", "OK", "CFG", f"경로 변경 → {self.cfg['download_path']}"
+                    "SYS", "OK", "CFG", f"path → {self.cfg['download_path']}"
                 ),
                 is_status=False,
                 is_error=False,
@@ -457,7 +511,7 @@ class MainWindow(QMainWindow):
             return
         path, _ = QFileDialog.getOpenFileName(
             self,
-            "TXT 파일 선택",
+            "Select TXT File",
             self.cfg["download_path"],
             "Text Files (*.txt);;All Files (*.*)",
         )
@@ -470,6 +524,7 @@ class MainWindow(QMainWindow):
 
         # [핵심] URL을 지웠을 때 분석 타이머·로그 즉시 초기화
         if not text:
+            self._last_input_len = 0
             self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
             # [결함 수리] terminate()+wait()는 GIL을 보유한 파이썬 스레드를
@@ -482,8 +537,22 @@ class MainWindow(QMainWindow):
             self._discard_analysis_result()
             return
 
+        # [타이핑 인식 가드] 입력 증분으로 '키 입력'과 '벌크 입력'을 구별한다.
+        #
+        # "타이핑을 끝냈다"는 사실은 미래 입력 부재를 감지해야만 알 수 있으므로
+        # 키 입력 경로는 침묵 대기(디바운스)가 구조상 필수다. 반면 붙여넣기·
+        # 드래그&드롭·TXT 로드는 한 이벤트에 텍스트가 통째로 들어오므로
+        # 증분 길이가 1을 초과 — 이 경우 지연을 걸 필요가 없다.
+        prev_len = getattr(self, "_last_input_len", 0)
+        self._last_input_len = len(text)
+        is_bulk_input = (len(text) - prev_len) > 1
+
         if not self.ctrl.running and getattr(self, "_startup_completed", False):
-            self.analyze_timer.start(500)
+            # [URL 형태 가드] 스킴 또는 '문자.문자' 형태의 도메인이 없으면
+            # 분석 후보가 아니다 — 부분 타이핑에서의 불필요한 점화 방지.
+            if "://" in text or re.search(r"\S\.\S", text):
+                delay = _BULK_INPUT_DELAY_MS if is_bulk_input else _ANALYZE_DEBOUNCE_MS
+                self.analyze_timer.start(delay)
 
     def _start_pot_provider(self):
         """앱 시작 시 bgutil PO Token 서버가 있도록 준비 (유튜브 성인제한/봇 확인 대응)."""
@@ -501,7 +570,7 @@ class MainWindow(QMainWindow):
     def _force_unlock_input(self):
         """[폴백] 구성요소 체인이 15초 내 완료되지 않으면 입력 강제 개방.
 
-        POT 서버는 연령제한 영상에만 필요 — 체인이 멈춰도 기본 다운로드는 막지 않는다.
+        POT server is only needed for age-restricted videos — a stalled chain should not block basic downloads.
         """
         if getattr(self, "_startup_completed", False):
             return
@@ -509,7 +578,7 @@ class MainWindow(QMainWindow):
         self.update_ui_state()
         self.append_concise_log(
             log_console.emit_event(
-                "SYS", "SKIP", "DEPS", "구성요소 확인 지연 — 입력 선개방"
+                "SYS", "SKIP", "DEPS", "deps check delayed — opening input"
             ),
             is_status=False,
             is_error=False,
@@ -517,7 +586,7 @@ class MainWindow(QMainWindow):
 
     def _on_pot_provider_finished(self):
         state, msg = self._pot_worker.outcome
-        log_history.log(f"PO Token 서버 기동 결과: {state} — {msg}")
+        log_history.log(f"PO server start result: {state} — {msg}")
 
         # 순서 정합성 패치: PO Token 설정 완료된 가장 마지막 단계에서 버전 체크 결과를 출력
         # [로그 정책] 구성요소별 '최신/건너뜀' 개별 라인은 간결 로그에서 생략되므로
@@ -526,7 +595,7 @@ class MainWindow(QMainWindow):
         # 업데이트 진행 라인이 이미 간결에 뜨므로 도장깨기하지 않는다.
         if state == "ok" and not getattr(self, "_stale_updates", False):
             self.append_concise_log(
-                log_console.emit_event("SYS", "OK", "DEPS", "Components up-to-date"),
+                log_console.emit_event("SYS", "OK", "DEPS", "deps ok"),
                 is_status=False,
                 is_error=False,
             )
@@ -534,25 +603,29 @@ class MainWindow(QMainWindow):
         # 실제 성공/실패 여부를 설계 사양과 일치하게 출력
         if state == "ok":
             if msg:
-                self.append_concise_log(
-                    log_console.emit_event("SYS", "OK", "POT", msg),
-                    is_status=False,
-                    is_error=False,
-                )
+                if log_console.is_tui_line(msg):
+                    # [병기 방지] outcome msg가 이미 TUI 포맷이면 그대로 출력
+                    self.append_concise_log(msg, is_status=False, is_error=False)
+                else:
+                    self.append_concise_log(
+                        log_console.emit_event("SYS", "OK", "pot", msg),
+                        is_status=False,
+                        is_error=False,
+                    )
         else:
             self.append_concise_log(
                 log_console.emit_event(
                     "SYS",
                     "FAIL",
-                    "POT",
-                    "Server bind failed — 연령제한 영상 다운로드 불가",
+                    "pot",
+                    "bind fail — age-only",
                 ),
                 is_status=False,
                 is_error=True,
             )
 
         self.append_concise_log(
-            log_console.emit_event("SYS", "READY", "ENGINE", "Ready for download"),
+            log_console.emit_event("SYS", "READY", "ENGINE", "ready"),
             is_status=False,
             is_error=False,
         )
@@ -603,7 +676,7 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "-", "분석 시작..."),
+            log_console.emit_event("ANAL", "RUN", "-", "analyzing..."),
             is_status=True,
             is_error=False,
         )
@@ -638,10 +711,9 @@ class MainWindow(QMainWindow):
             len(self.extracted_data.get("v_list", [])),
             len(self.extracted_data.get("a_list", [])),
         )
-        formatted_url = self.format_target_url(self.base_anim_url)
         self.append_concise_log(
             log_console.emit_event(
-                "ANAL", "OK", "YT", f"분석 완료{counts} — {formatted_url}"
+                "ANAL", "OK", "YT", f"stream analyzed{counts}"
             ),
             is_status=False,
             is_error=False,
@@ -681,10 +753,10 @@ class MainWindow(QMainWindow):
         """
         # [결론 라인] — 메인 콘솔에 단 한 줄
         if stale:
-            summary = ", ".join(f"{p} {c}→{l}" for p, c, l in stale)
+            summary = ", ".join(f"{label} {cur}→{latest}" for label, _, cur, latest in stale)
             self.append_concise_log(
                 log_console.emit_event(
-                    "DEPS", "WARN", "-", f"업데이트 가능 — {summary}"
+                    "DEPS", "WARN", "-", f"update — {summary}"
                 ),
                 is_status=False,
                 is_error=False,
@@ -693,7 +765,7 @@ class MainWindow(QMainWindow):
         else:
             # 정상/네트워크 일시장애 모두 같은 결론 라인 — 사용자는 'OK/실패'만 알면 됨
             self.append_concise_log(
-                log_console.emit_event("DEPS", "OK", "-", "DEPS 확인 완료"),
+                log_console.emit_event("DEPS", "OK", "-", "deps ok"),
                 is_status=False,
                 is_error=False,
             )
@@ -714,13 +786,31 @@ class MainWindow(QMainWindow):
         """기동 자동 업그레이드 결과."""
         status = "OK" if ok else "FAIL"
         self.append_concise_log(
-            log_console.emit_event("SYS", status, "DEPS", f"업데이트 {summary}"),
+            log_console.emit_event("SYS", status, "DEPS", f"update {summary}"),
             is_status=False,
             is_error=not ok,
         )
         self._start_pot_provider()
 
+    def _is_stale_analyze_signal(self):
+        """유령 분석 결과 판별 — 지운 뒤 'stream analyzed'가 한 번 더 뜨는 버그 차단.
+
+        [경쟁상태] 워커 스레드의 result_ready/error_occurred는 GUI 이벤트 큐에
+        적재(queued connection)된 뒤 전달된다. 유기 패턴의 disconnect()는
+        '이후' 방출을 막을 뿐 이미 큐에 있는 전달은 취소하지 못한다 — 그래서
+        입력을 지운 직전 큐잉된 결과가 슬롯에 도착해 로그를 오염시켰다.
+        발신자(sender)가 현재 활성 워커와 다르면(=유기됨) 또는 입력이 비었으면
+        결과를 완전히 폐기한다.
+        """
+        if self.sender() is not self.worker_analyze:
+            return True  # 유기된 워커의 큐잉된 시그널
+        if not self.url_input.text().strip():
+            return True  # 분석 도중 입력이 비워짐
+        return False
+
     def on_analyze_success(self, data):
+        if self._is_stale_analyze_signal():
+            return
         self.extracted_data = data
         self.stop_analysis_anim()
         # 콜백은 결과만 보관 — 콤보/버튼이 없으므로 UI 갱신 없음
@@ -729,6 +819,8 @@ class MainWindow(QMainWindow):
         # 좌측 패널이 자동 처리 — 별도 UI 갱신 없음
 
     def on_analyze_error(self, err_msg):
+        if self._is_stale_analyze_signal():
+            return
         self.stop_analysis_anim(ok=False)
         self.append_concise_log(
             log_console.emit_event("ANAL", "FAIL", "-", err_msg),
@@ -741,32 +833,37 @@ class MainWindow(QMainWindow):
         is_running = self.ctrl.running
         startup_completed = getattr(self, "_startup_completed", False)
         self.url_input.setEnabled(not is_running and startup_completed)
+        # ESC 버튼 동적 라벨 — 실행 중 Abort / 대기 중 Clear
+        if getattr(self, "btn_esc", None) is not None:
+            self.btn_esc.setText("[ ESC: Abort ]" if is_running else "[ ESC: Clear ]")
         self.console.reset_status_flag()
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 첫 노출 시 viewport 실측으로 트리 예산 산정 — 이게 없으면
-        # 위젯 폭=0 상태로 계산해 paint 중 재계산이 반복될 수 있다.
-        if hasattr(self, "te_concise") and self.te_concise is not None:
-            log_console.update_tree_budget(self.te_concise)
+        # 첫 노출 시 viewport 실측으로 트리 예산 산정 + 라벨/버퍼 reflow.
+        if hasattr(self, "console"):
+            self.console.on_resize()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if hasattr(self, "te_concise"):
-            log_console.update_tree_budget(self.te_concise)
+        # 창 가로 확장 → 예산 갱신 + 기존 로그 전체 reflow (로그가 펼쳐진다).
+        if hasattr(self, "console"):
+            self.console.on_resize()
 
     def _component_line(self, msg, is_status=False, is_error=False):
-        """구성요소(POT/Update/워커) 라인 필터 — ad-hoc prefix를 TUI 컬럼 포맷으로 매핑.
+        """구성요소(POT/Update/워커) 라인 필터 — 간결 로그는 TUI 컬럼만.
 
-        raw 메시지가 이미 "[HH:MM:SS] STAGE │ ... " 컬럼 형식이면 그대로 통과.
-        그 외 POT/Update의 [v]/[!]/[~]/[+] prefix는 SYS 단계 + OK/FAIL/SKIP/RUN으로 변환.
+        *  이미 TUI 컬럼 포맷이면 그대로 간결 로그에 통과.
+        *  구형 prefix ([v]/[!]/[~]/[+]/[X]/[?])는 TUI 이벤트로 변환.
+        *  그 외 플레인 텍스트(yt-dlp/pip raw 등)는 간결 로그에 **노출하지 않고**
+           상세 로그(F12)와 히스토리에만 기록 — Single-Line Pipe-Format 유지.
         """
         # 1) 이미 TUI 컬럼 포맷이면 그대로 출력
-        if msg.lstrip().startswith("[") and " │ " in msg and len(msg) > 18:
+        if log_console.is_tui_line(msg):
             self.append_concise_log(msg, is_status, is_error)
             return
         # 2) prefix로 매핑
-        stripped = msg.lstrip()
+        stripped = str(msg).lstrip()
         if stripped.startswith("[v]") or stripped.startswith("[+]"):
             status = "OK"
             payload = stripped.split("]", 1)[-1].strip()
@@ -780,11 +877,12 @@ class MainWindow(QMainWindow):
             status = "WARN"
             payload = stripped.split("]", 1)[-1].strip()
         else:
-            self.append_concise_log(msg, is_status, is_error)
+            # 3) 플레인 텍스트 — 간결 로그에는 노출 금지, 상세/히스토리 전용
+            if str(msg).strip():
+                self._mirror_full_log(msg)
+                log_history.log(msg, "ERROR" if is_error else "INFO")
             return
-        stage = "POT" if "PO Token" in payload or "POT" in payload else "DEPS"
-        # [min profile] platform 컬럼은 단일 stage일 때 '-'로 — stage=DEPS, plat=DEPS
-        # 같은 중복이 시각적 노이즈가 된다.
+        stage = "pot" if "PO Token" in payload or "pot" in payload else "DEPS"
         self.append_concise_log(
             log_console.emit_event(stage, status, "-", payload),
             is_status=is_status,
@@ -792,8 +890,19 @@ class MainWindow(QMainWindow):
         )
 
     def _mirror_full_log(self, msg):
-        """상세 로그 버퍼 누적 + F12 창 미러링 (append_*_log 공용)."""
-        self._full_log_buf.append(msg)
+        """상세 로그 버퍼 누적 + F12 창 미러링 (append_*_log 공용).
+
+        [수정] 간결 로그의 TUI 포맷 메시지는 상세 로그에 포함하지 않음.
+        상세 로그는 raw 원본 로그만 기록 (yt-dlp stdout 등).
+        [추가] 모든 raw 로그 라인에 [HH:MM:SS] 타임스탬프 자동 부착.
+        """
+        # TUI 컬럼 포맷 메시지는 상세 로그에 제외 — raw만 기록
+        if log_console.is_tui_line(msg):
+            return
+        ts = time.strftime("%H:%M:%S")
+        # 다중 라인 메시지 모두에 동일 타임스탬프 부착
+        stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in str(msg).split("\n"))
+        self._full_log_buf.append(stamped)
         if len(self._full_log_buf) > 5000:
             del self._full_log_buf[: len(self._full_log_buf) - 5000]
         if (
@@ -801,7 +910,7 @@ class MainWindow(QMainWindow):
             and self.verbose_win.isVisible()
         ):
             try:
-                self.verbose_win.append(msg)
+                self.verbose_win.append(stamped)
             except Exception:
                 pass
 
@@ -833,7 +942,7 @@ class MainWindow(QMainWindow):
                     "SYS",
                     "OK",
                     "LOG",
-                    "상세 로그 버퍼 비어 있음 — 다운로드 시작 시 채워짐",
+                    "empty buffer",
                 )
             self.verbose_win.set_content(content)
         self.verbose_win.show()
@@ -862,7 +971,7 @@ class MainWindow(QMainWindow):
             event.accept()
             return
         if event.key() == Qt.Key.Key_Escape:
-            self.abort_download()
+            self._esc_action()
             event.accept()
             return
         super().keyPressEvent(event)
@@ -877,7 +986,7 @@ class MainWindow(QMainWindow):
             )
         except ValueError as e:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "-", f"입력 파싱 오류: {e}"),
+                log_console.emit_event("SYS", "FAIL", "-", f"parse error: {e}"),
                 False, True
             )
             return
@@ -887,7 +996,7 @@ class MainWindow(QMainWindow):
         self.ctrl.begin()
 
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "-", "분석 시작..."),
+            log_console.emit_event("ANAL", "RUN", "-", "analyzing..."),
             is_status=True,
             is_error=False,
         )
@@ -912,7 +1021,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_skip()
             self.append_concise_log(
-                log_console.emit_event("DL", "SKIP", "-", "현재 항목 건너뛰기 요청됨"),
+                log_console.emit_event("DL", "SKIP", "-", "skip request"),
                 is_status=False,
                 is_error=False,
             )
@@ -955,7 +1064,7 @@ if __name__ == "__main__":
     if os.path.exists(ICON_PATH):
         app.setWindowIcon(QIcon(ICON_PATH))
 
-    font_path = os.path.join(BASE_DIR, "D2Coding-Regular.ttf")
+    font_path = os.path.join(BASE_DIR, "CascadiaMono-VariableFont_wght.ttf")
     if os.path.exists(font_path):
         QFontDatabase.addApplicationFont(font_path)
 

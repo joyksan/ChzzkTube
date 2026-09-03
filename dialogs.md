@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 import theme
+from log_console import emit_component
 
 try:
     import winsound
@@ -299,8 +300,8 @@ class UpdateWorker(QThread):
         pkgs = [p for p in updater.PACKAGES
                 if not (frozen and p == "bgutil-ytdlp-pot-provider")]
         for pkg in pkgs:
-            # raw emit — _component_line을 통해 상세로그에만
-            self.line.emit(f"[~] {pkg} 확인 중")
+            # 간결 로그는 TUI 포맷으로, 상세 로그는 raw로
+            self.line.emit(emit_component("DEPS", "RUN", pkg, "확인 중..."))
             cur = updater.installed_version(pkg)
             latest = updater.latest_version(pkg)
             if latest is None:
@@ -310,7 +311,7 @@ class UpdateWorker(QThread):
             elif updater.is_outdated(cur, latest):
                 stale.append((pkg, cur, latest))
         # [결론 한 줄] — 사용자가 보는 유일한 메인 콘솔 라인
-        self.line.emit("[v] DEPS 확인 완료")
+        self.line.emit(emit_component("DEPS", "OK", "-", "DEPS 확인 완료"))
         self.check_done.emit(stale)
 
     def _do_upgrade(self):

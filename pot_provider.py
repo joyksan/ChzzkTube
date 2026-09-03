@@ -285,7 +285,7 @@ def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
         
     try:
         with socket.create_connection((host, port), timeout=timeout):
-            return "conflict", "ping 무응답"
+            return "conflict", "ping no response"
     except OSError:
         return "down", ""
 
@@ -313,9 +313,9 @@ def built_server_js():
 def _spawn_node_server(log_full_func=None):
     js, node = built_server_js(), node_exe()
     if not js and log_full_func:
-        log_full_func("[!] 서버 스폰 실패 사유: 빌드된 main.js 부재 (server/build)")
+        log_full_func("server spawn reason: built main.js missing (server/build)")
     if not node and log_full_func:
-        log_full_func(f"[!] 서버 스폰 실패 사유: Node.js >= {NODE_MIN_MAJOR} 실행 파일 부재")
+        log_full_func(f"server spawn reason: Node.js >= {NODE_MIN_MAJOR} binary missing")
     if not (js and node):
         return None
         
@@ -341,15 +341,15 @@ def _spawn_node_server(log_full_func=None):
         assign_to_job_object(proc)
     except Exception as e:
         if log_full_func:
-            log_full_func(f"[!] 서버 Popen 실패: {e}")
+            log_full_func(f"server Popen failed: {e}")
         return None
     if _wait_port(45):
         return proc
     _kill(proc)
     if log_full_func:
         log_full_func(
-            "[!] 서버 스폰 실패 사유: 45초 내 /ping 응답 없음 "
-            "(기동 직후 크래시 추정 — bgutil_server.log 참조)"
+            "server spawn reason: /ping not responding in 45s "
+            "(crash after startup — see bgutil_server.log)"
         )
     return None
 
@@ -378,7 +378,7 @@ def _download_with_progress(url, dest_path, log_func, desc):
                     downloaded += len(chunk)
                     if total_size > 0:
                         pct = int(downloaded / total_size * 100)
-                        log_func(f"[~] {desc}... {pct}% 완료", True, False)
+                        log_func(f"{desc}... {pct}%", True, False)
             if os.path.exists(temp_dest):
                 shutil.move(temp_dest, dest_path)
     finally:
@@ -400,11 +400,11 @@ def ensure_node_runtime(log_func):
         return True
     if cur_major is not None:
         log_func(
-            f"[~] 감지된 Node.js v{cur_major}이(가) bgutil 서버 요구사항"
-            f"(Node >= {NODE_MIN_MAJOR}) 미달 — 최신 런타임으로 재구성합니다."
+            f"Node.js v{cur_major} is below bgutil requirement "
+            f"(Node >= {NODE_MIN_MAJOR}) — reconfiguring to latest runtime."
         )
     else:
-        log_func("[~] 요구 버전 이상의 로컬 Node.js가 없어 포터블 Node.js 다운로드를 시작합니다.")
+        log_func("node.js >= 22 missing — downloading portable runtime")
 
     node_dir = os.path.join(get_writable_base(), "node")
     os.makedirs(node_dir, exist_ok=True)
@@ -413,25 +413,25 @@ def ensure_node_runtime(log_func):
     zip_dest = os.path.join(get_writable_base(), "node_portable.zip")
 
     try:
-        _download_with_progress(node_url, zip_dest, log_func, "Node.js 런타임 수신 중")
-        log_func("[~] Node.js 런타임 압축 해제 중...")
+        _download_with_progress(node_url, zip_dest, log_func, "node.js runtime downloading")
+        log_func("node.js runtime extracting...")
         with zipfile.ZipFile(zip_dest, "r") as z:
             z.extractall(node_dir)
         _node_ver_cache.clear()
         new_node = node_exe()
         new_major = node_major_version(new_node) if new_node else None
         if new_major is not None and new_major >= NODE_MIN_MAJOR:
-            log_func(f"[v] 포터블 Node.js v{new_major} 런타임 환경 구성 완료.")
+            log_func(f"portable Node.js v{new_major} ready.")
             _prune_outdated_node_dirs(node_dir)
             return True
         log_func(
-            f"[!] Node.js 런타임 구성 후에도 요구 버전(Node >= {NODE_MIN_MAJOR}) 미충족",
+            f"Node.js still below requirement (>= {NODE_MIN_MAJOR}) after configure",
             False,
             True,
         )
         return False
     except Exception as e:
-        log_func(f"[!] Node.js 자동 런타임 확보 실패: {e}", False, True)
+        log_func(f"Node.js auto-setup failed: {e}", False, True)
         return False
     finally:
         if os.path.exists(zip_dest):
@@ -458,7 +458,7 @@ def download_and_install_source(want_ver, log_func=None):
     try:
         url = _TAG_ZIP.format(ver=want_ver)
         if log_func:
-            _download_with_progress(url, zpath, log_func, "bgutil 서버 소스 코드 수신 중")
+            _download_with_progress(url, zpath, log_func, "bgutil source downloading")
         else:
             urllib.request.urlretrieve(url, zpath)
             
@@ -469,7 +469,7 @@ def download_and_install_source(want_ver, log_func=None):
             
         inner = os.path.join(tmp, root)
         if not os.path.isfile(os.path.join(inner, "server", "package.json")):
-            raise RuntimeError("내려받은 소스에 server/ 디렉터리가 존재하지 않습니다.")
+            raise RuntimeError("downloaded source has no server/ directory")
             
         os.makedirs(dest_dir, exist_ok=True)
         shutil.copytree(inner, dest_dir, dirs_exist_ok=True)
@@ -501,7 +501,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None):
         return proc.returncode
     except Exception as e:
         if log_full_func:
-            log_full_func(f"[!] subprocess Popen error: {e}")
+            log_full_func(f"subprocess Popen error: {e}")
         return -1
 
 def ensure_node_server(log, log_full, want_ver):
@@ -514,21 +514,21 @@ def ensure_node_server(log, log_full, want_ver):
         if node_ok():
             return os.path.dirname(os.path.dirname(js)), None
         log(
-            "[~] 서버 빌드는 존재하나 Node 런타임이 없거나 요구 버전 미달 — "
-            "런타임 재구성을 진행합니다."
+            "[~] server build exists but Node runtime missing or insufficient — "
+            "reconfiguring runtime."
         )
         if not ensure_node_runtime(log):
-            return None, f"Node.js 런타임 확보 불가 (Node >= {NODE_MIN_MAJOR} 필요)"
+            return None, f"Node.js runtime unavailable (>= {NODE_MIN_MAJOR} required)"
         if node_ok():
             return os.path.dirname(os.path.dirname(js)), None
-        return None, f"Node.js >= {NODE_MIN_MAJOR} 확보 실패"
+        return None, f"Node.js >= {NODE_MIN_MAJOR} setup failed"
 
     if not ensure_node_runtime(log):
-        return None, "Node.js 런타임 확보 불가"
-        
+        return None, "Node.js runtime unavailable"
+
     curr_node = node_exe()
     if not curr_node:
-        return None, "Node.js 실행 환경 식별 불가"
+        return None, "Node.js executable not found"
         
     npm_cli = None
     node_base_dir = os.path.dirname(curr_node)
@@ -541,24 +541,24 @@ def ensure_node_server(log, log_full, want_ver):
     
     try:
         if os.path.isdir(server_home()) and os.path.isfile(os.path.join(server_home(), "server", "package.json")):
-            log(emit_component("POT", "RUN", "POT", "기존 bgutil 서버 소스 감지 — 빌드 단계 수행"))
+            log(emit_component("pot", "RUN", "pot", "bgutil source detected — building"))
         else:
-            log(emit_component("POT", "RUN", "POT", f"bgutil 서버 소스 자동 다운로드 시작 (버전: v{want_ver})"))
+            log(emit_component("pot", "RUN", "pot", f"bgutil source fetching (v{want_ver})"))
             download_and_install_source(want_ver, log)
-            
+
         server_dir = os.path.join(server_home(), "server")
-        log(emit_component("POT", "RUN", "POT", "npm 의존성 패키지 설치 진행 중... (최초 1회 수 분 소요)"))
-        
+        log(emit_component("pot", "RUN", "pot", "npm install... (first run may take minutes)"))
+
         env = os.environ.copy()
         node_dir = os.path.dirname(os.path.abspath(curr_node))
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
-        
+
         cmd_install = npm_cmd + ["ci", "--no-audit", "--no-fund"]
         ret = _run_and_stream_log(cmd_install, server_dir, log_full, env=env)
         if ret != 0:
-            return None, f"npm 의존성 패키지 설치 실패 (exit code {ret})"
-            
-        log(emit_component("POT", "RUN", "POT", "TypeScript 서버 트랜스파일링 컴파일(tsc) 진행 중..."))
+            return None, f"npm install failed (exit code {ret})"
+
+        log(emit_component("pot", "RUN", "pot", "tsc compiling..."))
         local_tsc = os.path.join(server_dir, "node_modules", "typescript", "bin", "tsc")
         if os.path.isfile(local_tsc):
             cmd_build = [curr_node, local_tsc]
@@ -567,18 +567,18 @@ def ensure_node_server(log, log_full, want_ver):
             
         ret = _run_and_stream_log(cmd_build, server_dir, log_full, env=env)
         if ret != 0:
-            return None, f"tsc 빌드 컴파일 실패 (exit code {ret})"
-            
+            return None, f"tsc failed (exit code {ret})"
+
         if built_server_js() is None:
-            return None, "컴파일 성공 후에도 server/build/main.js 파일 부재"
+            return None, "server/build/main.js missing after compile"
             
         return server_dir, None
     except Exception as e:
         return None, f"{type(e).__name__}: {e}"
 
 def download_and_hot_reload_plugin(log_func, want_ver=_FALLBACK_PLUGIN_VER):
-    """PyPI의 bgutil-ytdlp-pot-provider 휠 패키지를 격리 경로에 직접 내려받아 무중단 핫 리로드한다."""
-    log_func("[~] PO Token 플러그인 런타임 수급 중...")
+    """Download bgutil-ytdlp-pot-provider wheel and hot-reload into isolated path."""
+    log_func("PO plugin fetching...")
     target_plugin_dir = os.path.join(get_writable_base(), "yt_dlp_plugins")
     os.makedirs(target_plugin_dir, exist_ok=True)
     
@@ -603,8 +603,8 @@ def download_and_hot_reload_plugin(log_func, want_ver=_FALLBACK_PLUGIN_VER):
         
     tmp_whl = os.path.join(get_writable_base(), "temp_plugin.whl")
     try:
-        _download_with_progress(whl_url, tmp_whl, log_func, "PO Token 플러그인 수신 중")
-        log_func("[~] 플러그인 추출 및 캐시 정렬 중...")
+        _download_with_progress(whl_url, tmp_whl, log_func, "PO plugin downloading...")
+        log_func("PO plugin extracting...")
         
         with zipfile.ZipFile(tmp_whl, "r") as z:
             for member in z.namelist():
@@ -621,10 +621,10 @@ def download_and_hot_reload_plugin(log_func, want_ver=_FALLBACK_PLUGIN_VER):
             if mod_name.startswith("yt_dlp_plugins") or mod_name.startswith("yt_dlp.plugins"):
                 del sys.modules[mod_name]
                 
-        log_func("[v] PO Token 플러그인 런타임 핫 리로드 적용 완료.")
+        log_func("PO plugin hot-reload applied.")
         return True
     except Exception as e:
-        log_func(f"[!] 플러그인 무중단 수급 중 실패: {e}", False, True)
+        log_func(f"plugin hot-fetch failed: {e}")
         return False
     finally:
         if os.path.exists(tmp_whl):
@@ -648,47 +648,51 @@ class POTProviderWorker(QThread):
         except Exception as e:
             self.outcome = (
                 "err",
-                emit_component("SYS", "FAIL", "POT", f"PO Token 서버 자동 구성 실패: {type(e).__name__}: {e}"),
+                emit_component("SYS", "FAIL", "pot", f"PO server auto-config failed: {type(e).__name__}: {e}"),
             )
 
     def _note(self, msg, is_status=False, is_error=False):
-        # TUI 컬럼 포맷으로 통일
-        stage = "SYS" if is_error else "POT"
+        # [병기 방지] 이미 TUI 컬럼 포맷(이중 포맷 포함)이면 그대로 emit — 재래핑 금지
+        if log_console.is_tui_line(msg):
+            self.line.emit(str(msg), is_status, is_error)
+            return
+        # 플레인 메시지만 TUI 컬럼 포맷으로 래핑
+        stage = "SYS" if is_error else "pot"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        self.line.emit(emit_component(stage, status, "POT", msg), is_status, is_error)
+        self.line.emit(emit_component(stage, status, "pot", msg), is_status, is_error)
 
     def _dbg(self, msg):
-        """F12 verbose 창 + 히스토리 전용 디버그 마커 — 간결 로그엔 노출 안 됨."""
-        self.log_full.emit(f"[POT-DEBUG] {msg}")
+        """F12 verbose window + history only — not shown in concise log."""
+        self.log_full.emit(f"[pot-DEBUG] {msg}")
 
     def _run(self):
-        self._dbg("POTProviderWorker 시작")
-        # [ffmpeg 자동 수급] 리먹싱/병합용 — 시스템 설치 우선, 없으면 GitHub 바이너리.
-        # PO 서버와 무관한 실패여도 기동 시퀀스는 계속 진행한다.
+        self._dbg("POTProviderWorker starting")
+        # [ffmpeg ensure] for remux/merge — prefer system install, fallback to GitHub binary.
+        # Failures unrelated to the PO server should still allow startup sequence to proceed.
         try:
             import components
-            self._dbg("ffmpeg 자동 수급 단계 진입")
+            self._dbg("entering ffmpeg ensure phase")
             ff_err = components.ensure_ffmpeg(self._note)
             if ff_err:
                 self._note(
-                    f"ffmpeg 자동 수급 실패 — 병합/리먹싱 기능 제한: {ff_err}",
+                    f"ffmpeg fetch failed — merge/remux limited: {ff_err}",
                     False,
                     True,
                 )
-                self._dbg(f"ffmpeg 수급 실패: {ff_err}")
+                self._dbg(f"ffmpeg fetch failed: {ff_err}")
             else:
-                self._dbg("ffmpeg 수급 완료")
+                self._dbg("ffmpeg fetch done")
         except Exception as ff_ex:
-            self._note(f"ffmpeg 수급 모듈 예외: {ff_ex}", False, True)
-            self._dbg(f"ffmpeg 수급 모듈 예외: {type(ff_ex).__name__}: {ff_ex}")
+            self._note(f"ffmpeg fetch module exception: {ff_ex}", False, True)
+            self._dbg(f"ffmpeg fetch module exception: {type(ff_ex).__name__}: {ff_ex}")
 
         if not plugin_installed():
-            self._note("PO Token 플러그인 부재 감지 -> 최신 플러그인을 다운로드합니다.", True)
-            self._dbg("플러그인 부재 → 다운로드 시도")
+            self._note("PO plugin missing — downloading latest", True)
+            self._dbg("plugin missing → download attempt")
             ok = download_and_hot_reload_plugin(self._note, _FALLBACK_PLUGIN_VER)
-            self._dbg(f"플러그인 다운로드 결과: {'OK' if ok else 'FAIL'}")
+            self._dbg(f"plugin download result: {'OK' if ok else 'FAIL'}")
         else:
-            self._dbg("플러그인 이미 설치됨 — 다운로드 생략")
+            self._dbg("plugin already installed — skip download")
 
         self._dbg(f"서버 probe 시도 → {DEFAULT_HOST}:{DEFAULT_PORT}")
         state, detail = probe_server()
@@ -696,54 +700,54 @@ class POTProviderWorker(QThread):
         if state == "ok":
             self.outcome = (
                 "ok",
-                emit_component("POT", "OK", "POT", f"서버 연결됨 ({DEFAULT_HOST}:{DEFAULT_PORT})"),
+                emit_component("pot", "OK", "pot", f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
             )
-            self._dbg("ok 분기 — 워커 종료")
+            self._dbg("ok branch — worker exits")
             return
 
         if state == "conflict":
             self.outcome = (
                 "err",
-                emit_component("SYS", "FAIL", "POT", f"포트 {DEFAULT_PORT} 사용 중 — 해당 프로그램 종료 후 재실행해 주세요"),
+                emit_component("SYS", "FAIL", "pot", f"port {DEFAULT_PORT} in use — kill the holder and retry"),
             )
-            self._dbg("conflict 분기 — 포트 점유 감지")
+            self._dbg("conflict branch — port occupied")
             return
 
-        self._dbg("기존 빌드 산출물 스폰 시도")
+        self._dbg("trying to spawn existing build")
         if _spawn_existing(self.log_full.emit):
             self.outcome = (
                 "ok",
-                emit_component("POT", "OK", "POT", f"서버 구동됨 ({DEFAULT_HOST}:{DEFAULT_PORT})"),
+                emit_component("pot", "OK", "pot", f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
             )
-            self._dbg("기존 빌드 스폰 성공")
+            self._dbg("existing build spawn ok")
             return
-        self._dbg("기존 빌드 스폰 실패 — 신규 빌드 진행")
+        self._dbg("existing build spawn failed — building fresh")
 
         ver = plugin_version() or _FALLBACK_PLUGIN_VER
-        self._dbg(f"플러그인 버전 결정: {ver}")
-        self._note("PO Token 서버 환경 구성 및 빌드를 시작합니다.", True)
+        self._dbg(f"plugin version: {ver}")
+        self._note("building PO token server...", True)
         _, err = ensure_node_server(self._note, self.log_full.emit, ver)
-        self._dbg(f"ensure_node_server 종료: err={err!r}")
+        self._dbg(f"ensure_node_server done: err={err!r}")
 
         if err is None and _spawn_existing(self.log_full.emit):
             self.outcome = (
                 "ok",
-                emit_component("POT", "OK", "POT", f"서버 구동됨 ({DEFAULT_HOST}:{DEFAULT_PORT})"),
+                emit_component("pot", "OK", "pot", f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
             )
-            self._dbg("신규 빌드 후 스폰 성공")
+            self._dbg("fresh build spawn ok")
             return
 
         self.outcome = (
             "err",
-            emit_component("SYS", "FAIL", "POT", "서버 기동 실패 — 연령제한 영상 다운로드 불가"),
+            emit_component("SYS", "FAIL", "pot", "server start failed — age-restricted videos unavailable"),
         )
-        self._dbg("최종 실패 — 원인 tail 추출 단계")
+        self._dbg("final fail — extracting tail causes")
         # [가시화] err 부재(스폰 실패) 케이스에서조차 원인이 화면에 안 떴던 문제 수리 —
         # 빌드 실패 사유와 서버 stdout/stderr(bgutil_server.log) 꼬리를 함께 노출.
         reasons = [l for l in (err or "").splitlines()[-4:] if l.strip()]
         tail = read_server_log_tail(6)
         reasons.extend(l.strip() for l in tail.splitlines() if l.strip())
-        if reasons:
-            self._note("실패 원인 (마지막 기록):", True)
-            for l in reasons:
-                self._note(l)
+        # [콘솔 정리] 진단 원인은 상세 로그(log_full)로만 — 콘솔엔
+        # '실패 원인 (마지막 기록):' 같은 의미 불분명한 헤더를 띄우지 않는다.
+        for l in reasons:
+            self.log_full.emit(f"[POT-FAIL] {l}")

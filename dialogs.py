@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 import theme
+from log_console import emit_component
 
 try:
     import winsound
@@ -37,7 +38,7 @@ def show_info_message(parent, title, text, detail=None, is_error=False):
         msg_box.setDetailedText(detail)
     msg_box.setStyleSheet(theme.MSGBOX_QSS)
     msg_box.addButton(
-        "확인" if not is_error else "닫기", QMessageBox.ButtonRole.AcceptRole
+        "OK" if not is_error else "Close", QMessageBox.ButtonRole.AcceptRole
     )
 
     # Programmatic text alignment centering for success / left alignment for error
@@ -87,9 +88,9 @@ class ExitConfirmDialog(QDialog):
 
         # 1. 상태별 문구 직관화 (따옴표 제거 및 명확한 의도 전달)
         if self.is_running:
-            msg = "⚠️ 현재 다운로드가 진행 중입니다.\n진행 중인 작업을 중단하고 프로그램을 종료하시겠습니까?"
+            msg = "⚠️ A download is in progress.\nStop and exit ChzzkTube?"
         else:
-            msg = "정말 프로그램을 종료하시겠습니까?"
+            msg = "Exit ChzzkTube?"
 
         lbl = QLabel(msg)
         lbl.setWordWrap(True)
@@ -99,11 +100,11 @@ class ExitConfirmDialog(QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(10)
 
-        btn_exit = QPushButton("종료")
+        btn_exit = QPushButton("Exit")
         btn_exit.setStyleSheet(theme.BTN_EXIT_DANGER_QSS)
         btn_exit.clicked.connect(lambda: self.done(1))
 
-        btn_cancel = QPushButton("취소")
+        btn_cancel = QPushButton("Cancel")
         btn_cancel.setStyleSheet(theme.BTN_NEUTRAL_QSS)
         btn_cancel.clicked.connect(lambda: self.done(0))
 
@@ -163,8 +164,8 @@ class CookieSelectDialog(QDialog):
                 except Exception as ex:
                     show_info_message(
                         self,
-                        "오류",
-                        f"브라우저({b_type}) 쿠키를 불러오는 데 실패했습니다.\n\n해당 브라우저가 실행 중이거나\n보안 정책(권한 거부)으로 인해 접근할 수 없습니다.",
+                        "Error",
+                        f"Failed to read browser ({b_type}) cookies.\n\nThe browser may be running, or\nsecurity policy (permission denied) blocks access.",
                         detail=str(ex),
                         is_error=True,
                     )
@@ -181,12 +182,12 @@ class ActionCountdownDialog(QDialog):
         self.action_type = action_type
         self.remaining_seconds = 60
         action_names = {
-            "sleep": "절전 모드 진입",
-            "shutdown": "PC 자동 종료",
-            "exit_app": "프로그램 종료",
+            "sleep": "sleep",
+            "shutdown": "PC shutdown",
+            "exit_app": "exit",
         }
-        self.action_name = action_names.get(action_type, "설정된 작업")
-        self.setWindowTitle("작업 완료 후 동작 안내")
+        self.action_name = action_names.get(action_type, "unknown action")
+        self.setWindowTitle("Post-Download Action")
         self.setFixedSize(380, 160)
         self.setStyleSheet("background-color: #121212; color: #ffffff;")
 
@@ -195,7 +196,7 @@ class ActionCountdownDialog(QDialog):
         layout.setSpacing(15)
 
         self.lbl_msg = QLabel(
-            f"다운로드가 완료되었습니다.\n<b>{self.remaining_seconds}초</b> 후 [<b>{self.action_name}</b>]이(가) 실행됩니다."
+            f"Download complete.\n<b>{self.remaining_seconds}s</b> until [<b>{self.action_name}</b>] runs."
         )
         self.lbl_msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_msg.setStyleSheet("font-size: 13px; color: #e0e0e0;")
@@ -204,13 +205,13 @@ class ActionCountdownDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
 
-        self.btn_now = QPushButton("지금 실행")
+        self.btn_now = QPushButton("Run Now")
         self.btn_now.setStyleSheet(
             "QPushButton { background-color: #c62828; color: white; font-weight: bold; padding: 6px; border-radius: 6px; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; }"
         )
         self.btn_now.clicked.connect(self.execute_now)
 
-        self.btn_cancel = QPushButton("취소")
+        self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setStyleSheet(
             "QPushButton { background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d; font-weight: bold; padding: 6px; border-radius: 6px; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }"
         )
@@ -232,7 +233,7 @@ class ActionCountdownDialog(QDialog):
             self.accept()
         else:
             self.lbl_msg.setText(
-                f"다운로드가 완료되었습니다.\n<b>{self.remaining_seconds}초</b> 후 [<b>{self.action_name}</b>]이(가) 실행됩니다."
+                f"Download complete.\n<b>{self.remaining_seconds}s</b> until [<b>{self.action_name}</b>] runs."
             )
 
     def execute_now(self):
@@ -263,7 +264,7 @@ class CookieViewerDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        btn_close = QPushButton("닫기")
+        btn_close = QPushButton("Close")
         btn_close.setFixedWidth(90)
         btn_close.setStyleSheet(theme.BTN_CLOSE_QSS)
         btn_close.clicked.connect(self.accept)
@@ -296,33 +297,34 @@ class UpdateWorker(QThread):
         """
         stale = []
         frozen = bool(getattr(sys, "frozen", False))
-        pkgs = [p for p in updater.PACKAGES
-                if not (frozen and p == "bgutil-ytdlp-pot-provider")]
-        for pkg in pkgs:
-            # raw emit — _component_line을 통해 상세로그에만
-            self.line.emit(f"[~] {pkg} 확인 중")
-            cur = updater.installed_version(pkg)
-            latest = updater.latest_version(pkg)
+        for label, pypi_name in updater.PACKAGES:
+            if frozen and pypi_name == "bgutil-ytdlp-pot-provider":
+                continue
+            # 간결 로그는 TUI 포맷으로, 상세 로그는 raw로
+            self.line.emit(emit_component("DEPS", "RUN", label, "checking..."))
+            cur = updater.installed_version(pypi_name)
+            latest = updater.latest_version(pypi_name)
             if latest is None:
                 continue  # [silent] 메인에 일시 장애 표시 안 함
             if not cur:
-                stale.append((pkg, "미설치", latest))
+                stale.append((label, pypi_name, "not installed", latest))
             elif updater.is_outdated(cur, latest):
-                stale.append((pkg, cur, latest))
+                stale.append((label, pypi_name, cur, latest))
         # [결론 한 줄] — 사용자가 보는 유일한 메인 콘솔 라인
-        self.line.emit("[v] DEPS 확인 완료")
+        self.line.emit(emit_component("DEPS", "OK", "-", "deps ok"))
         self.check_done.emit(stale)
 
     def _do_upgrade(self):
-        code, tail = updater.upgrade_packages(updater.PACKAGES)
+        pypi_names = [p[1] for p in updater.PACKAGES]
+        code, tail = updater.upgrade_packages(pypi_names)
         for l in tail.splitlines():
             if l.strip():
                 self.line.emit(l.strip())
         ok = code == 0
         summary = (
-            "완료 — 적용에는 앱 재시작이 필요합니다."
+            "done — restart to apply"
             if ok
-            else f"실패 (exit code {code})"
+            else f"failed (exit code {code})"
         )
         self.upgrade_done.emit(ok, summary)
 
@@ -373,13 +375,13 @@ class SettingsDialog(QDialog):
         _sec1 = QGroupBox("Container")
         _sec1.setProperty("class", "tui-panel")
         _sec1.setLayout(row1)
-        row1.addWidget(QLabel("포맷 컨테이너"))
+        row1.addWidget(QLabel("Container"))
         row1.addStretch()
         self.cb_container = make_combo(
             [
-                ("mkv", "mkv (일반 비디오 / 자막 완벽 호환)"),
-                ("mp4", "mp4 (모바일 및 범용 플레이어 최적화)"),
-                ("webm", "webm (웹 업로드 및 고효율 압축 최적화)"),
+                ("mkv", "mkv (general / full subtitle support)"),
+                ("mp4", "mp4 (mobile & universal player)"),
+                ("webm", "webm (web upload & efficient)"),
             ],
             250,
         )
@@ -404,7 +406,7 @@ class SettingsDialog(QDialog):
         cookie_layout.setContentsMargins(12, 10, 12, 10)
         cookie_layout.setSpacing(8)
 
-        cookie_lbl = QLabel("🔒\ufe0e 쿠키 설정 (연령제한/멤버십)")
+        cookie_lbl = QLabel("Cookie (age / membership)")
         cookie_lbl.setStyleSheet(theme.DLG_SECTION_TITLE_QSS)
         cookie_layout.addWidget(cookie_lbl)
 
@@ -416,9 +418,9 @@ class SettingsDialog(QDialog):
         c_hlay.setSpacing(8)
         self.cookie_buttons = []
         for text, func in [
-            ("보기...", self.view_cookie),
-            ("불러오기...", self.load_cookie),
-            ("초기화", self.reset_cookie),
+            ("View...", self.view_cookie),
+            ("Load...", self.load_cookie),
+            ("Reset", self.reset_cookie),
         ]:
             btn = self._ghost_btn(text, func)
             self.cookie_buttons.append(btn)
@@ -427,13 +429,13 @@ class SettingsDialog(QDialog):
 
         yt_hlay = QHBoxLayout()
         yt_hlay.setSpacing(8)
-        yt_hlay.addWidget(QLabel("유튜브 클라이언트"))
+        yt_hlay.addWidget(QLabel("YouTube Client"))
         yt_hlay.addStretch()
         self.cb_yt_client = make_combo(
             [
-                ("auto", "자동 (기본)"),
-                ("tv", "tv (성인제한 우회 시 권장)"),
-                ("web_safari", "web_safari (세션 무효화 시)"),
+                ("auto", "auto (default)"),
+                ("tv", "tv (age-gated recommended)"),
+                ("web_safari", "web_safari (session invalid)"),
                 ("tv_simply", "tv_simply"),
                 ("mweb", "mweb"),
             ],
@@ -448,7 +450,7 @@ class SettingsDialog(QDialog):
         cookie_layout.addLayout(yt_hlay)
         layout.addWidget(cookie_box)
 
-        opt_lbl = QLabel("다운로드 옵션")
+        opt_lbl = QLabel("Download Options")
         opt_lbl.setStyleSheet(theme.DLG_SECTION_TITLE_QSS)
         layout.addWidget(opt_lbl)
 
@@ -473,12 +475,12 @@ class SettingsDialog(QDialog):
         self.chk_sound.toggled.connect(lambda v: self._apply_change("play_sound", v))
 
         chk_items = [
-            (self.chk_sub, "한국어 자막 포함 (SRT 자동 변환 병합)"),
-            (self.chk_audio, "음원만 추출 (MP3)"),
-            (self.chk_dedup, "중복 URL 자동 제거"),
-            (self.chk_fast, "고속 분할 다운로드 (5스레드 병렬)"),
-            (self.chk_auto_open, "완료 시 폴더 열기"),
-            (self.chk_sound, "완료 알림음 재생"),
+            (self.chk_sub, "Embed subtitles (SRT auto-convert + merge)"),
+            (self.chk_audio, "Audio only (MP3)"),
+            (self.chk_dedup, "Auto-remove duplicate URLs"),
+            (self.chk_fast, "Fast segmented download (5 threads)"),
+            (self.chk_auto_open, "Open folder on finish"),
+            (self.chk_sound, "Play completion sound"),
         ]
 
         chk_style = """
@@ -797,7 +799,7 @@ class VerboseLogWindow(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Full Log — 상세 로그 (F12)")
+        self.setWindowTitle("Full Log (F12)")
         self.resize(760, 480)
 
         self.te = QTextEdit(self)
@@ -811,7 +813,7 @@ class VerboseLogWindow(QDialog):
         btn_row = QHBoxLayout()
         self.lbl_info = QLabel("")
         self.lbl_info.setStyleSheet(theme.DLG_STATUS_QSS)
-        btn_close = QPushButton("닫기")
+        btn_close = QPushButton("Close")
         btn_close.setStyleSheet(theme.BTN_NEUTRAL_QSS)
         btn_close.clicked.connect(self.close)
         btn_row.addWidget(self.lbl_info)
@@ -820,15 +822,15 @@ class VerboseLogWindow(QDialog):
         layout.addLayout(btn_row)
 
     def append(self, msg):
-        """MainWindow.append_full_log 와 동일 계약 — 텍스트 원본 그대로 미러링."""
+        """Mirror raw text — timestamps pre-applied by _mirror_full_log."""
         if not msg:
             return
         self.te.append(msg)
         sb = self.te.verticalScrollBar()
         sb.setValue(sb.maximum())
-        self.lbl_info.setText(f"실시간 미러링 중 — 라인 {self.te.document().blockCount()}")
+        self.lbl_info.setText(f"mirroring — {self.te.document().blockCount()} lines")
 
     def set_content(self, text):
-        """전체 내용을 한 번에 교체 (초기 표시용)."""
+        """Replace all content at once (initial display)."""
         self.te.setPlainText(text)
-        self.lbl_info.setText(f"라인 {self.te.document().blockCount()}")
+        self.lbl_info.setText(f"buffer — {self.te.document().blockCount()} lines")
