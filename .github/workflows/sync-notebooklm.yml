@@ -33,4 +33,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install notebooklm-py
-          python -m notebooklm sync --notebook-id "$NOTEBOOK_ID" --cookies "$NOTEBOOKLM_COOKIES" --file repomix-output.md
+          
+          python -c "
+          import os, sys
+          from notebooklm import NotebookLM
+
+          notebook_id = os.environ.get('NOTEBOOK_ID', '').strip()
+          cookies_str = os.environ.get('NOTEBOOKLM_COOKIES', '').strip()
+
+          if not notebook_id or not cookies_str:
+              print('❌ Error: NOTEBOOK_ID 또는 NOTEBOOKLM_COOKIES Secret이 비어있습니다.')
+              sys.exit(1)
+
+          try:
+              client = NotebookLM(cookies=cookies_str)
+              client.add_source(notebook_id=notebook_id, file_path='repomix-output.md')
+              print('✅ NotebookLM 동기화 성공!')
+          except Exception as e:
+              print(f'❌ 동기화 실패: {e}')
+              sys.exit(1)
+          "
