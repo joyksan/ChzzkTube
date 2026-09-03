@@ -29,6 +29,7 @@ import tempfile
 import threading
 import urllib.request
 import zipfile
+import tarfile
 
 import config
 import log_history
@@ -103,13 +104,32 @@ def _logcb(log):
 
 
 def _http_get(url, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": _UA})
+    """HTTP GET 요청, ghcr.io는 토큰 인증 자동 처리."""
+    headers = {"User-Agent": _UA}
+    if "ghcr.io" in url:
+        try:
+            token = _ghcr_token("repository:homebrew/core/ffmpeg:pull")
+            headers["Authorization"] = f"Bearer {token}"
+        except Exception:
+            pass
+    req = urllib.request.Request(url, headers=headers)
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def _download(url, dest, log, label=""):
-    """파일 다운로드(진행 로그 포함). 성공 시 dest 경로 반환."""
-    log(emit_component("DEPS", "RUN", "-", f"{label or os.path.basename(url)} fetching..."))
+def _ghcr_token(scope):
+    """ghcr.io 익명 토큰 획득."""
+    url = f"https://ghcr.io/token?scope={scope}"
+    with urllib.request.urlopen(url, timeout=15) as resp:
+        data = json.load(resp)
+    return data.get("token")
+
+
+def _download(url, dest, log, label="", is_status=False):
+    """파일 다운로드(진행 로그 포함). 성공 시 dest 경로 반환.
+    
+    is_status=True 면 진행률 로그를 상태 줄로 표시 (이전 줄 덮어쓰기).
+    """
+    log(emit_component("DEPS", "RUN", "-", f"{label or os.path.basename(url)} fetching..."), is_status)
     tmp = dest + ".part"
     with _http_get(url, timeout=60) as resp, open(tmp, "wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
@@ -121,10 +141,11 @@ def _download(url, dest, log, label=""):
             f.write(chunk)
             done += len(chunk)
             mb = done // (1024 * 1024)
-            if total >= 8 * 1024 * 1024 and mb != last_mb:
+            # 진행률 로그 빈도 조절: 8MB 이상 파일은 2MB마다, 미만은 완료 시에만
+            if total < 8 * 1024 * 1024 or mb != last_mb and mb % 2 == 0:
                 last_mb = mb
                 pct = f" ({done * 100 // total}%)" if total else ""
-                log(emit_component("DEPS", "RUN", "-", f"{label or 'download'} {mb} MB{pct}"))
+                log(emit_component("DEPS", "RUN", "-", f"{label or 'download'} {mb} MB{pct}"), is_status)
     os.replace(tmp, dest)
     log(emit_component("DEPS", "OK", "-", f"{label or os.path.basename(dest)} done ({done / 1048576:.1f} MB)"))
     return dest
@@ -177,6 +198,167 @@ FFMPEG_RELEASE_URL = (
     "https://github.com/GyanD/codexffmpeg/releases/latest/download/"
     "ffmpeg-release-essentials.zip"
 )
+_FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
+
+# macOS 버전 → Homebrew bottle 키 매핑 (arm64 우선, intel 폴백)
+_MACOS_BOTTLE_KEY_ORDER = [
+    # (major, minor), arm64_key, intel_key
+    ((15, 0), "arm64_sonoma", "sonoma"),
+    ((14, 0), "arm64_sonoma", "sonoma"),
+    ((13, 0), "arm64_ventura", "ventura"),
+    ((12, 0), "arm64_monterey", "monterey"),
+    ((11, 0), "arm64_big_sur", "big_sur"),
+    ((10, 15), "arm64_catalina", "catalina"),
+]
+
+
+def _macos_bottle_keys():
+    """현재 macOS 버전/아키텍처에 맞는 Homebrew bottle 키 목록 (우선순위순)."""
+    ver = platform.mac_ver()[0]
+    if not ver:
+        return []
+    parts = ver.split(".")
+    major = int(parts[0]) if parts else 0
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    arch = platform.machine()  # 'arm64' or 'x86_64'
+
+    # 현재 버전 이상의 bottle 키를 모두 수집
+    keys = []
+    for (m, M), arm_key, intel_key in _MACOS_BOTTLE_KEY_ORDER:
+        if (major, minor) >= (m, M):
+            if arch == "arm64":
+                keys.append(arm_key)
+            keys.append(intel_key)
+    # 현재 버전 매칭이 없으면 최신 키로 폴백
+    if not keys:
+        _, arm_key, intel_key = _MACOS_BOTTLE_KEY_ORDER[0]
+        if arch == "arm64":
+            keys.append(arm_key)
+        keys.append(intel_key)
+    return keys
+
+
+def _ensure_ffmpeg_macos(log, force):
+    """맥용 ffmpeg 자동 수급 - Homebrew 우선, 없으면 bottle 다운로드."""
+    dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
+
+    if not force:
+        cached = ffmpeg_exe()
+        if cached:
+            # ffmpeg가 실제로 실행 가능한지 확인
+            if _verify_ffmpeg(cached):
+                _wire_ffmpeg_path(os.path.dirname(cached))
+                log(emit_component("DEPS", "OK", "-", "ffmpeg cached — skip"))
+                return None
+            else:
+                log(emit_component("DEPS", "WARN", "-", "cached ffmpeg not working, reinstalling"))
+                # 캐시된 ffmpeg가 작동하지 않으므로 삭제
+                try:
+                    if os.path.exists(dest):
+                        shutil.rmtree(dest, ignore_errors=True)
+                except Exception:
+                    pass
+
+    # Homebrew가 설치되어 있으면 brew install ffmpeg 시도
+    brew_path = shutil.which("brew")
+    if brew_path:
+        log(emit_component("DEPS", "RUN", "-", "ffmpeg installing via Homebrew...")
+        )
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["brew", "install", "ffmpeg"],
+                capture_output=True,
+                text=True,
+                timeout=300  # 5분 타임아웃
+            )
+            if result.returncode == 0:
+                # 설치 성공 - 경로 확인
+                ffmpeg_path = shutil.which("ffmpeg")
+                if ffmpeg_path and _verify_ffmpeg(ffmpeg_path):
+                    log(emit_component("DEPS", "OK", "-", "ffmpeg installed via Homebrew"))
+                    return None
+            else:
+                log(emit_component("DEPS", "WARN", "-", f"Homebrew install failed: {result.stderr[:100]}"))
+        except subprocess.TimeoutExpired:
+            log(emit_component("DEPS", "WARN", "-", "Homebrew install timed out"))
+        except Exception as e:
+            log(emit_component("DEPS", "WARN", "-", f"Homebrew install error: {e}"))
+
+    # Homebrew 실패 시 bottle 다운로드 시도
+    try:
+        log(emit_component("DEPS", "RUN", "-", "ffmpeg downloading (Homebrew bottle)..."))
+        with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
+            data = json.load(resp)
+
+        bottle = data.get("bottle", {}).get("stable", {})
+        files = bottle.get("files", {})
+
+        keys = _macos_bottle_keys()
+        selected = None
+        for key in keys:
+            if key in files:
+                selected = files[key]
+                break
+
+        if not selected:
+            return "no compatible Homebrew bottle for this macOS version/arch"
+
+        url = selected.get("url")
+        sha256 = selected.get("sha256")
+        if not url:
+            return "Homebrew bottle URL missing"
+
+        with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
+            tar_path = os.path.join(td, "ffmpeg.tar.gz")
+            _download(url, tar_path, log, "ffmpeg", is_status=True)
+
+            if sha256:
+                got = _sha256(tar_path)
+                if got != sha256:
+                    return f"ffmpeg bottle hash mismatch ({got[:12]}…)"
+                log(emit_component("DEPS", "OK", "-", "SHA-256 ok"))
+
+            log(emit_component("DEPS", "RUN", "-", "ffmpeg extracting..."))
+            # 기존 디렉토리를 완전히 삭제
+            if os.path.exists(dest):
+                shutil.rmtree(dest, ignore_errors=True)
+            os.makedirs(dest, exist_ok=True)
+
+            # subprocess로 tar 명령어 직접 실행
+            import subprocess
+            result = subprocess.run(
+                ["tar", "-xzf", tar_path, "-C", dest],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+            if result.returncode != 0:
+                return f"tar extraction failed: {result.stderr}"
+
+            # bottle 추출 구조에서 ffmpeg 검색
+            ffmpeg_src = None
+            ffmpeg_bin_dir = None
+            for root, dirs, files in os.walk(dest):
+                if "ffmpeg" in files:
+                    candidate = os.path.join(root, "ffmpeg")
+                    if os.path.isfile(candidate):
+                        ffmpeg_src = candidate
+                        ffmpeg_bin_dir = root
+                        break
+
+            if ffmpeg_src and ffmpeg_bin_dir:
+                # 원래 디렉토리 구조를 유지하고 PATH에 추가
+                _wire_ffmpeg_path(ffmpeg_bin_dir)
+                # 설치 확인
+                if _verify_ffmpeg(ffmpeg_src):
+                    log(emit_component("DEPS", "OK", "-", "ffmpeg installed (Homebrew bottle)"))
+                    return None
+                else:
+                    return "ffmpeg installed but not working (verification failed)"
+        return "ffmpeg exe not found after extract"
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
 
 def ffmpeg_ready():
     """ffmpeg 실행 파일 확보 여부 (수급 캐시 or 시스템 PATH)."""
@@ -185,11 +367,20 @@ def ffmpeg_ready():
 def ffmpeg_exe():
     """ffmpeg 실행 파일 경로. 수급 캐시 우선, 없으면 시스템 PATH."""
     exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    # 기존 위치 (bin_dir) 확인
     local = os.path.join(
         config.writable_base(), FFMPEG_DIRNAME, "bin", exe_name
     )
-    if os.path.isfile(local):
+    if os.path.isfile(local) and os.access(local, os.X_OK):
         return local
+    # Homebrew bottle 추출 디렉토리에서 검색
+    dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
+    if os.path.isdir(dest):
+        for root, dirs, files in os.walk(dest):
+            if exe_name in files:
+                candidate = os.path.join(root, exe_name)
+                if os.access(candidate, os.X_OK):
+                    return candidate
     return shutil.which("ffmpeg")
 
 def _wire_ffmpeg_path(bin_dir):
@@ -204,8 +395,25 @@ def _wire_ffmpeg_path(bin_dir):
             parts = path_env.split(os.pathsep) if path_env else []
             if bin_dir not in parts:
                 os.environ["PATH"] = os.pathsep.join([bin_dir] + parts)
+                # 디버그: PATH 확인
+                import logging
+                logging.debug(f"ffmpeg bin added to PATH: {bin_dir}")
+                logging.debug(f"ffmpeg executable check: {shutil.which('ffmpeg')}")
     except Exception:
         pass
+
+def _verify_ffmpeg(ffmpeg_path):
+    """ffmpeg이 실제로 실행 가능한지 확인."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            [ffmpeg_path, "-version"],
+            capture_output=True,
+            timeout=10
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 def ensure_ffmpeg(log, force=False):
     """병합/리먹싱용 ffmpeg 자동 수급 — 시스템 설치 우선, 없으면 GitHub 바이너리.
@@ -216,14 +424,17 @@ def ensure_ffmpeg(log, force=False):
     """
     log = _logcb(log)
     try:
-        # [맥 지원] 맥에서는 시스템 ffmpeg 우선 사용, 없으면 Homebrew 권유
+        # [맥 지원] 맥에서는 시스템 ffmpeg 우선 사용, 없으면 Homebrew bottle 자동 수급
         if os.name != "nt":
             which = shutil.which("ffmpeg")
             if which:
-                log(emit_component("DEPS", "OK", "-", f"ffmpeg ok — skip ({which})"))
-                return None
-            log(emit_component("DEPS", "WARN", "-", "ffmpeg missing — brew install"))
-            return "ffmpeg missing — brew install ffmpeg"
+                # ffmpeg이 실제로 실행 가능한지 확인
+                if os.access(which, os.X_OK) and _verify_ffmpeg(which):
+                    log(emit_component("DEPS", "OK", "-", f"ffmpeg ok — skip ({which})"))
+                    return None
+                else:
+                    log(emit_component("DEPS", "WARN", "-", f"ffmpeg found but not working ({which})"))
+            return _ensure_ffmpeg_macos(log, force)
 
         if not force:
             which = shutil.which("ffmpeg")
@@ -461,23 +672,11 @@ def streamlink_ready():
 def ensure_streamlink_pack(log, force=False):
     """streamlink 팩(치지직 라이브 녹화용) 전개. URL 미설정/실패 시 기존분 사용.
 
-    [맥 지원] 맥에서는 streamlink-pip.zip (윈도우 전용)을 다운로드하지 않고,
-    pip로 설치된 streamlink를 사용한다.
+    [맥 지원] 맥에서도 streamlink-pip.zip이 아닌 공통 streamlink-pack.zip을
+    다운로드한다 (pip 의존 제거).
     """
     log = _logcb(log)
     try:
-        # [맥 지원] 맥에서는 pip 설치 streamlink 우선 사용
-        if os.name != "nt":
-            try:
-                import streamlink  # noqa: F401
-                log(emit_component("DEPS", "OK", "streamlink", "pip ok — skip"))
-                return None
-            except ImportError:
-                pass
-            if not SL_PACK_URL:
-                log(emit_component("DEPS", "WARN", "streamlink", "streamlink missing — pip install"))
-                return "streamlink missing — pip install streamlink"
-
         pack_json = os.path.join(streamlink_dir(), "pack.json")
         current, remote = _pack_current(SL_PACK_VER_URL, pack_json)
         if not force and streamlink_ready() and current:

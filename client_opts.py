@@ -1,6 +1,19 @@
 ##### downloader_helpers/client_opts.py - yt-dlp 옵션 빌더
 """yt-dlp 옵션에 player_client/쿠키 설정을 주입하는 순수 헬퍼."""
 import os
+import shutil
+
+
+def _apply_ffmpeg_opts(opts):
+    """ffmpeg 경로를 ydl_opts에 반영 (macOS Homebrew 설치 대응)."""
+    # 이미 ffmpeg_location이 설정되어 있으면 스킵
+    if "ffmpeg_location" in opts:
+        return opts
+    # 시스템 PATH에서 ffmpeg 검색
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        opts["ffmpeg_location"] = ffmpeg_path
+    return opts
 
 
 def _apply_client_opts(opts, cfg):

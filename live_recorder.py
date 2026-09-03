@@ -28,10 +28,11 @@ def download_youtube_live(worker, url):
         "skip_download": True,
         "extract_flat": False,
     }
-    from client_opts import _apply_client_opts, _apply_cookie_opts
+    from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ffmpeg_opts
 
     _apply_cookie_opts(opts, worker.cfg)
     _apply_client_opts(opts, worker.cfg)
+    _apply_ffmpeg_opts(opts)
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)

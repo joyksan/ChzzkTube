@@ -595,7 +595,7 @@ class MainWindow(QMainWindow):
         # 업데이트 진행 라인이 이미 간결에 뜨므로 도장깨기하지 않는다.
         if state == "ok" and not getattr(self, "_stale_updates", False):
             self.append_concise_log(
-                log_console.emit_event("SYS", "OK", "DEPS", "deps ok"),
+                log_console.emit_event("DEPS", "OK", "-", "deps ok"),
                 is_status=False,
                 is_error=False,
             )
@@ -763,12 +763,7 @@ class MainWindow(QMainWindow):
             )
             self._stale_updates = True
         else:
-            # 정상/네트워크 일시장애 모두 같은 결론 라인 — 사용자는 'OK/실패'만 알면 됨
-            self.append_concise_log(
-                log_console.emit_event("DEPS", "OK", "-", "deps ok"),
-                is_status=False,
-                is_error=False,
-            )
+            # "deps ok"는 모든 deps(ffmpeg 포함) 체크 완료 후 _on_pot_provider_finished에서 출력
             self._stale_updates = False
             self._start_pot_provider()
             return

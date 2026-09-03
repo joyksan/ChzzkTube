@@ -310,8 +310,8 @@ class UpdateWorker(QThread):
                 stale.append((label, pypi_name, "not installed", latest))
             elif updater.is_outdated(cur, latest):
                 stale.append((label, pypi_name, cur, latest))
-        # [결론 한 줄] — 사용자가 보는 유일한 메인 콘솔 라인
-        self.line.emit(emit_component("DEPS", "OK", "-", "deps ok"))
+        # 수동 체크는 다이얼로그에서 결과를 보여주므로 메인 콘솔 출력 생략
+        # (앱 시작 시 자동 체크에서만 "deps ok" 출력)
         self.check_done.emit(stale)
 
     def _do_upgrade(self):

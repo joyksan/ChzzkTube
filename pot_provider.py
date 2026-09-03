@@ -13,6 +13,7 @@ import zipfile
 import platform
 import json
 import re
+import tarfile
 import config
 import log_console
 from log_console import emit_component
@@ -114,6 +115,9 @@ def node_major_version(node_path, timeout=10):
         return _node_ver_cache[node_path]
     major = None
     try:
+        kwargs = {}
+        if platform.system() == "Windows":
+            kwargs["creationflags"] = _NO_WINDOW
         out = subprocess.run(
             [node_path, "--version"],
             capture_output=True,
@@ -121,7 +125,7 @@ def node_major_version(node_path, timeout=10):
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
-            creationflags=_NO_WINDOW,
+            **kwargs,
         )
         m = re.match(r"v?(\d+)", (out.stdout or "").strip())
         if m:
@@ -132,7 +136,7 @@ def node_major_version(node_path, timeout=10):
     return major
 
 def latest_lts_node_url(major=NODE_MIN_MAJOR):
-    """nodejs.org dist index에서 지정 major의 최신 win-x64 zip URL (조회 실패 시 폴백)."""
+    """nodejs.org dist index에서 지정 major의 최신 플랫폼별 URL (조회 실패 시 폴백)."""
     try:
         with urllib.request.urlopen(
             "https://nodejs.org/dist/index.json", timeout=15
@@ -147,13 +151,24 @@ def latest_lts_node_url(major=NODE_MIN_MAJOR):
             None,
         )
         if ver:
-            return f"https://nodejs.org/dist/{ver}/node-{ver}-win-x64.zip"
+            return _platform_node_url(ver)
     except Exception:
         pass
-    return (
-        f"https://nodejs.org/dist/{_NODE_FALLBACK_VER}/"
-        f"node-{_NODE_FALLBACK_VER}-win-x64.zip"
-    )
+    return _platform_node_url(_NODE_FALLBACK_VER)
+
+
+def _platform_node_url(ver):
+    """플랫폼별 Node.js 배포 URL 생성 (Windows: zip, macOS: tar.gz)."""
+    system = platform.system()
+    if system == "Windows":
+        return f"https://nodejs.org/dist/{ver}/node-{ver}-win-x64.zip"
+    if system == "Darwin":
+        # macOS: Apple Silicon 우선, 없으면 x64
+        arch = "arm64" if platform.machine() == "arm64" else "x64"
+        return f"https://nodejs.org/dist/{ver}/node-{ver}-darwin-{arch}.tar.gz"
+    # Linux 등 기타 플랫폼
+    arch = "arm64" if platform.machine() == "arm64" else "x64"
+    return f"https://nodejs.org/dist/{ver}/node-{ver}-linux-{arch}.tar.gz"
 
 def node_ok():
     """현재 탐색된 node가 bgutil 요구 버전(Node >= 22)을 충족하는지."""
@@ -205,6 +220,15 @@ def node_exe():
         for root, dirs, files in os.walk(local_node_dir):
             if exe_name in files:
                 cands.append(os.path.join(root, exe_name))
+    # [macOS] 포터블 node 실행 권한 보장 (tar.gz 추출 시 실행 비트 누락 방지)
+    if platform.system() != "Windows":
+        for c in cands:
+            try:
+                mode = os.stat(c).st_mode
+                if not (mode & 0o111):
+                    os.chmod(c, mode | 0o755)
+            except Exception:
+                pass
 
     if _is_portable():
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
@@ -329,14 +353,17 @@ def _spawn_node_server(log_full_func=None):
         env = os.environ.copy()
         node_dir = os.path.dirname(os.path.abspath(node))
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
-        
+
+        kwargs = {}
+        if platform.system() == "Windows":
+            kwargs["creationflags"] = _NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         proc = subprocess.Popen(
             [node, js],
             cwd=os.path.dirname(js),
             stdout=log_file,
             stderr=log_file,
-            creationflags=_NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
             env=env,
+            **kwargs,
         )
         assign_to_job_object(proc)
     except Exception as e:
@@ -410,13 +437,57 @@ def ensure_node_runtime(log_func):
     os.makedirs(node_dir, exist_ok=True)
 
     node_url = latest_lts_node_url()
-    zip_dest = os.path.join(get_writable_base(), "node_portable.zip")
+    is_tarball = node_url.endswith(".tar.gz")
+    dest_name = "node_portable.tar.gz" if is_tarball else "node_portable.zip"
+    archive_dest = os.path.join(get_writable_base(), dest_name)
 
     try:
-        _download_with_progress(node_url, zip_dest, log_func, "node.js runtime downloading")
+        _download_with_progress(node_url, archive_dest, log_func, "node.js runtime downloading")
         log_func("node.js runtime extracting...")
-        with zipfile.ZipFile(zip_dest, "r") as z:
-            z.extractall(node_dir)
+        if is_tarball:
+            # 기존 디렉토리를 완전히 삭제하여 권한 문제 회피
+            if os.path.exists(node_dir):
+                try:
+                    for root, dirs, files in os.walk(node_dir):
+                        for d in dirs:
+                            try:
+                                os.chmod(os.path.join(root, d), 0o755)
+                            except (PermissionError, OSError):
+                                pass
+                        for f in files:
+                            try:
+                                os.chmod(os.path.join(root, f), 0o755)
+                            except (PermissionError, OSError):
+                                pass
+                    shutil.rmtree(node_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            os.makedirs(node_dir, exist_ok=True)
+            # subprocess로 tar 명령어 직접 실행 (권한 문제 회피)
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ["tar", "-xzf", archive_dest, "-C", node_dir],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if result.returncode != 0:
+                    raise RuntimeError(f"tar failed: {result.stderr}")
+            except Exception:
+                # 실패 시 Python tarfile로 시도
+                with tarfile.open(archive_dest, "r:gz") as tf:
+                    if sys.version_info >= (3, 12):
+                        tf.extractall(node_dir, filter="data")
+                    else:
+                        for member in tf.getmembers():
+                            try:
+                                tf.extract(member, node_dir)
+                            except (PermissionError, OSError):
+                                pass
+        else:
+            with zipfile.ZipFile(archive_dest, "r") as z:
+                z.extractall(node_dir)
         _node_ver_cache.clear()
         new_node = node_exe()
         new_major = node_major_version(new_node) if new_node else None
@@ -434,9 +505,9 @@ def ensure_node_runtime(log_func):
         log_func(f"Node.js auto-setup failed: {e}", False, True)
         return False
     finally:
-        if os.path.exists(zip_dest):
+        if os.path.exists(archive_dest):
             try:
-                os.remove(zip_dest)
+                os.remove(archive_dest)
             except Exception:
                 pass
 
@@ -478,6 +549,9 @@ def download_and_install_source(want_ver, log_func=None):
 
 def _run_and_stream_log(cmd, cwd, log_full_func, env=None):
     try:
+        kwargs = {}
+        if platform.system() == "Windows":
+            kwargs["creationflags"] = _NO_WINDOW
         proc = subprocess.Popen(
             cmd,
             cwd=cwd,
@@ -486,8 +560,8 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None):
             text=True,
             encoding="utf-8",
             errors="replace",
-            creationflags=_NO_WINDOW,
-            env=env
+            env=env,
+            **kwargs,
         )
         while True:
             line = proc.stdout.readline()
@@ -656,10 +730,22 @@ class POTProviderWorker(QThread):
         if log_console.is_tui_line(msg):
             self.line.emit(str(msg), is_status, is_error)
             return
+        
+        # [로그 과잉 방지] 오류 메시지는 핵심만 간결 로그에, 상세는 log_full로
+        concise_msg = msg
+        if is_error and len(msg) > 60:
+            # 첫 번째 구분자 이전까지를 핵심 메시지로 추출
+            for sep in [' — ', ' —', ': ', ':']:
+                if sep in msg:
+                    concise_msg = msg.split(sep)[0]
+                    break
+            # 상세 오류는 log_full로 전송
+            self.log_full.emit(f"[pot-DETAIL] {msg}")
+        
         # 플레인 메시지만 TUI 컬럼 포맷으로 래핑
         stage = "SYS" if is_error else "pot"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        self.line.emit(emit_component(stage, status, "pot", msg), is_status, is_error)
+        self.line.emit(emit_component(stage, status, "pot", concise_msg), is_status, is_error)
 
     def _dbg(self, msg):
         """F12 verbose window + history only — not shown in concise log."""

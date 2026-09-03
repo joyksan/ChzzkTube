@@ -31,7 +31,7 @@ import log_console
 from dl_platform import detect_content_type
 from playlist import normalize_youtube_channel_url
 from speed_window import SpeedWindow
-from client_opts import _apply_client_opts, _apply_cookie_opts, _dedupe_by_label
+from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ffmpeg_opts, _dedupe_by_label
 import progress_emitter as _pe
 import live_recorder as _lr
 import target_downloader as _td
@@ -169,6 +169,7 @@ class AnalyzeWorker(QThread):
                     }
                     _apply_cookie_opts(ydl_opts, self.cfg)
                     _apply_client_opts(ydl_opts, self.cfg)
+                    _apply_ffmpeg_opts(ydl_opts)
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(normalize_youtube_channel_url(self.target_url), download=False)
                     
@@ -194,6 +195,7 @@ class AnalyzeWorker(QThread):
 
                 _apply_cookie_opts(ydl_opts, self.cfg)
                 _apply_client_opts(ydl_opts, self.cfg)
+                _apply_ffmpeg_opts(ydl_opts)
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(self.target_url, download=False)

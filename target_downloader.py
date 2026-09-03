@@ -15,7 +15,7 @@ from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
 from log_console import format_target_url
 from utils import get_filename_template
 from dl_platform import detect_content_type
-from client_opts import _apply_client_opts, _apply_cookie_opts
+from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ffmpeg_opts
 from progress_emitter import emit_err
 
 
@@ -37,6 +37,7 @@ def _make_ytdl_opts(worker, fmt):
         opts["concurrent_fragment_downloads"] = 4
     _apply_cookie_opts(opts, worker.cfg)
     _apply_client_opts(opts, worker.cfg)
+    _apply_ffmpeg_opts(opts)
     return opts
 
 
