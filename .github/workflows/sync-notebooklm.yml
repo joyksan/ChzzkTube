@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch: # Actions 탭에서 수동으로 버튼을 눌러 실행할 수 있는 옵션 추가
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -12,6 +12,11 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -22,8 +27,9 @@ jobs:
         run: npx repomix --output repomix-output.md
 
       - name: Sync to NotebookLM
-        uses: henry2man/notebooklm-github-sync@v1
-        with:
-          notebook_id: ${{ secrets.NOTEBOOK_ID }}
-          cookies: ${{ secrets.NOTEBOOKLM_COOKIES }}
-          file_path: 'repomix-output.md'
+        env:
+          NOTEBOOK_ID: ${{ secrets.NOTEBOOK_ID }}
+          NOTEBOOKLM_COOKIES: ${{ secrets.NOTEBOOKLM_COOKIES }}
+        run: |
+          pip install notebooklm-py
+          notebooklm-py sync --notebook-id "$NOTEBOOK_ID" --cookies "$NOTEBOOKLM_COOKIES" --file repomix-output.md
