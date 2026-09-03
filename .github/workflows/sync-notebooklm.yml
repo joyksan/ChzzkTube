@@ -31,5 +31,6 @@ jobs:
           NOTEBOOK_ID: ${{ secrets.NOTEBOOK_ID }}
           NOTEBOOKLM_COOKIES: ${{ secrets.NOTEBOOKLM_COOKIES }}
         run: |
-          pip install notebooklm-py
-          notebooklm-py sync --notebook-id "$NOTEBOOK_ID" --cookies "$NOTEBOOKLM_COOKIES" --file repomix-output.md
+          python -m pip install --upgrade pip
+          python -m pip install notebooklm-py
+          python -m notebooklm sync --notebook-id "$NOTEBOOK_ID" --cookies "$NOTEBOOKLM_COOKIES" --file repomix-output.md
