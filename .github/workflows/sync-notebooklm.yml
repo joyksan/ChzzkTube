@@ -35,7 +35,7 @@ jobs:
           python -m pip install notebooklm-py
           
           python -c "
-          import asyncio, json, os, sys
+          import asyncio, json, os, sys, traceback
           from notebooklm import NotebookLMClient
 
           async def main():
@@ -46,17 +46,26 @@ jobs:
                   print('❌ Error: NOTEBOOK_ID 또는 NOTEBOOKLM_COOKIES Secret이 비어있습니다.')
                   sys.exit(1)
 
-              # 1. HTTP 헤더 쿠키 문자열을 storage_state.json 포맷으로 자동 변환
-              cookies_list = []
+              # 1. 쿠키 파싱 및 __Secure-1PSID -> SID 자동 보완
+              cookie_dict = {}
               for item in cookies_str.split(';'):
                   if '=' in item:
                       k, v = item.strip().split('=', 1)
-                      cookies_list.append({
-                          'name': k.strip(),
-                          'value': v.strip(),
-                          'domain': '.google.com',
-                          'path': '/'
-                      })
+                      cookie_dict[k.strip()] = v.strip()
+
+              if 'SID' not in cookie_dict and '__Secure-1PSID' in cookie_dict:
+                  cookie_dict['SID'] = cookie_dict['__Secure-1PSID']
+              if 'SSID' not in cookie_dict and '__Secure-1PSSID' in cookie_dict:
+                  cookie_dict['SSID'] = cookie_dict['__Secure-1PSSID']
+
+              cookies_list = []
+              for k, v in cookie_dict.items():
+                  cookies_list.append({
+                      'name': k,
+                      'value': v,
+                      'domain': '.google.com',
+                      'path': '/'
+                  })
 
               storage_dir = os.path.expanduser('~/.notebooklm/profiles/default')
               os.makedirs(storage_dir, exist_ok=True)
@@ -75,6 +84,7 @@ jobs:
                       print('✅ NotebookLM 동기화 성공!')
               except Exception as e:
                   print(f'❌ 동기화 실패: {e}')
+                  traceback.print_exc()
                   sys.exit(1)
 
           asyncio.run(main())
