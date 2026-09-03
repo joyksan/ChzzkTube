@@ -35,21 +35,47 @@ jobs:
           python -m pip install notebooklm-py
           
           python -c "
-          import os, sys
-          from notebooklm import NotebookLM
+          import asyncio, json, os, sys
+          from notebooklm import NotebookLMClient
 
-          notebook_id = os.environ.get('NOTEBOOK_ID', '').strip()
-          cookies_str = os.environ.get('NOTEBOOKLM_COOKIES', '').strip()
+          async def main():
+              notebook_id = os.environ.get('NOTEBOOK_ID', '').strip()
+              cookies_str = os.environ.get('NOTEBOOKLM_COOKIES', '').strip()
 
-          if not notebook_id or not cookies_str:
-              print('❌ Error: NOTEBOOK_ID 또는 NOTEBOOKLM_COOKIES Secret이 비어있습니다.')
-              sys.exit(1)
+              if not notebook_id or not cookies_str:
+                  print('❌ Error: NOTEBOOK_ID 또는 NOTEBOOKLM_COOKIES Secret이 비어있습니다.')
+                  sys.exit(1)
 
-          try:
-              client = NotebookLM(cookies=cookies_str)
-              client.add_source(notebook_id=notebook_id, file_path='repomix-output.md')
-              print('✅ NotebookLM 동기화 성공!')
-          except Exception as e:
-              print(f'❌ 동기화 실패: {e}')
-              sys.exit(1)
+              # 1. HTTP 헤더 쿠키 문자열을 storage_state.json 포맷으로 자동 변환
+              cookies_list = []
+              for item in cookies_str.split(';'):
+                  if '=' in item:
+                      k, v = item.strip().split('=', 1)
+                      cookies_list.append({
+                          'name': k.strip(),
+                          'value': v.strip(),
+                          'domain': '.google.com',
+                          'path': '/'
+                      })
+
+              storage_dir = os.path.expanduser('~/.notebooklm/profiles/default')
+              os.makedirs(storage_dir, exist_ok=True)
+              storage_path = os.path.join(storage_dir, 'storage_state.json')
+
+              with open(storage_path, 'w', encoding='utf-8') as f:
+                  json.dump({'cookies': cookies_list, 'origins': []}, f)
+
+              print('🔑 인증 세션 파일 구성 완료!')
+
+              # 2. NotebookLM API 연결 및 소스 파일 업로드
+              try:
+                  async with NotebookLMClient.from_storage(storage_path) as client:
+                      print('📤 NotebookLM에 repomix-output.md 업로드 시작...')
+                      await client.sources.add_file(notebook_id, 'repomix-output.md')
+                      print('✅ NotebookLM 동기화 성공!')
+              except Exception as e:
+                  print(f'❌ 동기화 실패: {e}')
+                  sys.exit(1)
+
+          asyncio.run(main())
           "
