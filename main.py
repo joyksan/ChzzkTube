@@ -576,13 +576,7 @@ class MainWindow(QMainWindow):
             return
         self._startup_completed = True
         self.update_ui_state()
-        self.append_concise_log(
-            log_console.emit_event(
-                "SYS", "SKIP", "DEPS", "deps check delayed — opening input"
-            ),
-            is_status=False,
-            is_error=False,
-        )
+        # [로그 정책] 폴백 발동도 정상 기동 과정 — 간결 로그에 남기지 않음
 
     def _on_pot_provider_finished(self):
         state, msg = self._pot_worker.outcome

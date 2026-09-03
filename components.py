@@ -248,10 +248,10 @@ def _ensure_ffmpeg_macos(log, force):
             # ffmpeg가 실제로 실행 가능한지 확인
             if _verify_ffmpeg(cached):
                 _wire_ffmpeg_path(os.path.dirname(cached))
-                log(emit_component("DEPS", "OK", "-", "ffmpeg cached — skip"))
+                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
                 return None
             else:
-                log(emit_component("DEPS", "WARN", "-", "cached ffmpeg not working, reinstalling"))
+                log(emit_component("DEPS", "WARN", "ffmpeg", "cached not working, reinstalling"))
                 # 캐시된 ffmpeg가 작동하지 않으므로 삭제
                 try:
                     if os.path.exists(dest):
@@ -262,8 +262,7 @@ def _ensure_ffmpeg_macos(log, force):
     # Homebrew가 설치되어 있으면 brew install ffmpeg 시도
     brew_path = shutil.which("brew")
     if brew_path:
-        log(emit_component("DEPS", "RUN", "-", "ffmpeg installing via Homebrew...")
-        )
+        log(emit_component("DEPS", "RUN", "ffmpeg", "installing via Homebrew..."))
         import subprocess
         try:
             result = subprocess.run(
@@ -276,18 +275,18 @@ def _ensure_ffmpeg_macos(log, force):
                 # 설치 성공 - 경로 확인
                 ffmpeg_path = shutil.which("ffmpeg")
                 if ffmpeg_path and _verify_ffmpeg(ffmpeg_path):
-                    log(emit_component("DEPS", "OK", "-", "ffmpeg installed via Homebrew"))
+                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
                     return None
             else:
-                log(emit_component("DEPS", "WARN", "-", f"Homebrew install failed: {result.stderr[:100]}"))
+                log(emit_component("DEPS", "WARN", "ffmpeg", f"brew install failed: {result.stderr[:100]}"))
         except subprocess.TimeoutExpired:
-            log(emit_component("DEPS", "WARN", "-", "Homebrew install timed out"))
+            log(emit_component("DEPS", "WARN", "ffmpeg", "brew install timed out"))
         except Exception as e:
-            log(emit_component("DEPS", "WARN", "-", f"Homebrew install error: {e}"))
+            log(emit_component("DEPS", "WARN", "ffmpeg", f"brew install error: {e}"))
 
     # Homebrew 실패 시 bottle 다운로드 시도
     try:
-        log(emit_component("DEPS", "RUN", "-", "ffmpeg downloading (Homebrew bottle)..."))
+        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading (Homebrew bottle)..."))
         with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
             data = json.load(resp)
 
@@ -317,9 +316,9 @@ def _ensure_ffmpeg_macos(log, force):
                 got = _sha256(tar_path)
                 if got != sha256:
                     return f"ffmpeg bottle hash mismatch ({got[:12]}…)"
-                log(emit_component("DEPS", "OK", "-", "SHA-256 ok"))
+                log(emit_component("DEPS", "OK", "ffmpeg", "SHA-256 ok"))
 
-            log(emit_component("DEPS", "RUN", "-", "ffmpeg extracting..."))
+            log(emit_component("DEPS", "RUN", "ffmpeg", "extracting..."))
             # 기존 디렉토리를 완전히 삭제
             if os.path.exists(dest):
                 shutil.rmtree(dest, ignore_errors=True)
@@ -352,7 +351,7 @@ def _ensure_ffmpeg_macos(log, force):
                 _wire_ffmpeg_path(ffmpeg_bin_dir)
                 # 설치 확인
                 if _verify_ffmpeg(ffmpeg_src):
-                    log(emit_component("DEPS", "OK", "-", "ffmpeg installed (Homebrew bottle)"))
+                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
                     return None
                 else:
                     return "ffmpeg installed but not working (verification failed)"
@@ -423,6 +422,7 @@ def ensure_ffmpeg(log, force=False):
     성공/스킵 시 None, 실패 시 오류 문자열.
     """
     log = _logcb(log)
+    log(emit_component("DEPS", "RUN", "ffmpeg", "checking..."))
     try:
         # [맥 지원] 맥에서는 시스템 ffmpeg 우선 사용, 없으면 Homebrew bottle 자동 수급
         if os.name != "nt":
@@ -430,31 +430,31 @@ def ensure_ffmpeg(log, force=False):
             if which:
                 # ffmpeg이 실제로 실행 가능한지 확인
                 if os.access(which, os.X_OK) and _verify_ffmpeg(which):
-                    log(emit_component("DEPS", "OK", "-", f"ffmpeg ok — skip ({which})"))
+                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
                     return None
                 else:
-                    log(emit_component("DEPS", "WARN", "-", f"ffmpeg found but not working ({which})"))
+                    log(emit_component("DEPS", "WARN", "ffmpeg", f"found but not working ({which})"))
             return _ensure_ffmpeg_macos(log, force)
 
         if not force:
             which = shutil.which("ffmpeg")
             if which:
-                log(emit_component("DEPS", "OK", "-", "ffmpeg ok — skip"))
+                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
                 return None
             cached = ffmpeg_exe()
             if cached:
                 _wire_ffmpeg_path(os.path.dirname(cached))
-                log(emit_component("DEPS", "OK", "-", "ffmpeg cached — skip"))
+                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
                 return None
         dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
         bin_dir = os.path.join(dest, "bin")
         _exe = ".exe" if os.name == "nt" else ""
         if not force and os.path.isfile(os.path.join(bin_dir, f"ffmpeg{_exe}")):
             _wire_ffmpeg_path(bin_dir)
-            log(emit_component("DEPS", "OK", "-", "ffmpeg cached — skip"))
+            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
             return None
         os.makedirs(dest, exist_ok=True)
-        log(emit_component("DEPS", "RUN", "-", "ffmpeg downloading..."))
+        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading..."))
         with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
             zp = _download(
                 FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg"
@@ -463,7 +463,7 @@ def ensure_ffmpeg(log, force=False):
         exe = os.path.join(bin_dir, f"ffmpeg{_exe}")
         if os.path.isfile(exe):
             _wire_ffmpeg_path(bin_dir)
-            log(emit_component("DEPS", "OK", "-", "ffmpeg installed — ok"))
+            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
             return None
         return "ffmpeg exe not found after extract"
     except Exception as e:
@@ -525,7 +525,7 @@ def ensure_ytdlp(log, force=False):
                 got = _sha256(wl)
                 if want and got != want:
                     return None, f"yt-dlp wheel hash mismatch ({got[:12]}…)"
-                log(emit_component("DEPS", "OK", "-", "SHA-256 ok"))
+                log(emit_component("DEPS", "OK", "ytdlp", "SHA-256 ok"))
             _extract_zip(wl, ytdlp_dir(), log, "yt-dlp")
         with open(os.path.join(ytdlp_dir(), ".version"), "w", encoding="utf-8") as f:
             f.write(tag)

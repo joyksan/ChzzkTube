@@ -773,14 +773,14 @@ class POTProviderWorker(QThread):
             self._dbg(f"ffmpeg fetch module exception: {type(ff_ex).__name__}: {ff_ex}")
 
         if not plugin_installed():
-            self._note("PO plugin missing — downloading latest", True)
+            self._note("plugin missing — downloading", True)
             self._dbg("plugin missing → download attempt")
             ok = download_and_hot_reload_plugin(self._note, _FALLBACK_PLUGIN_VER)
             self._dbg(f"plugin download result: {'OK' if ok else 'FAIL'}")
         else:
-            self._dbg("plugin already installed — skip download")
+            self._note("plugin installed — skip", True)
 
-        self._dbg(f"서버 probe 시도 → {DEFAULT_HOST}:{DEFAULT_PORT}")
+        self._note("probing server...", True)
         state, detail = probe_server()
         self._dbg(f"probe 결과: state={state!r} detail={detail[:200]!r}")
         if state == "ok":
@@ -794,7 +794,7 @@ class POTProviderWorker(QThread):
         if state == "conflict":
             self.outcome = (
                 "err",
-                emit_component("SYS", "FAIL", "pot", f"port {DEFAULT_PORT} in use — kill the holder and retry"),
+                emit_component("SYS", "FAIL", "pot", "port in use"),
             )
             self._dbg("conflict branch — port occupied")
             return
@@ -825,7 +825,7 @@ class POTProviderWorker(QThread):
 
         self.outcome = (
             "err",
-            emit_component("SYS", "FAIL", "pot", "server start failed — age-restricted videos unavailable"),
+            emit_component("SYS", "FAIL", "pot", "bind fail — age-only"),
         )
         self._dbg("final fail — extracting tail causes")
         # [가시화] err 부재(스폰 실패) 케이스에서조차 원인이 화면에 안 떴던 문제 수리 —

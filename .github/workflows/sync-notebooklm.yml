@@ -1,0 +1,29 @@
+name: Sync Codebase to NotebookLM
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Actions 탭에서 수동으로 버튼을 눌러 실행할 수 있는 옵션 추가
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Bundle codebase with Repomix
+        run: npx repomix --output repomix-output.md
+
+      - name: Sync to NotebookLM
+        uses: henry2man/notebooklm-github-sync@v1
+        with:
+          notebook_id: ${{ secrets.NOTEBOOK_ID }}
+          cookies: ${{ secrets.NOTEBOOKLM_COOKIES }}
+          file_path: 'repomix-output.md'
