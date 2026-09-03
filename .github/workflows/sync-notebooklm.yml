@@ -35,7 +35,7 @@ jobs:
           python -m pip install notebooklm-py
 
           python -c "
-          import asyncio, os, sys
+          import asyncio, json, os, sys
           from notebooklm import NotebookLMClient
 
           async def main():
@@ -46,8 +46,23 @@ jobs:
                   print('❌ Error: NOTEBOOK_ID 또는 NOTEBOOKLM_COOKIES Secret이 비어있습니다.')
                   sys.exit(1)
 
+              # 1. Secret JSON 데이터를 storage_state.json 파일로 저장
+              storage_dir = os.path.expanduser('~/.notebooklm/profiles/default')
+              os.makedirs(storage_dir, exist_ok=True)
+              storage_path = os.path.join(storage_dir, 'storage_state.json')
+
               try:
-                  async with NotebookLMClient.from_storage() as client:
+                  data = json.loads(auth_json)
+                  with open(storage_path, 'w', encoding='utf-8') as f:
+                      json.dump(data, f, indent=2)
+                  print('🔑 storage_state.json 세션 파일 생성 완료!')
+              except Exception as e:
+                  print(f'❌ Secret JSON 저장 실패: {e}')
+                  sys.exit(1)
+
+              # 2. 세션 파일을 지정하여 NotebookLM API 호출
+              try:
+                  async with NotebookLMClient.from_storage(storage_path) as client:
                       print('📤 NotebookLM에 repomix-output.md 업로드 중...')
                       await client.sources.add_file(notebook_id, 'repomix-output.md')
                       print('✅ NotebookLM 동기화 성공!')
