@@ -46,7 +46,7 @@ jobs:
                   print('❌ Error: NOTEBOOK_ID 또는 NOTEBOOKLM_COOKIES Secret이 비어있습니다.')
                   sys.exit(1)
 
-              # 1. 복사 시 들어간 줄바꿈(\n, \r) 및 탭 문자 자동 정제
+              # 1. 줄바꿈 및 탭 정제
               clean_cookies_str = raw_cookies.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
               
               cookie_dict = {}
@@ -60,7 +60,7 @@ jobs:
                   if k and v:
                       cookie_dict[k] = v
 
-              # 2. 구글 인증 필수 키 별칭(Alias) 맵핑
+              # 2. 필수 인증 키 별칭(Alias) 맵핑
               if 'SID' not in cookie_dict and '__Secure-1PSID' in cookie_dict:
                   cookie_dict['SID'] = cookie_dict['__Secure-1PSID']
               if 'SSID' not in cookie_dict and '__Secure-1PSSID' in cookie_dict:
@@ -69,29 +69,34 @@ jobs:
                   cookie_dict['APISID'] = cookie_dict['__Secure-1PAPISID']
               if 'SAPISID' not in cookie_dict and '__Secure-3PAPISID' in cookie_dict:
                   cookie_dict['SAPISID'] = cookie_dict['__Secure-3PAPISID']
-              if 'SAPISID' not in cookie_dict and '__Secure-1PAPISID' in cookie_dict:
+              elif 'SAPISID' not in cookie_dict and '__Secure-1PAPISID' in cookie_dict:
                   cookie_dict['SAPISID'] = cookie_dict['__Secure-1PAPISID']
+              if 'OSID' not in cookie_dict and '__Secure-OSID' in cookie_dict:
+                  cookie_dict['OSID'] = cookie_dict['__Secure-OSID']
 
               print(f'🔑 정제된 쿠키 개수: {len(cookie_dict)}개')
               key_check = [k for k in ['SID', 'OSID', 'SAPISID', 'APISID', 'HSID'] if k in cookie_dict]
               print(f'🔍 감지된 핵심 인증 키: {key_check}')
 
-              # 3. .google.com 및 notebook.google.com 도메인 바인딩 세션 생성
+              # 3. 도메인 스코프 분리 (CookieMismatch 해결)
               cookies_list = []
-              domains = ['.google.com', 'notebook.google.com', '.notebook.google.com']
-              
-              for domain in domains:
-                  for k, v in cookie_dict.items():
-                      cookies_list.append({
-                          'name': k,
-                          'value': v,
-                          'domain': domain,
-                          'path': '/',
-                          'expires': -1,
-                          'httpOnly': False,
-                          'secure': True,
-                          'sameSite': 'None'
-                      })
+              for k, v in cookie_dict.items():
+                  # OSID 및 NotebookLM 전용 쿠키는 notebook.google.com에만 바인딩
+                  if 'OSID' in k:
+                      domain = '.notebook.google.com'
+                  else:
+                      domain = '.google.com'
+
+                  cookies_list.append({
+                      'name': k,
+                      'value': v,
+                      'domain': domain,
+                      'path': '/',
+                      'expires': -1,
+                      'httpOnly': False,
+                      'secure': True,
+                      'sameSite': 'None'
+                  })
 
               storage_dir = os.path.expanduser('~/.notebooklm/profiles/default')
               os.makedirs(storage_dir, exist_ok=True)
