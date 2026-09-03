@@ -40,32 +40,58 @@ jobs:
 
           async def main():
               notebook_id = os.environ.get('NOTEBOOK_ID', '').strip()
-              cookies_str = os.environ.get('NOTEBOOKLM_COOKIES', '').strip()
+              raw_cookies = os.environ.get('NOTEBOOKLM_COOKIES', '').strip()
 
-              if not notebook_id or not cookies_str:
+              if not notebook_id or not raw_cookies:
                   print('❌ Error: NOTEBOOK_ID 또는 NOTEBOOKLM_COOKIES Secret이 비어있습니다.')
                   sys.exit(1)
 
-              # 1. 쿠키 파싱 및 __Secure-1PSID -> SID 자동 보완
+              # 1. 복사 시 들어간 줄바꿈(\n, \r) 및 탭 문자 자동 정제
+              clean_cookies_str = raw_cookies.replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+              
               cookie_dict = {}
-              for item in cookies_str.split(';'):
-                  if '=' in item:
-                      k, v = item.strip().split('=', 1)
-                      cookie_dict[k.strip()] = v.strip()
+              for item in clean_cookies_str.split(';'):
+                  item = item.strip()
+                  if not item or '=' not in item:
+                      continue
+                  k, v = item.split('=', 1)
+                  k = k.strip()
+                  v = v.strip()
+                  if k and v:
+                      cookie_dict[k] = v
 
+              # 2. 구글 인증 필수 키 별칭(Alias) 맵핑
               if 'SID' not in cookie_dict and '__Secure-1PSID' in cookie_dict:
                   cookie_dict['SID'] = cookie_dict['__Secure-1PSID']
               if 'SSID' not in cookie_dict and '__Secure-1PSSID' in cookie_dict:
                   cookie_dict['SSID'] = cookie_dict['__Secure-1PSSID']
+              if 'APISID' not in cookie_dict and '__Secure-1PAPISID' in cookie_dict:
+                  cookie_dict['APISID'] = cookie_dict['__Secure-1PAPISID']
+              if 'SAPISID' not in cookie_dict and '__Secure-3PAPISID' in cookie_dict:
+                  cookie_dict['SAPISID'] = cookie_dict['__Secure-3PAPISID']
+              if 'SAPISID' not in cookie_dict and '__Secure-1PAPISID' in cookie_dict:
+                  cookie_dict['SAPISID'] = cookie_dict['__Secure-1PAPISID']
 
+              print(f'🔑 정제된 쿠키 개수: {len(cookie_dict)}개')
+              key_check = [k for k in ['SID', 'OSID', 'SAPISID', 'APISID', 'HSID'] if k in cookie_dict]
+              print(f'🔍 감지된 핵심 인증 키: {key_check}')
+
+              # 3. .google.com 및 notebook.google.com 도메인 바인딩 세션 생성
               cookies_list = []
-              for k, v in cookie_dict.items():
-                  cookies_list.append({
-                      'name': k,
-                      'value': v,
-                      'domain': '.google.com',
-                      'path': '/'
-                  })
+              domains = ['.google.com', 'notebook.google.com', '.notebook.google.com']
+              
+              for domain in domains:
+                  for k, v in cookie_dict.items():
+                      cookies_list.append({
+                          'name': k,
+                          'value': v,
+                          'domain': domain,
+                          'path': '/',
+                          'expires': -1,
+                          'httpOnly': False,
+                          'secure': True,
+                          'sameSite': 'None'
+                      })
 
               storage_dir = os.path.expanduser('~/.notebooklm/profiles/default')
               os.makedirs(storage_dir, exist_ok=True)
@@ -76,10 +102,10 @@ jobs:
 
               print('🔑 인증 세션 파일 구성 완료!')
 
-              # 2. NotebookLM API 연결 및 소스 파일 업로드
+              # 4. NotebookLM API 호출
               try:
                   async with NotebookLMClient.from_storage(storage_path) as client:
-                      print('📤 NotebookLM에 repomix-output.md 업로드 시작...')
+                      print('📤 NotebookLM에 repomix-output.md 업로드 중...')
                       await client.sources.add_file(notebook_id, 'repomix-output.md')
                       print('✅ NotebookLM 동기화 성공!')
               except Exception as e:
