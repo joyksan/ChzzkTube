@@ -1,4 +1,4 @@
-##### downloader_helpers/cleanup.py - 임시 파일 정리 
+##### downloader_helpers/cleanup.py - 임시 파일 정리
 """다운로드 중단 시 .part/.ytdl/.f*** 임시 파일 일괄 삭제."""
 import glob
 import os

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main  # master 사용 시 master로 변경
+      - main  # master 사용 시 master로 수정
     paths:
       - '**.md'
 
@@ -20,23 +20,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y rclone
 
-      - name: Create Keys and Rclone Config
+      - name: Create Rclone Config
         run: |
-          echo '${{ secrets.GCP_SA_KEY }}' > /tmp/sa.json
           mkdir -p ~/.config/rclone
           cat << EOL > ~/.config/rclone/rclone.conf
           [gdrive]
           type = drive
           scope = drive
-          service_account_file = /tmp/sa.json
+          token = ${{ secrets.RCLONE_GDRIVE_TOKEN }}
           root_folder_id = ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           EOL
 
       - name: Sync Markdown files to Google Drive
         run: |
-          # --drive-v2-download-min-priority / root_folder_id 경로 상의 용량 공유 처리
-          rclone sync . gdrive: \
-            --include "*.md" \
-            --exclude ".git/**" \
-            --progress \
-            --drive-acknowledge-abuse
+          rclone sync . gdrive: --include "*.md" --exclude ".git/**" --progress
