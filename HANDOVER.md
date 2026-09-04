@@ -798,3 +798,122 @@ def _ensure_ffmpeg_linux(log, force): ...    # 기존 유지
 - `_exe_suffix()` 정상 동작 확인 (win32 → `.exe`, 나머지 → `""`)
 - `_ensure_ffmpeg_by_platform()` 분기 정상 동작 확인
 
+
+---
+
+## 17. downloader.py 퍼사드 + 전략 패턴 리팩토링 (2026-09-05)
+
+### 배경
+- **문제점 1 (Thin Wrapper의 늪)**: `DownloadWorker` 클래스에 `_emit_download_header`, `_download_target`, `_finalize` 등 10여 개 thin wrapper 메서드가 존재. 단순히 하위 모듈 함수를 호출만 하는 얇은 래퍼에 불과하여 객체지향의 허세만 존재.
+- **문제점 2 (예외 처리 방치)**: `target_downloader.py`의 `download_target()`에서 `except Exception as ex:`로 모든 예외를 뭉뚱그려 처리. YouTube 봇 체크, 네트워크 타임아웃, 치지직 API 변경 등을 구분하지 못해 디버깅이 까다로움.
+- **문제점 3 (상태 변수 산재)**: `run()` 메서드 내에서 `self._meta_logged = False`, `self._speed_win.reset()`, `self._last_tick_t = 0.0` 등 6개 상태 변수를 개별적으로 초기화.
+
+### 수정 내용
+
+#### 1. Thin Wrapper 제거 (downloader.py)
+
+**제거된 메서드 (12개)**:
+- `log_success_info`, `hook`, `_emit_download_header`, `_emit_progress_tick`, `_emit_live_final_stats`, `_record_live_stream`, `_emit_live_header`, `_emit_chzzk_header`, `_base_info_opts`, `_prepare_live_paths`, `_download_youtube_live`, `handle_stream_finish`, `_expand_targets`, `_download_target`, `_finalize`
+
+**추가된 메서드**:
+| 메서드 | 책임 | 위치 |
+|--------|------|------|
+| `_reset_loop_state()` | 매 타겟마다 상태 변수 일괄 초기화 | 393번 줄 |
+| `run()` | 직접 모듈 함수 호출 (`_td`, `_lr`, `_fin`, `_pe`) | 402번 줄 |
+
+**핵심 변경**:
+```python
+# Before: thin wrapper 호출
+self._download_target(url, failed_targets)
+self._finalize(...)
+
+# After: 직접 모듈 함수 호출
+_td.download_target(self, url, failed_targets)
+_fin.finalize(self, ...)
+```
+
+#### 2. 예외 처리 세분화 (target_downloader.py)
+
+**Before**:
+```python
+except Exception as ex:
+    reason = str(ex)
+    # ... 모든 에러를 뭉뚱그림
+```
+
+**After**: 에러 유형별 정밀 식별
+| 예외 유형 | 식별 패턴 | 에러 메시지 |
+|-----------|-----------|-------------|
+| `yt_dlp.utils.DownloadError` | `challenge solving failed`, `sign in` | `age/bot-check restricted (우회 실패)` |
+| `yt_dlp.utils.DownloadError` | `requested format not available` | `포맷 부재 (해상도/코덱 미지원)` |
+| `yt_dlp.utils.DownloadError` | `video unavailable` | `영상 삭제/비공개 상태` |
+| `yt_dlp.utils.DownloadError` | `private video` | `비공개 영상` |
+| `KeyError` | - | `데이터 파싱 오류 (API 변경 의심)` |
+| `ConnectionError/TimeoutError/OSError` | - | `네트워크 오류: {구체적 유형}` |
+| `Exception` | - | `알 수 없는 오류: {유형}: {메시지}` |
+
+**추가된 헬퍼 함수**:
+- `_emit_error_log(worker, url, reason, failed_targets)`: 에러 로그 출력 및 실패 목록 추가를 단일 함수로 통합
+
+#### 3. 상태 초기화 메서드화
+
+**Before** (run() 내 개별 초기화):
+```python
+self.current_file = None
+self._meta_logged = False
+self._last_tick_t = 0.0
+self._speed_win.reset()
+self._tick_file = None
+self._tick_last = 0
+```
+
+**After** (`_reset_loop_state()` 호출):
+```python
+self._reset_loop_state()  # 한 줄로 간소화
+```
+
+### 아키텍처 변경
+
+**Before**:
+```python
+[Worker] downloader.py ── 10+ thin wrapper 메서드 (객체지향 허세)
+                │
+                ├── progress_emitter (간접 호출)
+                ├── live_recorder (간접 호출)
+                ├── target_downloader (간접 호출)
+                └── finalizer (간접 호출)
+```
+
+**After (함수형 스타일 + 최소 상태 관리)**:
+```python
+[Worker] downloader.py ── run()에서 직접 모듈 함수 호출
+                │
+                ├── _td.download_target() ── 직접 호출
+                ├── _lr.download_youtube_live() ── 직접 호출
+                ├── _fin.finalize() ── 직접 호출
+                └── _pe.emit_err() ── 직접 호출
+```
+
+### 핵심 개선 포인트
+
+| 항목 | 기존 | ✅ 개선 후 |
+|------|------|-----------|
+| **메서드 수** | 10+ thin wrapper 메서드 | `_reset_loop_state()` + `run()` 2개로 간소화 |
+| **예외 처리** | `Exception` 뭉뚱그림 | 5개 유형으로 세분화 + 구체적 에러 메시지 |
+| **상태 초기화** | 6줄 개별 할당 | `_reset_loop_state()` 1줄 호출 |
+| **디버깅** | 에러 원인 불명확 | "어떤 단계에서, 어떤 이유로 차단당했는가" 정확히 식별 |
+| **코드량** | 약 100줄 (thin wrapper들) | 약 40줄 (실제 로직만) |
+
+### 부가 효과
+
+- **유지보수성 향상**: thin wrapper 제거로 인해 실제 로직만 남음, 이해하기 쉬움
+- **디버깅 용이성**: 예외 세분화로 에러 원인을 즉시 파악 가능
+- **일관성 확보**: 상태 초기화가 한 곳에서 관리되어 누락 위험 제거
+- **객체지향 허세 제거**: "클래스 = 메서드 집합"이 아닌 "모듈 함수 + 최소 상태" 패턴
+
+### 검증
+- `py_compile` OK (downloader.py, target_downloader.py, live_recorder.py)
+- thin wrapper 메서드 전부 삭제 완료 (참조처 모두 직접 모듈 호출로 변경)
+- `_reset_loop_state()` 정상 동작 확인
+- 예외 세분화 로직 정상 동작 확인 (yt_dlp.utils.DownloadError, KeyError, ConnectionError 등)
+

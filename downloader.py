@@ -390,61 +390,18 @@ class DownloadWorker(QThread):
         self.current_idx = 1
         self.current_url = None
 
-    def log_success_info(self, file_path):
-        """개별 파일 완료 시 계층 구조의 마지막 가지에 맞춰 메타 정보 출력 (thin wrapper)"""
-        return _pe.log_success_info(self, file_path)
-
-    def hook(self, d):
-        """yt-dlp progress_hook 콜백 (thin wrapper)"""
-        return _pe.hook(self, d)
-
-    def _emit_download_header(self, info):
-        """VOD 다운로드 시작 헤더 (thin wrapper)"""
-        return _pe.emit_download_header(self, info)
-
-    def _emit_progress_tick(self, d):
-        """진행률 0.5초 tick (thin wrapper)"""
-        return _pe.emit_progress_tick(self, d)
-
-    def _emit_live_final_stats(self, total_bytes, start_time):
-        """라이브 종료 통계 (thin wrapper)"""
-        return _pe.emit_live_final_stats(self, total_bytes, start_time)
-
-    def _record_live_stream(self, cmd, temp_ts_file, out_file, thumb_file, log_tag="Streamlink"):
-        """streamlink/ffmpeg 라이브 녹화 (thin wrapper)"""
-        return _lr.record_live_stream(self, cmd, temp_ts_file, out_file, thumb_file, log_tag)
-
-    def _emit_live_header(self, info, res_label=""):
-        """라이브 녹화 시작 헤더 (thin wrapper)"""
-        return _pe.emit_live_header(self, info, res_label)
-
-    def _emit_chzzk_header(self, ch_info, fmt):
-        """치지직 헤더 (thin wrapper)"""
-        return _pe.emit_chzzk_header(self, ch_info, fmt)
-
-    def _base_info_opts(self):
-        """yt-dlp 정보 추출 opts (thin wrapper)"""
-        return _pe.base_info_opts(self)
-
-    def _prepare_live_paths(self, out_file, thumb_url):
-        """라이브 임시 파일 경로 준비 (thin wrapper)"""
-        return _lr.prepare_live_paths(self, out_file, thumb_url)
-
-    def _download_youtube_live(self, url):
-        """유튜브 라이브 녹화 (thin wrapper)"""
-        return _lr.download_youtube_live(self, url)
-
-    def handle_stream_finish(self, is_live, temp_file, proc_code=0):
-        """스트림 종료 후처리 (thin wrapper)"""
-        return _lr.handle_stream_finish(self, is_live, temp_file, proc_code)
-
-    def _expand_targets(self):
-        """재생목록/채널 URL 평탄화 (thin wrapper)"""
-        return _td.expand_targets(self)
+    def _reset_loop_state(self):
+        """매 타겟마다 필요한 상태 변수들을 한 번에 초기화."""
+        self.current_file = None
+        self._meta_logged = False
+        self._last_tick_t = 0.0
+        self._speed_win.reset()
+        self._tick_file = None
+        self._tick_last = 0
 
     def run(self):
-        """DownloadWorker 메인 스레드 (thin wrapper)"""
-        self.targets = self._expand_targets()
+        """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
+        self.targets = _td.expand_targets(self)
         self.total_count = len(self.targets)
         failed_targets = []
         success_count = 0
@@ -456,34 +413,20 @@ class DownloadWorker(QThread):
                 if self.state["canceled"]:
                     break
                 self.state["skip"] = False
-                self.current_file = None
-                self._meta_logged = False
-                self._last_tick_t = 0.0
-                self._speed_win.reset()
-                self._tick_file = None
-                self._tick_last = 0
+                self._reset_loop_state()
 
-                ok = self._download_target(url, failed_targets)
-                if ok:
+                if _td.download_target(self, url, failed_targets):
                     success_count += 1
 
-            self._finalize(self.total_count, failed_targets, success_count)
+            _fin.finalize(self, self.total_count, failed_targets, success_count)
 
         except Exception as ex:
             if "CANCELED_BY_USER" in str(ex) or "중지되었습니다" in str(ex) or self.state["canceled"]:
                 pass
             else:
-                # [TUI] 에러 라인 — 컬럼 포맷으로 통일
                 self.log_concise.emit(
                     _pe.emit_err(str(ex)), is_status=False, is_error=True
                 )
 
-            self._finalize(self.total_count, failed_targets, success_count)
+            _fin.finalize(self, self.total_count, failed_targets, success_count)
 
-    def _download_target(self, url, failed_targets):
-        """개별 URL 다운로드 (thin wrapper)"""
-        return _td.download_target(self, url, failed_targets)
-
-    def _finalize(self, total, failed_targets, success_count):
-        """완료 요약 (thin wrapper)"""
-        return _fin.finalize(self, total, failed_targets, success_count)

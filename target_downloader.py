@@ -17,6 +17,7 @@ from utils import get_filename_template
 from dl_platform import detect_content_type
 from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts, _apply_pot_opts
 from progress_emitter import emit_err
+import live_recorder as _lr
 
 
 def _make_ytdl_opts(worker, fmt):
@@ -111,7 +112,7 @@ def _download_chzzk(worker, url, content_type):
 
 def _download_youtube_live(worker, url):
     """유튜브 라이브 — ffmpeg 녹화 파이프라인 (live_recorder)."""
-    return worker._download_youtube_live(url)
+    return _lr.download_youtube_live(worker, url)
 
 
 def _download_streamlink(worker, url):
@@ -119,9 +120,9 @@ def _download_streamlink(worker, url):
     out_file = os.path.join(
         worker.cfg["download_path"], "streamlink_live.mp4"
     )
-    temp_ts, thumb, _ = worker._prepare_live_paths(out_file, None)
+    temp_ts, thumb, _ = _lr.prepare_live_paths(worker, out_file, None)
     cmd = ["streamlink", url, "best", "-O"]
-    return worker._record_live_stream(cmd, temp_ts, out_file, thumb)
+    return _lr.record_live_stream(worker, cmd, temp_ts, out_file, thumb)
 
 
 def _download_vod(worker, url):
@@ -134,7 +135,7 @@ def _download_vod(worker, url):
         raise RuntimeError("info extract fail")
 
     if not worker._meta_logged:
-        worker._emit_download_header(info)
+        _pe.emit_download_header(worker, info)
 
     # 병합(chzzk 무관) 후 실제 산출 파일 완료 로그
     for dl in info.get("requested_downloads") or []:
@@ -145,8 +146,18 @@ def _download_vod(worker, url):
     return True
 
 
+def _emit_error_log(worker, url, reason, failed_targets):
+    """에러 로그 출력 및 실패 목록에 추가."""
+    worker.log_concise.emit(
+        emit_err(f"{format_target_url(url, 40)} — {reason}"),
+        is_status=False,
+        is_error=True,
+    )
+    failed_targets.append((url, reason))
+
+
 def download_target(worker, url, failed_targets):
-    """개별 URL 다운로드 — 콘텐츠 타입 분기."""
+    """개별 URL 다운로드 — 콘텐츠 타입 분기 및 정밀한 예외 식별."""
     try:
         ct = detect_content_type(url)
         if ct in ("clip", "vod"):
@@ -159,14 +170,39 @@ def download_target(worker, url, failed_targets):
         if getattr(worker, "is_live_hint", False):
             return _download_youtube_live(worker, url)
         return _download_vod(worker, url)
+
+    except yt_dlp.utils.DownloadError as de:
+        # YouTube 봇 체크/챌린지 실패 정밀 추적
+        err_str = str(de).lower()
+        if "challenge solving failed" in err_str or "sign in" in err_str or "the page needs to be reloaded" in err_str:
+            reason = "age/bot-check restricted (우회 실패)"
+        elif "requested format not available" in err_str:
+            reason = "포맷 부재 (해상도/코덱 미지원)"
+        elif "video unavailable" in err_str or "this video is not available" in err_str:
+            reason = "영상 삭제/비공개 상태"
+        elif "private video" in err_str:
+            reason = "비공개 영상"
+        else:
+            reason = f"다운로드 차단: {str(de)[:60]}"
+        _emit_error_log(worker, url, reason, failed_targets)
+        return False
+
+    except KeyError as ke:
+        # 치지직 JSON 구조 변경 등 데이터 파싱 오류
+        reason = f"데이터 파싱 오류 (API 변경 의심): {ke}"
+        _emit_error_log(worker, url, reason, failed_targets)
+        return False
+
+    except (ConnectionError, TimeoutError, OSError) as net_ex:
+        # 네트워크 계열 오류 세분화
+        reason = f"네트워크 오류: {type(net_ex).__name__}"
+        _emit_error_log(worker, url, reason, failed_targets)
+        return False
+
     except Exception as ex:
-        reason = str(ex)
-        worker.log_concise.emit(
-            emit_err(f"{format_target_url(url, 40)} — {reason}"),
-            is_status=False,
-            is_error=True,
-        )
-        failed_targets.append((url, reason))
+        # 최후의 범용 에러 캐치
+        reason = f"알 수 없는 오류: {type(ex).__name__}: {str(ex)[:50]}"
+        _emit_error_log(worker, url, reason, failed_targets)
         return False
 
 
