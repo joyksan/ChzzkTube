@@ -32,18 +32,16 @@ def _dl_spec(worker):
 
 
 def emit_dl(status, platform, spec="", speed="", pct=None, bar_frac=None, msg="", stage="DL"):
-    """DL 스테이지 컬럼 라인 — spec 뒤에 speed를 붙여 한 줄로 조판.
+    """DL/LIVE 스테이지 컬럼 라인 — SPEC(스트림 속성)과 SPEED(네트워크) 분리.
 
-    예: [12:00:01] DL │ RUN │ YT  │ 1080p30 12.4M/s │ 65.0% │ [█⋯░] │ 제목
+    예: [12:00:01] DL │ RUN │ YT  │ 1080p30 │ 12.4M/s │ 65.0% │ [█⋯░] │ 제목
     """
-    sp = str(spec or "-")
-    if speed:
-        sp = f"{sp} {speed}".strip()
     return format_log_line(
         stage=stage,
         status=status,
         platform=platform,
-        spec=sp,
+        spec=spec,
+        speed=speed,
         pct=pct,
         bar_frac=bar_frac,
         msg=msg,
@@ -53,7 +51,8 @@ def emit_dl(status, platform, spec="", speed="", pct=None, bar_frac=None, msg=""
 def emit_err(msg):
     """DL 실패 컬럼 라인."""
     return format_log_line(
-        stage="DL", status="FAIL", platform="-", spec="-", pct=None, bar_frac=None, msg=msg,
+        stage="DL", status="FAIL", platform="-", spec="-", speed="-",
+        pct=None, bar_frac=None, msg=msg,
     )
 
 
@@ -97,7 +96,7 @@ def emit_progress_tick(worker, d):
             speed=speed_s,
             pct=pct,
             bar_frac=min(pct / 100.0, 1.0),
-            msg=f'"{title}"' if title else "",
+            msg=f"{title}" if title else "",
         ),
         is_status=False,
         is_error=False,
@@ -111,7 +110,7 @@ def log_success_info(worker, file_path):
         size = os.path.getsize(file_path)
     worker.log_concise.emit(
         emit_event("DL", "OK", _dl_platform(getattr(worker, "current_url", "") or ""),
-                   f"완료 — {os.path.basename(file_path)} ({format_bytes(size)})" if file_path else "완료"),
+                   f"{os.path.basename(file_path)} ({format_bytes(size)})" if file_path else "done"),
         is_status=False,
         is_error=False,
     )
@@ -121,7 +120,7 @@ def log_success_info(worker, file_path):
 
 
 def _title_of(info):
-    return str(info.get("title") or info.get("videoTitle") or "동영상")
+    return str(info.get("title") or info.get("videoTitle") or "video")
 
 
 def emit_download_header(worker, info):
@@ -129,7 +128,7 @@ def emit_download_header(worker, info):
     title = _title_of(info)
     fmt = info.get("format") or {}
     fmt_desc = cli_format_desc(fmt) if fmt and isinstance(fmt, dict) else ""
-    msg = f"다운로드 시작 — {title}"
+    msg = f"{title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
     worker.log_concise.emit(
@@ -141,24 +140,28 @@ def emit_download_header(worker, info):
 
 
 def emit_live_header(worker, info, res_label=""):
-    """라이브 녹화 시작 헤더 — 컬럼 포맷 통일."""
+    """라이브 녹화 시작 헤더 — LIVE 스테이지, 해상도는 SPEC 분리."""
     title = _title_of(info)
-    msg = f"라이브 녹화 시작 — {title}"
     if res_label:
-        msg += f" ({res_label})"
-    worker.log_concise.emit(
-        emit_event("DL", "RUN", _dl_platform(getattr(worker, "current_url", "") or ""), msg),
-        is_status=False,
-        is_error=False,
-    )
+        worker.log_concise.emit(
+            emit_dl("RUN", _dl_platform(getattr(worker, "current_url", "") or ""),
+                    spec=res_label, stage="LIVE", msg=title),
+            is_status=False, is_error=False,
+        )
+    else:
+        worker.log_concise.emit(
+            emit_dl("RUN", _dl_platform(getattr(worker, "current_url", "") or ""),
+                    stage="LIVE", msg=title),
+            is_status=False, is_error=False,
+        )
     worker._meta_logged = True
 
 
 def emit_chzzk_header(worker, ch_info, fmt):
     """치지직(클립/VOD) 헤더 — 컬럼 포맷 통일."""
-    title = ch_info.get("videoTitle") or ch_info.get("title") or "치지직 영상"
+    title = ch_info.get("videoTitle") or ch_info.get("title") or "untitled"
     fmt_desc = cli_format_desc(fmt) if fmt else ""
-    msg = f"치지직 다운로드 시작 — {title}"
+    msg = f"chzzk — {title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
     worker.log_concise.emit(
@@ -170,18 +173,19 @@ def emit_chzzk_header(worker, ch_info, fmt):
 
 
 def emit_live_final_stats(worker, total_bytes, start_time):
-    """라이브 종료 통계 — 용량 rjust(9)·속도 rjust(11) 고정폭."""
+    """라이브 종료 통계 — LIVE 스테이지, 용량은 MSG·평균 속도는 SPEED."""
     dur = (time.monotonic() - start_time) if start_time else 0.0
     rate = (total_bytes / dur) if dur > 0 else 0.0
     worker.log_concise.emit(
         emit_dl(
             status="DONE",
             platform="-",
-            spec=format_bytes(total_bytes).rjust(9),
-            speed=f"{format_bytes(rate)}/s".rjust(11),
+            spec="-",
+            speed=f"{format_bytes(rate)}/s",
             pct=100,
             bar_frac=1.0,
-            msg="라이브 녹화 완료",
+            stage="LIVE",
+            msg=f"live done ({format_bytes(total_bytes)})",
         ),
         is_status=False,
         is_error=False,

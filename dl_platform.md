@@ -31,6 +31,29 @@ def _dl_platform(url):
     return "youtube"
 
 
+### ── Platform Abbreviations (for TUI column width ≤ 8) ──
+
+_PLATFORM_ABBREV = {
+    "youtube": "yt",
+    "chzzk": "chzzk",
+    "streamlink": "sl",
+    "yt-dlp": "ytdlp",
+    "ffmpeg": "ffmpeg",
+    "DEPS": "deps",
+    "POT": "pot",
+    "ENGINE": "eng",
+    "TXT": "txt",
+    "CFG": "cfg",
+}
+
+
+def _short_platform(p):
+    """플랫폼 문자열을 TUI 컬럼 폭(≤8)에 맞게 축약."""
+    if not p or p == "-":
+        return "-"
+    return _PLATFORM_ABBREV.get(p, str(p)[:8])
+
+
 def detect_content_type(url, info=None):
     """콘텐츠 종류 판정.
 

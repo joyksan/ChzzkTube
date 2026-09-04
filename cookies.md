@@ -71,7 +71,7 @@ def get_browser_cookies():
                 # [증거 남김] DB 잠금/권한 실패는 '쿠키가 있는데도 401' 증상의
                 # 유일한 추적 단서 — 흡수는 유지하고 원인만 히스토리에 남긴다.
                 log_history.log(
-                    f"쿠키 DB 읽기 실패 ({os.path.basename(p)}): {type(e).__name__}: {e}",
+                    f"cookie DB read failed ({os.path.basename(p)}): {type(e).__name__}: {e}",
                     "WARN",
                 )
                 continue

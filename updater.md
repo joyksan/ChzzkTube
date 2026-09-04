@@ -1,8 +1,9 @@
-##### updater.py - 구성요소(yt-dlp / streamlink / bgutil) 버전 확인 및 업데이트 헬퍼
-"""PyPI 메타데이터로 최신 버전을 조회하고, 필요 시 pip로 업그레이드한다.
-*  버전 확인: PyPI JSON API (네트워크 가벼운 조회, pip 불필요)
-*  업그레이드: python -m pip install -U <pkg> 서브프로세스 → 반드시 워커 스레드에서 호출할 것 (수십 초 블로킹)
-*  frozen(PyInstaller) 빌드에서는 pip가 없으므로 업그레이드를 거부한다. """
+##### updater.py - pip component (yt-dlp / streamlink) version check and update helper
+"""PyPI metadata query for latest versions, optional pip upgrade on demand.
+*  Version check: PyPI JSON API (lightweight, no pip needed)
+*  Upgrade: python -m pip install -U <pkg> subprocess — must run in a worker thread (tens of seconds blocking)
+*  frozen(PyInstaller) builds have no pip, so upgrades are rejected. """
+import concurrent.futures
 import importlib.metadata as im
 import json
 import subprocess
@@ -10,27 +11,31 @@ import sys
 import socket
 import urllib.request
 
-PACKAGES = ["yt-dlp", "streamlink", "bgutil-ytdlp-pot-provider"]
-# [DNS hang 가드] urlopen timeout은 DNS resolve에 적용되지 않으므로 소켓 레벨 기본값 설정
-socket.setdefaulttimeout(2)
+# (log_label, pypi_name) — log_label is shown in the DEPS PLATFORM column
+# [전환] bgutil-ytdlp-pot-provider 제외: 플러그인(pip)에서 독립 Node 서버로
+# 이동 — 버전 관리 주체는 pot_provider(latest_server_ver)가 담당.
+PACKAGES = [("ytdlp", "yt-dlp"), ("streamlink", "streamlink")]
+# [주의] socket.setdefaulttimeout() 절대 사용 금지 — 프로세스 전체의 소켓 기본
+# 타임아웃을 오염시켜 yt-dlp 미디어 스트림 재시도 루프(0.0% 스톨)를 유발.
+# DNS hang 방어는 아래 latest_version의 ThreadPoolExecutor + urlopen(timeout)으로 충분.
 
 _PYPI_API = "https://pypi.org/pypi/{pkg}/json"
 
-def installed_version(pkg):
-    """설치된 버전 문자열. 미설치/실패 시 None."""
+def installed_version(pypi_name):
+    """Installed version string, or None if not installed / failure."""
     try:
-        return im.version(pkg)
+        return im.version(pypi_name)
     except Exception:
         return None
 
-def latest_version(pkg, timeout=2):
-    """PyPI 최신 안정 버전 문자열. 조회 실패 시 None.
+def latest_version(pypi_name, timeout=2):
+    """Latest stable version from PyPI, or None on failure.
 
-    [DNS hang 방어] socket.setdefaulttimeout은 getaddrinfo에 적용 안 되므로
-    ThreadPoolExecutor + future.result로 DNS 단계까지 강제 끊는다.
+    [DNS hang defence] socket.setdefaulttimeout does not cover getaddrinfo;
+    ThreadPoolExecutor + future.result cuts at DNS level too.
     """
     def _fetch():
-        with urllib.request.urlopen(_PYPI_API.format(pkg=pkg), timeout=timeout) as resp:
+        with urllib.request.urlopen(_PYPI_API.format(pkg=pypi_name), timeout=timeout) as resp:
             return json.load(resp)
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -41,7 +46,7 @@ def latest_version(pkg, timeout=2):
         return None
 
 def _ver_tuple(version):
-    """'2026.8.19' → (2026, 8, 19) 비교용 튜플 (숫자 아닌 문자는 무시)."""
+    """'2026.8.19' -> (2026, 8, 19) comparable tuple (non-digit chars dropped)."""
     parts = []
     for p in str(version).split("."):
         digits = "".join(ch for ch in p if ch.isdigit())
@@ -49,29 +54,30 @@ def _ver_tuple(version):
     return tuple(parts)
 
 def is_outdated(current, latest):
-    """최신 버전이 더 높으면 True (문자열 비교 오차 방지를 위해 수치 비교)."""
+    """True if latest > current (numeric tuple compare avoids string pitfalls)."""
     try:
         return _ver_tuple(latest) > _ver_tuple(current)
     except Exception:
         return False
 
 def outdated_packages():
-    """업데이트가 있거나 미설치된 구성요소 목록 [(pkg, 현재, 최신)]."""
+    """List of (log_label, pypi_name, cur_ver, latest_ver) needing update or not installed."""
     stale = []
-    for pkg in PACKAGES:
-        cur, latest = installed_version(pkg), latest_version(pkg)
+    for label, pypi_name in PACKAGES:
+        cur = installed_version(pypi_name)
+        latest = latest_version(pypi_name)
         if not cur:
-            stale.append((pkg, "미설치", latest or "1.3.2"))
+            stale.append((label, pypi_name, "not installed", latest or "?"))
         elif latest and is_outdated(cur, latest):
-            stale.append((pkg, cur, latest))
+            stale.append((label, pypi_name, cur, latest))
     return stale
 
 def upgrade_packages(packages):
-    """pip로 업그레이드 실행. (returncode, 출력 꼬리) 반환 — 워커 스레드 전용."""
+    """Run pip upgrade. (returncode, output tail) — worker thread only."""
     if getattr(sys, "frozen", False):
         return (
             1,
-            "포터블 빌드에서는 자동 업데이트를 지원하지 않습니다.\n새 배포판을 받아 교체해주세요.",
+            "Portable builds do not support auto-upgrade.\nDownload a new release to update.",
         )
     cmd = [
         sys.executable,

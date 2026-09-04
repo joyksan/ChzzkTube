@@ -11,19 +11,19 @@ FG_DIM = "#888888"           # 딤 텍스트
 BORDER = "#444444"           # 테두리
 ACCENT = "#4ec9b0"           # 액센트 (청록)
 ACCENT_ALT = "#ce9178"       # 보조 액센트 (주황)
-ERROR = "#f44747"            # 에러 레드
+ERROR = "#e06c75"            # 에러 레드 (soft pastel — Atom One Dark)
 WARN = "#e5c07b"             # 경고 옐로
 SUCCESS = "#6a9955"          # 성공 그린
 
 ### MainWindow 전역 스타일 (fzf border-line aesthetic)
 MAIN_WINDOW_QSS = f"""
-QMainWindow, QDialog {{ background-color: {BG_WINDOW}; color: {FG_TEXT}; font-family: 'JetBrains Mono', 'Consolas', 'Cascadia Code', monospace; font-size: 12px; }}
-QLabel {{ color: {FG_TEXT}; font-family: 'JetBrains Mono', 'Consolas', monospace; }}
-QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px 12px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 11px; }}
+QMainWindow, QDialog {{ background-color: {BG_WINDOW}; color: {FG_TEXT}; font-family: 'Cascadia Mono', monospace; font-size: 11px; }}
+QLabel {{ color: {FG_TEXT}; font-family: 'Cascadia Mono', monospace; }}
+QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px 12px; font-family: 'Cascadia Mono', monospace; font-size: 11px; }}
 QPushButton:hover {{ background-color: {BG_HOVER}; border-color: {ACCENT}; }}
 QPushButton:pressed {{ background-color: #333333; }}
 QPushButton:disabled {{ background-color: #1a1a1a; color: #555555; border-color: #333333; }}
-QLineEdit {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 10px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 12px; }}
+QLineEdit {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 10px; font-family: 'Cascadia Mono', monospace; font-size: 11px; }}
 QLineEdit:focus {{ border: 1px solid {ACCENT}; }}
 QProgressBar {{ text-align: center; border: none; background-color: {BG_SURFACE}; height: 4px; color: transparent; }}
 QProgressBar::chunk {{ background-color: {ACCENT}; }}
@@ -32,7 +32,7 @@ QScrollBar::handle:vertical {{ background: {BORDER}; min-height: 20px; border-ra
 QScrollBar::handle:vertical:hover {{ background: #555555; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
-QListWidget {{ background-color: {BG_CONSOLE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 11px; outline: none; }}
+QListWidget {{ background-color: {BG_CONSOLE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; font-family: 'Cascadia Mono', monospace; font-size: 11px; outline: none; }}
 QListWidget::item {{ padding: 3px 6px; border: none; }}
 QListWidget::item:hover {{ background-color: {BG_HOVER}; }}
 QListWidget::item:selected {{ background-color: #1d3a34; color: {ACCENT}; }}
@@ -48,7 +48,7 @@ QGroupBox {{
     border-radius: 0px;
     margin-top: 8px;
     padding-top: 12px;
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
     color: {FG_DIM};
 }}
@@ -75,7 +75,7 @@ QTextEdit {{
     color: {FG_TEXT};
     border: 1px solid {BORDER};
     border-radius: 0px;
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
     padding: 4px;
 }}
@@ -98,29 +98,29 @@ LOG_COLOR_ACCENT = ACCENT
 LOG_COLOR_ACCENT_ALT = ACCENT_ALT
 
 ### 버튼 QSS — 새 팔레트 단일 출처
-BTN_ACTION_QSS = f"""QPushButton {{ background-color: {BG_SURFACE}; color: {ACCENT}; border: 1px solid {ACCENT}; border-radius: 0px; padding: 6px 16px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 11px; }}
+BTN_ACTION_QSS = f"""QPushButton {{ background-color: {BG_SURFACE}; color: {ACCENT}; border: 1px solid {ACCENT}; border-radius: 0px; padding: 6px 16px; font-family: 'Cascadia Mono', monospace; font-size: 11px; }}
 QPushButton:hover {{ background-color: #2a3a35; }}
 QPushButton:pressed {{ background-color: #1a2a25; }}
 QPushButton:disabled {{ background-color: #1a1a1a; color: #555555; border-color: #333333; }}
 """
 
-BTN_DANGER_QSS = f"""QPushButton {{ background-color: {BG_SURFACE}; color: {ERROR}; border: 1px solid {ERROR}; border-radius: 0px; padding: 6px 16px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 11px; }}
+BTN_DANGER_QSS = f"""QPushButton {{ background-color: {BG_SURFACE}; color: {ERROR}; border: 1px solid {ERROR}; border-radius: 0px; padding: 6px 16px; font-family: 'Cascadia Mono', monospace; font-size: 11px; }}
 QPushButton:hover {{ background-color: #3a2525; }}
 QPushButton:pressed {{ background-color: #2a1515; }}
 QPushButton:disabled {{ background-color: #1a1a1a; color: #555555; border-color: #333333; }}
 """
 
-BTN_NEUTRAL_QSS = f"""QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 16px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 11px; }}
+BTN_NEUTRAL_QSS = f"""QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 16px; font-family: 'Cascadia Mono', monospace; font-size: 11px; }}
 QPushButton:hover {{ background-color: {BG_HOVER}; }}
 QPushButton:disabled {{ background-color: #1a1a1a; color: #555555; border-color: #333333; }}
 """
 ### 다이얼로그 QSS
 MSGBOX_QSS = f"""
 QMessageBox {{ background-color: {BG_WINDOW}; }}
-QLabel {{ color: {FG_TEXT}; font-size: 12px; font-family: 'JetBrains Mono', 'Consolas', monospace; padding: 8px 16px; }}
-QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 16px; font-family: 'JetBrains Mono', 'Consolas', monospace; min-width: 70px; }}
+QLabel {{ color: {FG_TEXT}; font-size: 12px; font-family: 'Cascadia Mono', monospace; padding: 8px 16px; }}
+QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 16px; font-family: 'Cascadia Mono', monospace; min-width: 70px; }}
 QPushButton:hover {{ background-color: {BG_HOVER}; border-color: {ACCENT}; }}
-QTextEdit {{ background-color: {BG_CONSOLE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; font-family: 'JetBrains Mono', 'Consolas', monospace; font-size: 11px; padding: 4px; }}
+QTextEdit {{ background-color: {BG_CONSOLE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; font-family: 'Cascadia Mono', monospace; font-size: 11px; padding: 4px; }}
 """
 
 ### 설정 다이얼로그 — 모던 TUI 패널
@@ -166,13 +166,13 @@ QPushButton:hover {
 }
 """
 
-DIALOG_BG_QSS = f"background-color: {BG_WINDOW}; color: {FG_TEXT}; font-family: 'JetBrains Mono', 'Consolas', monospace;"
+DIALOG_BG_QSS = f"background-color: {BG_WINDOW}; color: {FG_TEXT}; font-family: 'Cascadia Mono', monospace;"
 TE_CONTENT_QSS = CONSOLE_LOG_QSS
 
-DLG_SECTION_TITLE_QSS = f"font-weight: bold; font-size: 12px; border: none; background: transparent; color: {ACCENT}; font-family: 'JetBrains Mono', 'Consolas', monospace;"
-DLG_STATUS_QSS = f"color: {FG_DIM}; font-size: 11px; border: none; background: transparent; font-family: 'JetBrains Mono', 'Consolas', monospace;"
+DLG_SECTION_TITLE_QSS = f"font-weight: bold; font-size: 12px; border: none; background: transparent; color: {ACCENT}; font-family: 'Cascadia Mono', monospace;"
+DLG_STATUS_QSS = f"color: {FG_DIM}; font-size: 11px; border: none; background: transparent; font-family: 'Cascadia Mono', monospace;"
 DLG_GHOST_BTN_QSS = f"""
-QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px 10px; font-size: 11px; font-family: 'JetBrains Mono', 'Consolas', monospace; }}
+QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px 10px; font-size: 11px; font-family: 'Cascadia Mono', monospace; }}
 QPushButton:hover {{ background-color: {BG_HOVER}; border-color: {ACCENT}; }}
 QPushButton:disabled {{ background-color: #1a1a1a; color: #555555; border-color: #333333; }}
 """
@@ -186,41 +186,48 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 """
 
-### MainWindow TUI 스타일 (fzf border-line aesthetic — main.py에서 이동)
+### MainWindow TUI 스타일 (Hyper-Minimal Modern TUI — flat, borderless, mono)
 ### ──────────────────────────────────────────────────────────────
 TUI_STYLE = """
-/* Core Dark Palette & Monospace Typography */
+/* Core Dark Palette & Monospace Typography — Cascadia Mono unified */
 QWidget, QMainWindow {
     background-color: #0d0d0d;
     color: #cccccc;
-    font-family: 'JetBrains Mono', 'Consolas', 'Cascadia Code', monospace;
-    font-size: 12px;
+    font-family: 'Cascadia Mono', monospace;
+    font-size: 11px;
 }
 
-/* ── Inner Sub-Panels (fzf Style Cards) ── */
+/* ── Flat Panels: no border, no radius ── */
 QGroupBox.tui-panel {
-    border: 1px solid #2a2a2a;
-    border-radius: 6px;
-    margin-top: 12px;
-    padding: 6px;
+    border: none;
+    border-radius: 0px;
+    margin-top: 0px;
+    padding: 8px 0px 8px 0px;
     background-color: #0d0d0d;
 }
 
 QGroupBox.tui-panel::title {
     subcontrol-origin: margin;
-    subcontrol-position: top center;
-    padding: 0 8px;
-    background-color: #0d0d0d;
-    color: #4ec9b0;
-    font-size: 11px;
-    font-weight: bold;
+    subcontrol-position: top left;
+    padding: 0px;
+    background-color: transparent;
+    color: transparent;
+    font-size: 1px;
+}
+
+/* ── Section separators (1px subtle lines) ── */
+QFrame.tui-separator {
+    background-color: #1a1a1a;
+    max-height: 1px;
+    min-height: 1px;
+    border: none;
 }
 
 QPushButton[class="tui-tag"] {
     background-color: transparent;
     border: none;
     color: #ce9178;
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
+    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
     padding: 2px 6px;
 }
@@ -235,23 +242,30 @@ QPushButton[class="tui-tag"]:pressed {
     color: #4ec9b0;
 }
 
-QLineEdit#url_input::placeholder { color: #666666; }
+/* ── URL Input: flat underline style ── */
+QLineEdit#url_input::placeholder { color: #555555; }
 
 QLineEdit#url_input {
     background-color: transparent;
     border: none;
+    border-bottom: 1px solid #333333;
     color: #dcdcdc;
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
-    font-size: 12px;
+    font-family: 'Cascadia Mono', monospace;
+    font-size: 11px;
+    padding: 4px 0px 4px 0px;
     selection-background-color: #264f78;
+}
+
+QLineEdit#url_input:focus {
+    border-bottom: 1px solid #4ec9b0;
 }
 
 QPlainTextEdit#console_log, QTextEdit#console_log {
     background-color: #0d0d0d;
     border: none;
     color: #d4d4d4;
-    font-family: 'JetBrains Mono', 'Consolas', monospace;
-    font-size: 12px;
+    font-family: 'Cascadia Mono', monospace;
+    font-size: 11px;
     line-height: 1.3;
 }
 
@@ -274,14 +288,6 @@ QScrollBar::handle:vertical:hover {
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
-
-/* [라벨 좌측 정렬] 콘솔 그룹 타이틀은 좌측 정렬 — 타임스탬프/컨텐츠 정렬에 맞춤 */
-QGroupBox#console_group::title {
-    text-align: left;
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    padding-left: 2px;
-}
 """
 
 
@@ -289,8 +295,8 @@ QGroupBox#console_group::title {
 
 ### 호환 참조 (main.py / dialogs.py 가 참조하는 이름 — 새 팔레트로 연결)
 BAR_PANEL_QSS = f"background-color: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 0px;"
-LBL_STREAM_QSS = f"color: {FG_DIM}; font-size: 11px; border: none; background: transparent; font-family: 'JetBrains Mono', 'Consolas', monospace;"
-LBL_META_QSS = f"color: {ACCENT_ALT}; font-size: 11px; border: none; background: transparent; font-family: 'JetBrains Mono', 'Consolas', monospace;"
+LBL_STREAM_QSS = f"color: {FG_DIM}; font-size: 11px; border: none; background: transparent; font-family: 'Cascadia Mono', monospace;"
+LBL_META_QSS = f"color: {ACCENT_ALT}; font-size: 11px; border: none; background: transparent; font-family: 'Cascadia Mono', monospace;"
 CONSOLE_INIT_QSS = CONSOLE_LOG_QSS
 
 BTN_PRIMARY_QSS = BTN_ACTION_QSS        # 다운로드 시작 (액센트 아웃라인)

@@ -28,20 +28,22 @@ def download_youtube_live(worker, url):
         "skip_download": True,
         "extract_flat": False,
     }
-    from client_opts import _apply_client_opts, _apply_cookie_opts
+    from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts
 
     _apply_cookie_opts(opts, worker.cfg)
-    _apply_client_opts(opts, worker.cfg)
+    _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+    _apply_ejs_opts(opts)
+    _apply_ffmpeg_opts(opts)
 
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
 
     if not info:
-        raise RuntimeError("라이브 정보 추출 실패")
+        raise RuntimeError("live info fail")
 
     stream_url = info.get("url")
     if not stream_url:
-        raise RuntimeError("라이브 스트림 URL 없음")
+        raise RuntimeError("live URL missing")
 
     out_file = os.path.join(
         worker.cfg["download_path"],
@@ -67,7 +69,8 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
                     speed="-",
                     pct=None,
                     bar_frac=None,
-                    msg="녹화 종료 코드 오류",
+                    stage="LIVE",
+                    msg="exit code error",
                 ),
                 is_status=False,
                 is_error=True,
@@ -82,11 +85,12 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
             emit_dl(
                 status="DONE",
                 platform="-",
-                spec=format_bytes(size).rjust(9),
+                spec="-",
                 speed="-",
                 pct=100,
                 bar_frac=1.0,
-                msg=f"라이브 저장 완료 — {os.path.basename(out_path)}",
+                stage="LIVE",
+                msg=f"saved — {os.path.basename(out_path)} ({format_bytes(size)})",
             ),
             is_status=False,
             is_error=False,
@@ -146,18 +150,19 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                 if now - last_tick >= _TICK_INTERVAL:
                     last_tick = now
                     rate = worker._speed_win.speed()
-                    spec = os.path.basename(out_file)
+                    fname = os.path.basename(out_file)
                     worker.log_concise.emit(
                         emit_dl(
                             status="RUN",
                             platform=_dl_platform(
                                 getattr(worker, "current_url", "") or ""
                             ),
-                            spec=spec,
+                            spec="-",
                             speed=f"{format_bytes(rate)}/s" if rate else "-",
                             pct=None,
                             bar_frac=None,
-                            msg="라이브 녹화 중",
+                            stage="LIVE",
+                            msg=f"recording — {fname}",
                         ),
                         is_status=False,
                         is_error=False,
@@ -179,7 +184,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
         returncode = proc.wait()
         if returncode not in (0, None):
             if not worker.state.get("canceled"):
-                raise RuntimeError(f"{log_tag} 프로세스 종료 코드 {returncode}")
+                raise RuntimeError(f"{log_tag} process exit code {returncode}")
         emit_live_final_stats(worker, total_bytes, start_t)
     except Exception:
         if proc.poll() is None:
@@ -195,7 +200,8 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                 speed="-",
                 pct=None,
                 bar_frac=None,
-                msg=f"{log_tag} 라이브 녹화 실패",
+                stage="LIVE",
+                msg=f"{log_tag} fail",
             ),
             is_status=False,
             is_error=True,

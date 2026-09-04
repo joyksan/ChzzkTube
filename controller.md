@@ -52,7 +52,7 @@ class DownloadController:
                                 "https://" + t if t.startswith("www.") else t
                             )
             except Exception as e:
-                raise ValueError(f"TXT 읽기 실패: {e}") from e
+                raise ValueError(f"TXT read fail: {e}") from e
         else:
             for l in raw_text.splitlines():
                 t = l.strip()
@@ -102,8 +102,13 @@ class DownloadController:
         is_live_hint=False,
         v_spec=None,
         audio_desc="",
+        yt_client="auto",
     ):
-        """DownloadWorker 생성 + 시그널 연결 + 구동."""
+        """DownloadWorker 생성 + 시그널 연결 + 구동.
+
+        yt_client: 분석 단계에서 실증·통과한 YouTube player_client.
+        다운로드가 분석과 같은 클라이언트를 쓰도록 강제 (0% 스톨 방지).
+        """
         v = self.view
         w = DownloadWorker(
             targets,
@@ -114,6 +119,7 @@ class DownloadController:
             is_live_hint=is_live_hint,
             v_spec=v_spec,
             audio_desc=audio_desc,
+            yt_client=yt_client,
         )
         w.log_concise.connect(v.append_concise_log)
         w.log_full.connect(v.append_full_log)

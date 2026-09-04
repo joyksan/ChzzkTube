@@ -5,6 +5,7 @@ import re
 import time
 import unicodedata
 import theme
+from dl_platform import _short_platform
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import QTextEdit
@@ -199,19 +200,36 @@ class ConciseLogConsole:
         self.last_log_was_status = False
 
     def _render_clamp(self, line):
-        """렌더 시점 예산으로 마지막 ' │ ' 이후 msg를 절단 — 창 폭에 맞는 표시.
+        """렌더 시점 절단 — 마지막 ' │ ' 이후 msg를 viewport 우측까지 픽셀 정렬.
 
-        원본(msg 전체)은 버퍼에 보존되어 있고, 화면 표시만 이 함수로
-        예산에 맞게 '…' 절단한다. 창을 가로로 늘리면 예산이 커져 더 길게
-        펼쳐진다.
+        원본(msg 전체)은 _buffer에 보존되고, 이 함수는 화면 표시만
+        viewport 픽셀 폭에 맞춰 '…'로 자른다. 핵심은 display_width
+        (east_asian_width 기반 문자 단위 추정)가 아니라 fontMetrics의
+        horizontalAdvance로 *실제 픽셀 폭*을 재는 것이다 — D2Coding은
+        한글 2칸·latin 1칸·'│'(U+2502, Ambiguous)는 폰트에 따라 1칸이
+        되는 비일관성이 있어, 문자 단위 추론만으로는 짤림 위치가 들쭉날쭉
+        해진다. 픽셀 단위 절단으로 폰트/Ambiguous 폭/한영 혼용에 무관하게
+        viewport 우측에서 일정하게 끝난다.
+
+        우측에는 RIGHT_PADDING_PX 만큼 가독성 여백을 남긴다 — 글자
+        가장자리가 프레임에 붙는 것을 막아 위 압박감을 줄인다.
         """
+        fm = self.te.fontMetrics()
+        viewport_px = self.te.viewport().width()
+        if viewport_px <= 0:
+            # 위젯이 아직 실측되지 않은 시점(초기화 직후) — 보수적으로 원본 유지
+            return line
         if " │ " not in line:
+            # TUI 가 아닌 라인 — viewport 폭에서 우측 패딩을 뺀 만큼 통째로 자른다
+            return _truncate_by_pixels(line, viewport_px - RIGHT_PADDING_PX, fm)
+        head, _, msg = line.rpartition(" │ ")
+        if not head:
             return line
-        head, sep, msg = line.rpartition(" │ ")
-        if not head or not msg:
-            return line
-        budget = max(4, TREE_TOTAL_WIDTH - display_width(head) - len(sep))
-        return head + sep + _truncate_msg(msg, budget)
+        # head + 마지막 ' │ ' 까지의 실제 픽셀 폭을 잰다 — '│'의 Ambiguous
+        # 폭(1칸/2칸)과 D2Coding의 한글/라틴 폭 차이를 그대로 반영한다.
+        head_px = fm.horizontalAdvance(head + " │ ")
+        msg_budget_px = viewport_px - head_px - RIGHT_PADDING_PX
+        return head + " │ " + _truncate_by_pixels(msg, msg_budget_px, fm)
 
     def _insert_clamped(self, cursor, msg, is_status, is_error, fg_color):
         """한 로그(다중 줄 허용)를 렌더 클램프 후 삽입. (삽입 블록 수 반환)
@@ -469,6 +487,7 @@ def _line_segments(line, is_error, is_status=False):
 TREE_LABEL_WIDTH = 9  # kv 라벨('저장 완료'·'실패 사유' 등 전각 4자+공백) 기준
 TREE_TOTAL_WIDTH = 56  # 간결 로그 창의 실질 가로 예산 (폴백 — update_tree_budget으로 갱신)
 TAIL_PADDING_BLOCKS = 2  # 콘솔 바닥에 상시 유지하는 여백 빈 블록 수
+RIGHT_PADDING_PX = 20  # 픽셀 기반 절단 시 viewport 우측에 남기는 가독성 여백 (한글 1자 너비)
 
 def update_tree_budget(text_edit):
     """콘솔 뷰포트 폭을 글자 폭으로 나눠 트리 줄바꿈 예산을 동적 갱신한다.
@@ -535,11 +554,11 @@ def format_target_url(url, max_len=50):
 def format_analysis_counts(v_count, a_count):
     """분석 완료 로그의 포맷 개수 요약 문자열."""
     if v_count and a_count:
-        return f" (비디오 {v_count}개, 오디오 {a_count}개)"
+        return f" (v:{v_count}, a:{a_count})"
     if v_count:
-        return f" (통합 포맷 {v_count}개)"
+        return f" (v:{v_count})"
     if a_count:
-        return f" (오디오 {a_count}개)"
+        return f" (a:{a_count})"
     return ""
 
 ### ──────────────────────────────────────────────────────────────
@@ -593,46 +612,70 @@ def _log_bar(bar_frac, width=10):
     filled = int(round(frac * width))
     return f"[{'█' * filled}{'░' * (width - filled)}]"
 
-def _truncate_msg(msg, max_width):
-    """msg를 max_width 표시폭으로 절단 — 초과 시 '…' 부호 부착."""
-    if max_width < 4:
-        max_width = 4
-    w = 0
+def _truncate_by_pixels(msg, budget_px, fm):
+    """msg를 fontMetrics 기반 *실제 픽셀 폭*으로 절단 — 초과 시 '…' 부착.
+
+    display_width(east_asian_width 기반 문자 단위 추정) 대신
+    horizontalAdvance로 실제 픽셀을 잰다 — D2Coding은 한글 2칸·
+    latin 1칸·'│'(U+2502, Ambiguous)는 폰트에 따라 1칸/2칸이 되는
+    비일관성이 있어, 문자 단위 추론만으로는 한영 혼용 라인의 짤림
+    위치가 들쭉날쭉해진다. 픽셀 단위 절단으로 폰트/Ambiguous 폭/
+    한영 혼용에 무관하게 끝이 일정해진다.
+
+    budget_px는 msg 영역 전체(우측 패딩 포함)의 픽셀 폭. '…'의
+    픽셀도 함께 고려해 msg가 budget을 초과하면 직전까지 자르고 '…'를
+    붙인다. budget이 너무 작아 '…'조차 못 넣으면 '…'만 출력.
+
+    주의: 개별 글자 폭의 합 ≠ 전체 문자열 폭(커닝/반올림)이므로,
+    매 글자 추가 시마다 후보 문자열 전체의 horizontalAdvance를 재서
+    budget 오버를 판정한다 — 이렇게 해야 정확히 budget 안에 든다.
+    """
+    if budget_px <= 0:
+        return "…"
+    ellipsis_px = fm.horizontalAdvance("…")
+    if budget_px <= ellipsis_px:
+        return "…"
     out = []
     for ch in msg:
-        ch_w = 2 if unicodedata.east_asian_width(ch) in ("F", "W") else 1
-        if w + ch_w + 1 > max_width:  # +1 for ellipsis
+        candidate = "".join(out) + ch + "…"
+        if fm.horizontalAdvance(candidate) > budget_px:
             break
         out.append(ch)
-        w += ch_w
     result = "".join(out)
     if len(result) < len(msg):
         result += "…"
     return result
 
 
-def format_log_line(stage, status, platform="", spec="", pct=None, bar_frac=None, msg=""):
+def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar_frac=None, msg=""):
     """TUI 스타일 컬럼 로그 라인 — 단일 라인, 고정 칼럼 정렬.
 
+    표준 포맷:
+        [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ SPEED │ PCT │ BAR │ MSG
+
     인자:
-        stage    : SYS / ANAL / DL / MERG / BATCH
-        status   : OK / READY / RUN / DONE / ABORT / FAIL / END
-        platform : chzzk / youtube / streamlink / yt-dlp 등
-        spec     : 해상도·속도 등 사양 문자열
+        stage    : SYS / ANAL / DL / LIVE / MERG / BATCH / DEPS / POT ...
+        status   : OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP ...
+        platform : yt / chzzk / ytdlp / streamlink / pot / deps 등 (8자 축약)
+        spec     : 스트림 속성 전용 (예: 1080p30) — 파일명·통계 금지
+        speed    : 네트워크 속도 전용 (예: 12.4M/s) — 카운터·기타 금지
         pct      : 진행률 (0~100, None 가능)
         bar_frac : 진행 바 (0.0~1.0, None 가능)
-        msg      : 제목·부가 메시지 (예산 초과 시 자동 절단)
+        msg      : 제목·파일명·시스템 메시지 (예산 초과 시 자동 절단)
     """
     stage_s = str(stage).upper()[:8].ljust(8)
     status_s = str(status).upper()[:8].ljust(8)
-    plat_s = (str(platform) or "-")[:12].ljust(12)
+    plat_s = _short_platform(platform)[:8].ljust(8)
     spec_s = str(spec or "-")
+    speed_s = str(speed or "-")
     pct_s = _log_pct(pct)
     bar_s = _log_bar(bar_frac)
     head = _log_ts() + " " + stage_s
     rest = [status_s, plat_s]
     if str(spec or "-") not in ("-", ""):
         rest.append(spec_s)
+    if str(speed or "-") not in ("-", ""):
+        rest.append(speed_s)
     if pct is not None:
         rest.append(pct_s)
         rest.append(bar_s)
@@ -667,22 +710,25 @@ def _log_line_segments(line):
 def emit_event(stage, status, platform="-", msg=""):
     """단순 이벤트 1줄 — POT/Update/사용자 액션/에러 모두 공통."""
     return format_log_line(
-        stage=stage, status=status, platform=platform, spec="-", pct=None, bar_frac=None, msg=msg,
+        stage=stage, status=status, platform=platform, spec="-", speed="-",
+        pct=None, bar_frac=None, msg=msg,
     )
 
 
-def emit_progress(stage, status, platform="-", spec="-", pct=None, bar_frac=None, msg=""):
-    """진행률 표시 라인 — ANAL/DL 단계."""
+def emit_progress(stage, status, platform="-", spec="-", speed="-", pct=None, bar_frac=None, msg=""):
+    """진행률 표시 라인 — ANAL/DL/LIVE 단계."""
     return format_log_line(
-        stage=stage, status=status, platform=platform, spec=spec, pct=pct, bar_frac=bar_frac, msg=msg,
+        stage=stage, status=status, platform=platform, spec=spec, speed=speed,
+        pct=pct, bar_frac=bar_frac, msg=msg,
     )
 
 
 def emit_component(stage, status, platform, msg):
     """컴포넌트/워커 결과 — DEPS / POT / READY 등 system 단계.
 
-    [16:20:01] SYS  │ OK   │ DEPS  │ Components up-to-date
+    [16:20:01] SYS  │ OK   │ deps  │ Components up-to-date
     """
     return format_log_line(
-        stage=stage, status=status, platform=platform, spec="-", pct=None, bar_frac=None, msg=msg,
+        stage=stage, status=status, platform=platform, spec="-", speed="-",
+        pct=None, bar_frac=None, msg=msg,
     )
