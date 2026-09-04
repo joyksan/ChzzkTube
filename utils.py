@@ -66,6 +66,3 @@ def parse_sec(time_str):
     except (ValueError, TypeError):
         pass
     return 0.0
-
-
-# a
