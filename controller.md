@@ -2,36 +2,89 @@
 import os
 import re
 
-from downloader import DownloadWorker
+from PyQt6.QtCore import QObject, pyqtSignal
 
-class DownloadController:
-    """다운로드 세션의 상태(state)와 워커 생명주기를 담당하는 컨트롤러.
+from downloader import DownloadWorker, AnalyzeWorker
+
+
+class MediaController(QObject):
+    """다운로드 + 분석 세션의 상태 머신과 생명주기를 통치하는 완벽한 컨트롤러.
 
     계약:
     *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유하며 기존 MainWindow.dl_state와 완전히 동치이다.
     *  스레드 경계 — state 플래그는 단방향 쓰기: canceled/skip/force_discard 는
-       UI 스레드(request_cancel/request_skip/begin/end)만 쓰고 워커 스레드는
-       읽기만 한다. CPython GIL 하에서 dict 단일 키 읽기/쓰기는 원자적이고
-       각 키의 쓰기 주체가 하나뿐이므로 lock 없이도 경쟁상태(lost update)가
-       발생하지 않는다.
+       UI 스레드만 쓰고 워커 스레드는 읽기만 한다. CPython GIL 하에서 dict 단일 키 읽기/쓰기는 원자적이고
+       각 키의 쓰기 주체가 하나뿐이므로 lock 없이도 경쟁상태(lost update)가 발생하지 않는다.
     *  워커 → UI 통보는 절대 state가 아니라 Qt 시그널(log_concise/log_full/
-       finished_all)로만 — 시그널 emit은 스레드 안전(QueuedConnection으로
+       finished_all/result_ready/error_occurred)로만 — 시그널 emit은 스레드 안전(QueuedConnection으로
        수신 스레드 큐에 적재)이므로 UI 위젯은 워커에서 직접 조작 금지.
-    *  UI 조작(버튼/로그/진행바)은 view(MainWindow)의 메서드를 통해서만 수행한다. """
+    *  UI 조작(버튼/로그/진행바)은 view(MainWindow)의 메서드를 통해서만 수행한다.
+    *  좀비 워커(분석 중 새 분석 요청으로 폐기된 워커)는 View가 아닌 Controller가 소유하며,
+       자연 종료 시 _reap_zombie()로 메모리에서 소거한다. """
+
+    # ── 분석 워커 시그널 포워딩 (View 바인딩용) ──
+    analyze_result_ready = pyqtSignal(dict)
+    analyze_error_occurred = pyqtSignal(str)
+    analyze_log_full = pyqtSignal(str)
 
     def __init__(self, view):
+        super().__init__()
         self.view = view
         self.state = {
             "running": False,
             "canceled": False,
             "skip": False,
             "force_discard": False,
+            "analyzing": False,
         }
-        self.worker = None
+        self.worker_dl = None
+        self.worker_analyze = None
+        self._zombie_workers = []  # View가 아닌 Controller가 무덤을 관리한다
 
     @property
     def running(self):
         return self.state["running"]
+
+    @property
+    def analyzing(self):
+        return self.state["analyzing"]
+
+    # ── 분석 워커 생명주기 (main.py에서 구출 완료) ──
+    def spawn_analyzer(self, url, cfg):
+        """URL 분석 워커 생성 및 관리 (기존 분석 강제 유기 포함)"""
+        self._abandon_analyzer()
+
+        self.state["analyzing"] = True
+        self.worker_analyze = AnalyzeWorker(url, cfg)
+        # View 시그널로 포워딩 (Controller가 중개)
+        self.worker_analyze.result_ready.connect(self.analyze_result_ready)
+        self.worker_analyze.error_occurred.connect(self.analyze_error_occurred)
+        self.worker_analyze.log_full.connect(self.analyze_log_full)
+        self.worker_analyze.start()
+
+    def _abandon_analyzer(self):
+        """GIL 데드락을 회피하기 위한 우아한 워커 유기 (Zombie Pattern)"""
+        w = self.worker_analyze
+        if not w:
+            return
+        if w.isRunning():
+            # 시그널을 끊어 UI 오염 차단
+            for sig in (w.result_ready, w.error_occurred, w.log_full):
+                try:
+                    sig.disconnect()
+                except TypeError:
+                    pass
+            w.finished.connect(self._reap_zombie)
+            self._zombie_workers.append(w)
+        self.worker_analyze = None
+        self.state["analyzing"] = False
+
+    def _reap_zombie(self):
+        """자연 종료된 유기 워커를 메모리에서 우아하게 소거한다."""
+        try:
+            self._zombie_workers.remove(self.sender())
+        except (ValueError, AttributeError):
+            pass
 
     ### ── 순수 로직: 타겟 파싱 ──────────────────────────────────
     @staticmethod
@@ -74,12 +127,12 @@ class DownloadController:
         return targets
 
     ### ── 세션 상태 머신 ────────────────────────────────────────
-    def begin(self):
+    def begin_download(self):
         self.state.update(
             {"running": True, "canceled": False, "skip": False, "force_discard": False}
         )
 
-    def end(self):
+    def end_download(self):
         self.state.update(
             {"running": False, "canceled": False, "skip": False, "force_discard": False}
         )
@@ -87,12 +140,14 @@ class DownloadController:
     def request_cancel(self):
         if self.running:
             self.state["canceled"] = True
+        elif self.analyzing:
+            self._abandon_analyzer()
 
     def request_skip(self):
         if self.running:
             self.state["skip"] = True
 
-    ### ── 워커 생명주기 ─────────────────────────────────────────
+    ### ── 다운로드 워커 생명주기 ─────────────────────────────────
     def spawn_worker(
         self,
         targets,
@@ -124,11 +179,19 @@ class DownloadController:
         w.log_concise.connect(v.append_concise_log)
         w.log_full.connect(v.append_full_log)
         w.finished_all.connect(v.on_download_finished)
-        self.worker = w
+        self.worker_dl = w
         w.start()
 
     def shutdown(self, wait_ms=1000):
-        """앱 종료 시 스레드 안전 중단 (closeEvent용)."""
-        if self.worker and self.worker.isRunning():
+        """앱 종료 시 활성 스레드 및 좀비 스레드 안전 중단 (closeEvent용)."""
+        if self.worker_dl and self.worker_dl.isRunning():
             self.state["canceled"] = True
-            self.worker.wait(wait_ms)
+            self.worker_dl.wait(wait_ms)
+
+        for w in list(self._zombie_workers):
+            if w.isRunning():
+                w.wait(1500)
+
+
+# ── 하위 호환성 유지 (기존 코드에서 DownloadController로 참조 가능) ──
+DownloadController = MediaController

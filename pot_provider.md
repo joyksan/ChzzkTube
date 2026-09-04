@@ -205,11 +205,20 @@ def server_home():
 def node_exe():
     """PO Token 서버 기동용 node 탐색 — bgutil 요구(Node >= 22) 충족 후보만 유효.
 
-    후보 순서: 캐시된 포터블 node → frozen 번들 → 시스템 PATH. 요구 버전을
-    충족하는 후보가 하나도 없으면 None을 반환해 ensure_node_runtime의
-    재구성(최신 v22 수급)을 트리거한다. 단, 전 후보의 버전 판별이 모두
-    실패하면 첫 후보를 그대로 돌려 무한 재설치 루프를 막는다.
+    [2차 리팩토링] 번들이 아닌 외부 라이브러리 참조 전환:
+    후보 순서: 시스템 PATH → 캐시된 포터블 node → frozen 번들.
+    요구 버전을 충족하는 후보가 하나도 없으면 None을 반환해
+    ensure_node_runtime의 재구성(최신 v22 수급)을 트리거한다.
+    포터블 빌드 첫 실행시 다른 DEPS와 함께 다운로드됨.
     """
+    # 1. 시스템 Node.js 확인 (번들이 아닌 외부 참조)
+    # Windows에서는 shutil.which("node")가 실패할 수 있어 node.exe도 시도
+    system_node = shutil.which("node") or shutil.which("node.exe")
+    if system_node:
+        maj = node_major_version(system_node)
+        if maj is not None and maj >= NODE_MIN_MAJOR:
+            return system_node
+
     cands = []
     local_node_dir = os.path.join(get_writable_base(), "node")
     if os.path.isdir(local_node_dir):
@@ -466,11 +475,26 @@ def bundled_npm_ok(node_path):
 def ensure_node_runtime(log_func):
     """bgutil 서버 요구(Node >= 22) 충족을 위한 Node.js 런타임 자동 수급/재구성.
 
-    [수정 이력] 구버전은 v20.18.0을 받아 bgutil의 require(esm) 요구를 충족하지
-    못해 서버가 ERR_REQUIRE_ESM으로 크래시했다 (PO Token 기동 실패의 근본 원인).
-    [자가 치유] node.exe는 살아있어도 번들 npm이 깨진 경우(부분 추출/AV 격리)
-    재설치로 수리 — bundled_npm_ok 참조.
+    [수정 이력]
+    - 구버전은 v20.18.0을 받아 bgutil의 require(esm) 요구를 충족하지
+      못해 서버가 ERR_REQUIRE_ESM으로 크래시했다 (PO Token 기동 실패의 근본 원인).
+    - 자가 치유: node.exe는 살아있어도 번들 npm이 깨진 경우(부분 추출/AV 격리)
+      재설치로 수리 — bundled_npm_ok 참조.
+    - [2차 리팩토링] 번들이 아닌 외부 라이브러리 참조 전환:
+      시스템 Node.js 22+ 우선 사용 → 없으면 로컬 포터블 → 마지막으로 다운로드.
+      포터블 빌드 첫 실행시 다른 DEPS와 함께 다운로드됨.
     """
+    # 1. 시스템 Node.js 확인 (번들이 아닌 외부 참조)
+    system_node = shutil.which("node")
+    if system_node:
+        system_major = node_major_version(system_node)
+        if system_major is not None and system_major >= NODE_MIN_MAJOR:
+            # 시스템 npm도 확인
+            if shutil.which("npm"):
+                log_func(f"using system Node.js v{system_major} ({system_node})")
+                return True
+
+    # 2. 로컬 포터블 Node.js 확인
     cur = node_exe()
     cur_major = node_major_version(cur) if cur else None
     if cur_major is not None and cur_major >= NODE_MIN_MAJOR and (

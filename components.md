@@ -1,4 +1,4 @@
-### components.py - ffmpeg runtime manager
+﻿### components.py - ffmpeg runtime manager
 """ffmpeg 자동 수급/관리 전용 모듈.
 
 *  시스템 PATH의 ffmpeg 최우선 사용, 없으면 GitHub(GyanD/codexffmpeg)
@@ -22,6 +22,7 @@ import zipfile
 
 import config
 from log_console import emit_component
+from pathlib import Path
 
 _UA = "ChzzkTube-Components/1.0"
 
@@ -176,6 +177,56 @@ def _macos_bottle_keys():
     return keys
 
 
+
+def _exe_suffix() -> str:
+    """현재 OS의 실행 파일 확장자를 반환. Windows면 '.exe', 나머지는 ''."""
+    return ".exe" if sys.platform == "win32" else ""
+
+
+def _ensure_ffmpeg_by_platform(log, force):
+    """플랫폼에 따라 적절한 전략 함수에 위임 (전략 패턴)."""
+    platform = sys.platform
+    if platform == "win32":
+        return _ensure_ffmpeg_windows(log, force)
+    elif platform == "darwin":
+        return _ensure_ffmpeg_macos(log, force)
+    elif platform.startswith("linux"):
+        return _ensure_ffmpeg_linux(log, force)
+    else:
+        return f"Unsupported OS: {platform}"
+
+
+def _ensure_ffmpeg_windows(log, force):
+    """Windows용 ffmpeg 자동 수급 - GitHub GyanD/codexffmpeg 다운로드.
+    시스템 ffmpeg.exe 우선, 없으면 GitHub release에서 다운로드.
+    """
+    dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
+    bin_dir = os.path.join(dest, "bin")
+    exe_path = os.path.join(bin_dir, "ffmpeg.exe")
+    
+    # 캐시된 ffmpeg 확인
+    if not force:
+        if os.path.isfile(exe_path):
+            _wire_ffmpeg_path(bin_dir)
+            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+            return None
+    
+    # GitHub에서 다운로드
+    os.makedirs(dest, exist_ok=True)
+    log(emit_component("DEPS", "RUN", "ffmpeg", "downloading..."))
+    
+    with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
+        zp = _download(FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg")
+        _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
+    
+    if os.path.isfile(exe_path):
+        _wire_ffmpeg_path(bin_dir)
+        log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+        return None
+    
+    return "ffmpeg.exe not found after extract"
+
+
 def _ensure_ffmpeg_macos(log, force):
     """맥용 ffmpeg 자동 수급 - Homebrew 우선, 없으면 bottle 다운로드."""
     dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
@@ -316,6 +367,89 @@ def ffmpeg_exe():
                     return candidate
     return shutil.which("ffmpeg")
 
+def _ensure_ffmpeg_linux(log, force):
+    """리눅스용 ffmpeg 자동 수급 - 시스템 패키지 매니저 우선, 없으면 정적 빌드 다운로드.
+
+    johnvansickle.com의 정적 빌드를 사용하여 어떤 배포판에서도 작동.
+    """
+    dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
+
+    # 캐시된 ffmpeg 확인
+    if not force:
+        cached = ffmpeg_exe()
+        if cached:
+            if _verify_ffmpeg(cached):
+                _wire_ffmpeg_path(os.path.dirname(cached))
+                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                return None
+            else:
+                log(emit_component("DEPS", "WARN", "ffmpeg", "cached not working, reinstalling"))
+                try:
+                    if os.path.exists(dest):
+                        shutil.rmtree(dest, ignore_errors=True)
+                except Exception:
+                    pass
+
+    # 시스템 패키지 매니저 시도 (apt/dnf/pacman)
+    import subprocess
+    pkg_managers = [
+        (["apt-get", "install", "-y", "ffmpeg"], "apt"),
+        (["dnf", "install", "-y", "ffmpeg"], "dnf"),
+        (["pacman", "-S", "--noconfirm", "ffmpeg"], "pacman"),
+    ]
+    for cmd, name in pkg_managers:
+        if shutil.which(cmd[0]):
+            log(emit_component("DEPS", "RUN", "ffmpeg", f"installing via {name}..."))
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=300
+                )
+                if result.returncode == 0:
+                    ffmpeg_path = shutil.which("ffmpeg")
+                    if ffmpeg_path and _verify_ffmpeg(ffmpeg_path):
+                        log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                        return None
+            except subprocess.TimeoutExpired:
+                log(emit_component("DEPS", "WARN", "ffmpeg", f"{name} install timed out"))
+            except Exception as e:
+                log(emit_component("DEPS", "WARN", "ffmpeg", f"{name} install error: {e}"))
+
+    # 정적 빌드 다운로드 (johnvansickle.com)
+    try:
+        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading (static build)..."))
+        url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+        with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
+            tar_path = os.path.join(td, "ffmpeg.tar.xz")
+            _download(url, tar_path, log, "ffmpeg", is_status=True)
+
+            log(emit_component("DEPS", "RUN", "ffmpeg", "extracting..."))
+            if os.path.exists(dest):
+                shutil.rmtree(dest, ignore_errors=True)
+            os.makedirs(dest, exist_ok=True)
+
+            # tar.xz 압축 해제
+            import tarfile
+            with tarfile.open(tar_path, "r:xz") as tar:
+                # ffmpeg와 ffprobe만 추출
+                for member in tar.getmembers():
+                    if member.name.endswith("/ffmpeg") or member.name.endswith("/ffprobe"):
+                        member.name = os.path.basename(member.name)
+                        tar.extract(member, dest)
+
+            # 실행 권한 보장
+            ffmpeg_bin = os.path.join(dest, "ffmpeg")
+            if os.path.isfile(ffmpeg_bin):
+                os.chmod(ffmpeg_bin, 0o755)
+                if _verify_ffmpeg(ffmpeg_bin):
+                    _wire_ffmpeg_path(dest)
+                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                    return None
+
+        return "ffmpeg binary not found after extract"
+    except Exception as e:
+        return f"linux ffmpeg install failed: {type(e).__name__}: {e}"
+
+
 def _wire_ffmpeg_path(bin_dir):
     """수급/캐시된 ffmpeg bin을 프로세스 PATH 선두에 연결.
 
@@ -348,58 +482,6 @@ def _verify_ffmpeg(ffmpeg_path):
     except Exception:
         return False
 
-def ensure_ffmpeg(log, force=False):
-    """병합/리먹싱용 ffmpeg 자동 수급 — 시스템 설치 우선, 없으면 GitHub 바이너리.
+def ensure_ffmpeg(log, force=False):`r`n    """병합/리먹싱용 ffmpeg 자동 수급 — 시스템 설치 우선, 없으면 바이너리 다운로드.`r`n    성공/스킵 시 None, 실패 시 오류 문자열.`r`n    """`r`n    log = _logcb(log)`r`n    log(emit_component("DEPS", "RUN", "ffmpeg", "checking..."))`r`n    try:`r`n        # 1. 시스템 ffmpeg 검색 (OS별 확장자 자동 처리)`r`n        suffix = _exe_suffix()`r`n        which = shutil.which("ffmpeg") or shutil.which(f"ffmpeg{suffix}")`r`n        if which and not force:`r`n            if os.access(which, os.X_OK) and _verify_ffmpeg(which):`r`n                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))`r`n                return None`r`n            else:`r`n                log(emit_component("DEPS", "WARN", "ffmpeg", f"found but not working ({which})"))`r`n`r`n        # 2. 로컬 캐시 확인`r`n        cached = ffmpeg_exe()`r`n        if cached and not force:`r`n            _wire_ffmpeg_path(os.path.dirname(cached))`r`n            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))`r`n            return None`r`n`r`n        # 3. OS별 전략 호출`r`n        return _ensure_ffmpeg_by_platform(log, force)`r`n    except Exception as e:`r`n        return f"{type(e).__name__}: {e}"
 
-    [배경] media.py·downloader.py는 subprocess로 'ffmpeg'를 곧바로 호출하므로
-    사용자 PC에 ffmpeg이 없으면 병합/썸네일/오디오 추출이 전부 실패한다.
-    성공/스킵 시 None, 실패 시 오류 문자열.
-    """
-    log = _logcb(log)
-    log(emit_component("DEPS", "RUN", "ffmpeg", "checking..."))
-    try:
-        # [맥 지원] 맥에서는 시스템 ffmpeg 우선 사용, 없으면 Homebrew bottle 자동 수급
-        if os.name != "nt":
-            which = shutil.which("ffmpeg")
-            if which:
-                # ffmpeg이 실제로 실행 가능한지 확인
-                if os.access(which, os.X_OK) and _verify_ffmpeg(which):
-                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
-                    return None
-                else:
-                    log(emit_component("DEPS", "WARN", "ffmpeg", f"found but not working ({which})"))
-            return _ensure_ffmpeg_macos(log, force)
-
-        if not force:
-            which = shutil.which("ffmpeg")
-            if which:
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
-                return None
-            cached = ffmpeg_exe()
-            if cached:
-                _wire_ffmpeg_path(os.path.dirname(cached))
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
-                return None
-        dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
-        bin_dir = os.path.join(dest, "bin")
-        _exe = ".exe" if os.name == "nt" else ""
-        if not force and os.path.isfile(os.path.join(bin_dir, f"ffmpeg{_exe}")):
-            _wire_ffmpeg_path(bin_dir)
-            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
-            return None
-        os.makedirs(dest, exist_ok=True)
-        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading..."))
-        with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
-            zp = _download(
-                FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg"
-            )
-            _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
-        exe = os.path.join(bin_dir, f"ffmpeg{_exe}")
-        if os.path.isfile(exe):
-            _wire_ffmpeg_path(bin_dir)
-            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
-            return None
-        return "ffmpeg exe not found after extract"
-    except Exception as e:
-        return f"{type(e).__name__}: {e}"
 
