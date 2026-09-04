@@ -139,9 +139,11 @@ def _download_vod(worker, url):
 
     # 병합(chzzk 무관) 후 실제 산출 파일 완료 로그
     for dl in info.get("requested_downloads") or []:
-        worker.log_success_info(
+        _pe.log_success_info(
+            worker,
             dl.get("filepath") or dl.get("_filename") or ""
         )
+        
     worker._speed_win.reset()
     return True
 
