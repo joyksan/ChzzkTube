@@ -19,10 +19,10 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
+from pathlib import Path
 
 import config
 from log_console import emit_component
-from pathlib import Path
 
 _UA = "ChzzkTube-Components/1.0"
 
