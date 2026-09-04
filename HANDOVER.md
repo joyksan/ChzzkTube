@@ -651,8 +651,9 @@ AnalyzeWorker의 `result_ready`/`error_occurred`는 워커 스레드 → GUI 스
 
 **After**:
 ```
-1. 시스템 PATH (shutil.which("node") — 22+ 확인)
-2. 캐시된 포터블 node (로컬 다운로드)
+1. 시스템 PATH (shutil.which("node") 또는 shutil.which("node.exe") — 22+ 확인)
+   - Windows: shutil.which("node")가 실패할 수 있어 node.exe도 시도
+2. 캐시된 포터블 node (로컬 다운로드, OS별 exe_name 구분)
 3. frozen 번들 (레거시)
 4. 둘 다 없으면 다운로드 트리거
 ```
@@ -661,4 +662,51 @@ AnalyzeWorker의 `result_ready`/`error_occurred`는 워커 스레드 → GUI 스
 - `py_compile` OK (pot_provider.py)
 - 시스템 Node.js 22+ 존재 시 즉시 반환 (npm도 함께 확인)
 - 시스템 Node.js 미설치 시 기존 로직 (로컬 → 다운로드) 유지
+- Windows/macOS 모두 호환 (node.exe / node 자동 인식)
+
+---
+
+## 17. 다른 DEPS OS 호환성 검토 및 수정 (2026-09-04)
+
+### 배경
+- Node.js 22 외부 참조 전환에 맞춰 다른 의존성(FFmpeg)의 OS 호환성도 검토
+- Windows에서 `shutil.which("ffmpeg")`가 실패할 수 있어 `ffmpeg.exe`도 시도해야 함
+- Linux용 ffmpeg 자동 수급 기능 추가 (기존에는 Windows/macOS만 지원)
+
+### 수정 내용
+
+#### client_opts.py — _apply_ffmpeg_opts()
+| 항목 | 변경 |
+|------|------|
+| ffmpeg 검색 | `shutil.which("ffmpeg")` → `shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")` |
+| 호환성 | Windows/macOS/Linux 모두 지원 |
+
+#### components.py — ensure_ffmpeg()
+| 항목 | 변경 |
+|------|------|
+| 시스템 ffmpeg 검색 | `shutil.which("ffmpeg")` → `shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")` |
+| OS별 분기 | `sys.platform` 기반으로 Windows/macOS/Linux 명시적 분기 |
+| Linux 지원 추가 | `_ensure_ffmpeg_linux()` 함수 신설 |
+
+#### components.py — _ensure_ffmpeg_linux() (신규)
+| 항목 | 내용 |
+|------|------|
+| 1순위 | 시스템 패키지 매니저 (apt/dnf/pacman) 자동 감지 및 설치 |
+| 2순위 | johnvansickle.com 정적 빌드 다운로드 (amd64) |
+| 압축 해제 | tar.xz 형식, ffmpeg/ffprobe만 선별 추출 |
+| 실행 권한 | `os.chmod(0o755)` 자동 부여 |
+
+### OS별 DEPS 호환성 현황
+
+| DEPS | Windows | macOS | Linux |
+|------|---------|-------|-------|
+| Node.js 22 | `node.exe` / `node` | `node` | `node` |
+| FFmpeg | `ffmpeg.exe` / `ffmpeg` | `ffmpeg` | `ffmpeg` |
+| yt-dlp | Python 패키지 (OS 무관) | Python 패키지 | Python 패키지 |
+| streamlink | Python 패키지 (OS 무관) | Python 패키지 | Python 패키지 |
+
+### 검증
+- `py_compile` OK (client_opts.py, components.py)
+- Windows에서 `ffmpeg.exe` 자동 인식
+- Linux에서 시스템 패키지 매니저 자동 감지 (apt/dnf/pacman)
 

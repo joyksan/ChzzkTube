@@ -212,7 +212,8 @@ def node_exe():
     포터블 빌드 첫 실행시 다른 DEPS와 함께 다운로드됨.
     """
     # 1. 시스템 Node.js 확인 (번들이 아닌 외부 참조)
-    system_node = shutil.which("node")
+    # Windows에서는 shutil.which("node")가 실패할 수 있어 node.exe도 시도
+    system_node = shutil.which("node") or shutil.which("node.exe")
     if system_node:
         maj = node_major_version(system_node)
         if maj is not None and maj >= NODE_MIN_MAJOR:
