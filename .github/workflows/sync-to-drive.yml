@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - main  # master 사용 시 master로 수정
+      - main  # master 사용 시 master로 변경
     paths:
       - '**.md'
 
@@ -34,4 +34,9 @@ jobs:
 
       - name: Sync Markdown files to Google Drive
         run: |
-          rclone sync . gdrive: --include "*.md" --exclude ".git/**" --progress
+          # --drive-v2-download-min-priority / root_folder_id 경로 상의 용량 공유 처리
+          rclone sync . gdrive: \
+            --include "*.md" \
+            --exclude ".git/**" \
+            --progress \
+            --drive-acknowledge-abuse
