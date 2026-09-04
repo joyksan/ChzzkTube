@@ -39,9 +39,8 @@ import log_console
 import log_history
 import pot_provider
 import theme
-from controller import DownloadController
+from controller import MediaController
 from dialogs import ExitConfirmDialog, SettingsDialog, UpdateWorker, VerboseLogWindow
-from downloader import AnalyzeWorker
 from utils import _open_windows_explorer
 
 # [URL 인식 디바운스] 키 입력(타이핑) 침묵 기준 지연 — "타이핑 끝남"은 미래 입력
@@ -79,17 +78,21 @@ class MainWindow(QMainWindow):
 
         self.cfg = self._load_config()
 
-        # 다운로드 세션 상태/워커는 컨트롤러가 소유 (dl_state 프로퍼티로 접근 가능)
-        self.ctrl = DownloadController(self)
+        # 다운로드 + 분석 세션 상태/워커는 컨트롤러가 소유 (dl_state 프로퍼티로 접근 가능)
+        self.ctrl = MediaController(self)
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
-        self.worker_analyze = None
         self.settings_dlg = None
         self.verbose_win = None
 
         self.analyze_timer = QTimer()
         self.analyze_timer.setSingleShot(True)
         self.analyze_timer.timeout.connect(self.run_analysis)
+
+        # ── 분석 워커 시그널 바인딩 (Controller → View 포워딩) ──
+        self.ctrl.analyze_result_ready.connect(self.on_analyze_success)
+        self.ctrl.analyze_error_occurred.connect(self.on_analyze_error)
+        self.ctrl.analyze_log_full.connect(self.append_full_log)
 
         # 락 가드: 앱 시작 및 PO Token 서버 구성 중에는 드롭다운/입력 차단 및 순서 보정
         self._startup_completed = False
@@ -630,41 +633,6 @@ class MainWindow(QMainWindow):
 
         self.add_concise_task_separator()  # 한 줄 여백 보증
 
-    def _abandon_analyze_worker(self):
-        """실행 중 분석 워커를 종료 강요 없이 유기한다 (zombie 패턴).
-
-        [결함 수리] 구버전은 재분석/URL 삭제 시 QThread.terminate()+wait()로
-        워커를 죽였다. terminate는 파이썬 스레드를 GIL 보유 상태로 강제 종료 —
-        죽은 스레드가 GIL을 영원히 반환하지 않아 GUI 스레드의 파이썬 실행
-        (시그널·타이머·슬롯 전부)이 영구 정지했고, '미디어 스트림 분석 중'에서
-        영원히 넘어가지 않는 증상의 근본 원인이었다.
-
-        대신: 시그널을 전부 끊어 UI 오염을 차단하고, 워커는 자연 종료까지
-        실행한 뒤 finished로 회수한다. yt-dlp 추출은 내부 취소 지점이 없어
-        강제 종료가 불가능하므로, 결과를 버리고 방치하는 것이 유일한 안전한 취책.
-        """
-        w = self.worker_analyze
-        if not w:
-            return
-        if w.isRunning():
-            for sig in (w.result_ready, w.error_occurred, w.log_full):
-                try:
-                    sig.disconnect()
-                except TypeError:
-                    pass
-            w.finished.connect(self._reap_zombie_worker)
-            if not hasattr(self, "_zombie_workers"):
-                self._zombie_workers = []
-            self._zombie_workers.append(w)
-        self.worker_analyze = None
-
-    def _reap_zombie_worker(self):
-        """자연 종료된 유기 워커를 참조 목록에서 회수 (메모리 정리)."""
-        try:
-            self._zombie_workers.remove(self.sender())
-        except (ValueError, AttributeError):
-            pass
-
     def run_analysis(self):
         url = self.url_input.text().strip()
         if not url:
@@ -675,26 +643,13 @@ class MainWindow(QMainWindow):
             is_error=False,
         )
 
-        # [결함 수리] 구버전의 terminate()+wait() 대신 유기 패턴 — GIL 사망 방지
-        self._abandon_analyze_worker()
-
         # 이전 링크의 분석 결과 블록이 마지막에 남아 있으면 철회한다.
         self._discard_analysis_result()
 
         self.base_anim_url = url
 
-        # [스레드 경계 / 경쟁상태 수리] 이전 분석 워커가 아직 러닝 중일 수 있다
-        # (500ms 디바운스보다 yt-dlp 추출이 길면 항상 그렇다). 참조를 그냥
-        # 덮어쓰면 옛 워커가 시그널 연결된 채 생존해 나중에 result_ready를
-        # 쏘아 낡은 URL의 결과로 extracted_data를 오염시킨다(stale callback
-        # race). 유기(disconnect + 좀비 등록) 후에 새 워커를 만든다.
-        self._abandon_analyze_worker()
-
-        self.worker_analyze = AnalyzeWorker(url, self.cfg)
-        self.worker_analyze.result_ready.connect(self.on_analyze_success)
-        self.worker_analyze.error_occurred.connect(self.on_analyze_error)
-        self.worker_analyze.log_full.connect(self.append_full_log)
-        self.worker_analyze.start()
+        # Controller가 기존 워커 유기 + 새 워커 생성을 담당 (Zombie Pattern)
+        self.ctrl.spawn_analyzer(url, self.cfg)
 
     def stop_analysis_anim(self, ok=True):
         """분석 완료/실패 시 최종 결과 로그를 히스토리에 박제 (마침표 애니메이션 정리 불요)."""
@@ -791,7 +746,7 @@ class MainWindow(QMainWindow):
         발신자(sender)가 현재 활성 워커와 다르면(=유기됨) 또는 입력이 비었으면
         결과를 완전히 폐기한다.
         """
-        if self.sender() is not self.worker_analyze:
+        if self.sender() is not self.ctrl.worker_analyze:
             return True  # 유기된 워커의 큐잉된 시그널
         if not self.url_input.text().strip():
             return True  # 분석 도중 입력이 비워짐
@@ -969,7 +924,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             return
         try:
-            targets = DownloadController.parse_targets(
+            targets = MediaController.parse_targets(
                 self.url_input.text().strip(),
                 dedup=self.cfg.get("remove_duplicates"),
             )
@@ -982,7 +937,7 @@ class MainWindow(QMainWindow):
         if not targets:
             return
 
-        self.ctrl.begin()
+        self.ctrl.begin_download()
 
         self.append_concise_log(
             log_console.emit_event("ANAL", "RUN", "-", "analyzing..."),
@@ -1023,7 +978,7 @@ class MainWindow(QMainWindow):
         self.console.add_task_separator()
 
     def on_download_finished(self, success_count, fail_count):
-        self.ctrl.end()
+        self.ctrl.end_download()
 
         if success_count > 0:
             self.url_input.clear()

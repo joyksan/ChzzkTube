@@ -568,3 +568,97 @@ AnalyzeWorker의 `result_ready`/`error_occurred`는 워커 스레드 → GUI 스
 - `is_tui_line`이 SPEED 칼럼 포함 신규 라인도 정상 인식 (raw 로그 미러링/필터 무영향)
 - 샘플 렌더 확인: VOD 틱(SPEC/SPEED 분리), LIVE 틱/종료, 배치 결론, FAIL, 분석 라인 전부 규격 준수
 
+---
+
+## 15. MVC 4계층 완성 리팩토링 (2026-09-04)
+
+### 배경
+- **문제점 1**: `DownloadWorker`는 `controller.py`가 관리하지만, `AnalyzeWorker`는 `main.py`에 직접 붙어있었음 → 모듈 역할 분리 위반
+- **문제점 2**: 좀비 스레드 수용소(`_zombie_workers`)가 View(`main.py`)에 있어 스레드 생명주기가 View에 종속됨
+- **문제점 3**: `_abandon_analyze_worker()`, `_reap_zombie_worker()` 등 스레드 관리 로직이 View에 노출됨
+
+### 수정 내용
+
+#### controller.py — MediaController로 확장
+| 항목 | 변경 |
+|------|------|
+| 클래스명 | `DownloadController` → `MediaController(QObject)` |
+| 상태 추가 | `state["analyzing"]` — 분석 중 플래그 |
+| 워커 소유 | `worker_dl` (다운로드) + `worker_analyze` (분석) |
+| 좀비 무덤 | `_zombie_workers` — Controller가 소유 (View에서 이관) |
+| 시그널 추가 | `analyze_result_ready`, `analyze_error_occurred`, `analyze_log_full` (View 포워딩용) |
+| 메서드 추가 | `spawn_analyzer()`, `_abandon_analyzer()`, `_reap_zombie()` |
+| 이름 명확화 | `begin()` → `begin_download()`, `end()` → `end_download()` |
+| 하위 호환성 | `DownloadController = MediaController` 별칭 유지 |
+
+#### main.py — View 순수성 회복
+| 항목 | 변경 |
+|------|------|
+| import 정리 | `from downloader import AnalyzeWorker` 제거 |
+| 컨트롤러 | `DownloadController(self)` → `MediaController(self)` |
+| 워커 소유 제거 | `self.worker_analyze = None` 삭제 |
+| 시그널 바인딩 | `ctrl.analyze_result_ready.connect(on_analyze_success)` 등 3개 추가 |
+| 메서드 제거 | `_abandon_analyze_worker()`, `_reap_zombie_worker()` → Controller로 이관 |
+| `run_analysis()` | `self.ctrl.spawn_analyzer(url, self.cfg)` 호출만 (1줄로 간소화) |
+| `_is_stale_analyze_signal()` | `self.worker_analyze` → `self.ctrl.worker_analyze` |
+
+### 아키텍처 변경
+
+**Before**:
+```
+[View]      main.py ── AnalyzeWorker 직접 관리 (좀비 스레드 수용소 보유)
+[Control]   controller.py ── DownloadWorker만 관리 (AnalyzeWorker 누락!)
+```
+
+**After (MVC 4계층 완성)**:
+```
+[View]      main.py ── 시그널 바인딩만 (Controller 포워딩 수신)
+[Control]   controller.py ── MediaController: DownloadWorker + AnalyzeWorker 통합 관리
+[Worker]    downloader.py ── AnalyzeWorker + DownloadWorker 정의 (변경 없음)
+```
+
+### 검증
+- `py_compile` 3개 모듈 OK (controller.py, main.py, downloader.py)
+- 좀비 워커 패턴 유지: `spawn_analyzer()` 호출 시 기존 워커 자동 유기
+- 시그널 포워딩 패턴: Controller가 Worker 시그널을 View에 중개 (직접 노출 차단)
+
+---
+
+## 16. Node.js 22 런타임 번들 → 외부 참조 전환 (2026-09-04)
+
+### 배경
+- **문제점**: 포터블 빌드에 Node.js 22 런타임 전체가 번들되어 용량이 큼
+- **해결**: 번들이 아닌 외부 라이브러리 참조로 전환. 시스템 Node.js 22+ 우선 사용 → 없으면 로컬 포터블 → 마지막으로 다운로드
+
+### 수정 내용
+
+#### pot_provider.py — node_exe() 및 ensure_node_runtime()
+| 항목 | 변경 |
+|------|------|
+| `node_exe()` 후보 순서 | 캐시된 포터블 → **시스템 PATH → 캐시된 포터블 → frozen 번들** |
+| `ensure_node_runtime()` | 시스템 Node.js 22+ 우선 확인 → 있으면 즉시 반환 (npm도 함께 확인) |
+| 다운로드 트리거 | 시스템/로컬 모두 없을 때만 다운로드 (기존 로직 유지) |
+| 포터블 빌드 | 첫 실행시 다른 DEPS와 함께 다운로드 (번들 제거) |
+
+### 런타임 탐색 순서
+
+**Before**:
+```
+1. 캐시된 포터블 node (번들)
+2. frozen 번들
+3. 시스템 PATH (폴백)
+```
+
+**After**:
+```
+1. 시스템 PATH (shutil.which("node") — 22+ 확인)
+2. 캐시된 포터블 node (로컬 다운로드)
+3. frozen 번들 (레거시)
+4. 둘 다 없으면 다운로드 트리거
+```
+
+### 검증
+- `py_compile` OK (pot_provider.py)
+- 시스템 Node.js 22+ 존재 시 즉시 반환 (npm도 함께 확인)
+- 시스템 Node.js 미설치 시 기존 로직 (로컬 → 다운로드) 유지
+

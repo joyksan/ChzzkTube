@@ -1,3 +1,4 @@
+
 # <type>(<scope>): <subject>
 # --- 타입 목록 ---
 # feat     : 새로운 기능 추가
