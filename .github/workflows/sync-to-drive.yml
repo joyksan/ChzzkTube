@@ -1,9 +1,10 @@
 name: Sync Markdown Mirrors to Google Drive
 
 on:
+  workflow_dispatch:
   push:
     branches:
-      - main  # master를 사용 중이시라면 master로 변경
+      - main  # master 사용 시 master로 수정
     paths:
       - '**.md'
 
@@ -14,8 +15,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup rclone
-        uses: AnimMouse/setup-rclone-action@v1
+      - name: Install Rclone
+        run: |
+          sudo sudo-rs curl https://rclone.org/install.sh | sudo bash || curl https://rclone.org/install.sh | sudo bash
 
       - name: Create Keys and Rclone Config
         run: |
