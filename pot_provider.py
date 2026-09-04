@@ -641,10 +641,15 @@ def download_and_install_source(want_ver, log_func=None):
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-def _run_and_stream_log(cmd, cwd, log_full_func, env=None):
+def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True):
+    """서브프로세스 실행 + 출력 스트리밍.
+
+    use_no_window=False로 설정하면 CREATE_NO_WINDOW 플래그를 적용하지 않음.
+    tsc 등 콘솔 출력에 의존하는 도구는 이 옵션을 False로 설정해야 함.
+    """
     try:
         kwargs = {}
-        if platform.system() == "Windows":
+        if platform.system() == "Windows" and use_no_window:
             kwargs["creationflags"] = _NO_WINDOW
         proc = subprocess.Popen(
             cmd,
@@ -657,15 +662,13 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None):
             env=env,
             **kwargs,
         )
-        while True:
-            line = proc.stdout.readline()
-            if not line and proc.poll() is not None:
-                break
-            if line:
+        # communicate() 사용으로 데드록 방지
+        stdout, _ = proc.communicate()
+        if stdout and log_full_func:
+            for line in stdout.splitlines():
                 stripped = line.strip()
-                if stripped and log_full_func:
+                if stripped:
                     log_full_func(stripped)
-        proc.wait()
         return proc.returncode
     except Exception as e:
         if log_full_func:
@@ -738,7 +741,7 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
         else:
             cmd_build = [curr_node, npm_cli, "exec", "tsc"] if npm_cli else ["npx", "tsc"]
             
-        ret = _run_and_stream_log(cmd_build, server_dir, log_full, env=env)
+        ret = _run_and_stream_log(cmd_build, server_dir, log_full, env=env, use_no_window=False)
         if ret != 0:
             return None, f"tsc failed (exit code {ret})"
 

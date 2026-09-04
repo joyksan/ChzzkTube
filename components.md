@@ -133,9 +133,10 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
 
 
 FFMPEG_DIRNAME = "ffmpeg"
+# GitHub 릴리즈 URL: 버전 명시 (latest 사용 시 source code를 가리켜 404 발생)
 FFMPEG_RELEASE_URL = (
-    "https://github.com/GyanD/codexffmpeg/releases/latest/download/"
-    "ffmpeg-release-essentials.zip"
+    "https://github.com/GyanD/codexffmpeg/releases/download/7.1/"
+    "ffmpeg-7.1-essentials.zip"
 )
 _FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
 
@@ -213,13 +214,6 @@ def ensure_ffmpeg(log=None, force=False):
         return _ensure_ffmpeg_by_platform(log, force)
     except Exception as e:
         return f"{type(e).__name__}: {e}"
-
-def ensure_ffmpeg(log=None, force=False) -> str | None:
-    """
-    ffmpeg 수급 단일 진입점.
-    pot_provider.py 등 외부 모듈은 오직 이 함수만을 호출한다.
-    """
-    return _ensure_ffmpeg_by_platform(log, force)
 
 def _ensure_ffmpeg_by_platform(log, force):
     """플랫폼에 따라 적절한 전략 함수에 위임 (전략 패턴)."""
