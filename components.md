@@ -178,10 +178,48 @@ def _macos_bottle_keys():
 
 
 
-def _exe_suffix() -> str:
-    """현재 OS의 실행 파일 확장자를 반환. Windows면 '.exe', 나머지는 ''."""
-    return ".exe" if sys.platform == "win32" else ""
+def ensure_ffmpeg(log=None, force=False):
+    """ffmpeg 자동 수급 — 시스템 설치 우선, 없으면 바이너리 다운로드.
 
+    [퍼사드 함수] 외부(pot_provider 등)에서 호출하는 단일 진입점.
+    성공 시 None, 실패 시 오류 문자열.
+
+    OS별 처리:
+    - Windows: 시스템 ffmpeg.exe 우선 → GitHub GyanD/codexffmpeg 다운로드
+    - macOS: 시스템 ffmpeg 우선 → Homebrew bottle 다운로드
+    - Linux: 시스템 ffmpeg 우선 → johnvansickle.com 정적 빌드 다운로드
+    """
+    log = _logcb(log)
+    log(emit_component("DEPS", "RUN", "ffmpeg", "checking..."))
+    try:
+        # 1. 시스템 ffmpeg 검색 (OS별 확장자 자동 처리)
+        suffix = _exe_suffix()
+        which = shutil.which("ffmpeg") or shutil.which(f"ffmpeg{suffix}")
+        if which and not force:
+            if os.access(which, os.X_OK) and _verify_ffmpeg(which):
+                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                return None
+            else:
+                log(emit_component("DEPS", "WARN", "ffmpeg", f"found but not working ({which})"))
+
+        # 2. 로컬 캐시 확인
+        cached = ffmpeg_exe()
+        if cached and not force:
+            _wire_ffmpeg_path(os.path.dirname(cached))
+            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+            return None
+
+        # 3. OS별 전략 호출
+        return _ensure_ffmpeg_by_platform(log, force)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+
+def ensure_ffmpeg(log=None, force=False) -> str | None:
+    """
+    ffmpeg 수급 단일 진입점.
+    pot_provider.py 등 외부 모듈은 오직 이 함수만을 호출한다.
+    """
+    return _ensure_ffmpeg_by_platform(log, force)
 
 def _ensure_ffmpeg_by_platform(log, force):
     """플랫폼에 따라 적절한 전략 함수에 위임 (전략 패턴)."""

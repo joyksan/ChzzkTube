@@ -380,8 +380,16 @@ def _kill(proc):
         pass
 
 def built_server_js():
-    js = os.path.join(server_home(), "server", "build", "main.js")
-    return js if os.path.isfile(js) else None
+    """컴파일된 main.js 경로 반환 (build/ 와 dist/ 모두 지원)."""
+    base_dir = os.path.join(server_home(), "server")
+    
+    # 모던 TS 프로젝트의 두 가지 주요 출력 경로를 모두 확인
+    for out_dir in ("build", "dist"):
+        js_path = os.path.join(base_dir, out_dir, "main.js")
+        if os.path.isfile(js_path):
+            return js_path
+            
+    return None
 
 def _spawn_node_server(log_full_func=None):
     js, node = built_server_js(), node_exe()
@@ -679,7 +687,7 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
         if node_ok():
             return os.path.dirname(os.path.dirname(js)), None
         log(
-            "[~] server build exists but Node runtime missing or insufficient — "
+            "server build exists but Node runtime missing or insufficient — "
             "reconfiguring runtime."
         )
         if not ensure_node_runtime(log):
@@ -735,7 +743,7 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
             return None, f"tsc failed (exit code {ret})"
 
         if built_server_js() is None:
-            return None, "server/build/main.js missing after compile"
+            return None, "server/build/main.js (or dist/main.js) missing after compile"
             
         return server_dir, None
     except Exception as e:
