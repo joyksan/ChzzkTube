@@ -710,3 +710,91 @@ AnalyzeWorker의 `result_ready`/`error_occurred`는 워커 스레드 → GUI 스
 - Windows에서 `ffmpeg.exe` 자동 인식
 - Linux에서 시스템 패키지 매니저 자동 감지 (apt/dnf/pacman)
 
+
+---
+
+## 16. components.py 퍼사드 + 전략 패턴 리팩토링 (2026-09-05)
+
+### 배경
+- **문제점 1**: `ensure_ffmpeg()` 내부에 Windows 다운로드 로직이 인라인으로 존재 → OS별 로직 분리 실패
+- **문제점 2**: `shutil.which("ffmpeg.exe")`를 macOS/Linux에서도 무지성 호출 → 플랫폼 의존성 흩어짐
+- **문제점 3**: 확장자 하드코딩이 여러 곳에 분산 → 유지보수성 저하
+
+### 수정 내용 (퍼사드 + 전략 패턴 적용)
+
+#### 아키텍처 변경
+
+**Before**:
+```python
+def ensure_ffmpeg(log, force=False):
+    # Windows 로직이 인라인으로 존재
+    if sys.platform == "darwin":
+        return _ensure_ffmpeg_macos(log, force)
+    elif sys.platform == "linux":
+        return _ensure_ffmpeg_linux(log, force)
+    # ... Windows 코드 직접 구현 ...
+```
+
+**After (퍼사드 + 전략 패턴)**:
+```python
+# [퍼사드] 외부 호출용 단일 진입점
+def ensure_ffmpeg(log, force=False):
+    """OS를 전혀 신경 쓰지 않아도 되는 깔끔한 인터페이스"""
+    # 1. 시스템 탐색 → 2. 로컬 캐시 확인 → 3. 전략에 위임
+    return _ensure_ffmpeg_by_platform(log, force)
+
+# [유틸리티] 확장자 하드코딩 중앙 집중화
+def _exe_suffix() -> str:
+    return ".exe" if sys.platform == "win32" else ""
+
+# [디스패처] OS별 전략에 작업을 위임
+def _ensure_ffmpeg_by_platform(log, force):
+    if sys.platform == "win32":    return _ensure_ffmpeg_windows(log, force)
+    elif sys.platform == "darwin":  return _ensure_ffmpeg_macos(log, force)
+    elif sys.platform.startswith("linux"): return _ensure_ffmpeg_linux(log, force)
+
+# [전략 함수들] 각 OS별 완전히 캡슐화된 구현
+def _ensure_ffmpeg_windows(log, force): ...  # 신규 생성
+def _ensure_ffmpeg_macos(log, force): ...    # 기존 유지
+def _ensure_ffmpeg_linux(log, force): ...    # 기존 유지
+```
+
+#### 신규 추가 함수
+
+| 함수명 | 책임 | 위치 |
+|--------|------|------|
+| `_exe_suffix()` | OS별 실행 파일 확장자 반환 (`.exe` / `""`) | 181번 줄 |
+| `_ensure_ffmpeg_by_platform()` | 플랫폼 감지 후 적절한 전략 함수에 위임 | 186번 줄 |
+| `_ensure_ffmpeg_windows()` | Windows 전용: GitHub GyanD/codexffmpeg 다운로드 로직 | 199번 줄 |
+
+#### ensure_ffmpeg() 간소화
+
+| 항목 | 변경 |
+|------|------|
+| 시스템 탐색 | `_exe_suffix()` 사용하여 OS별 확장자 자동 처리 |
+| 로컬 캐시 확인 | `ffmpeg_exe()` 호출 (공통 로직) |
+| OS별 분기 | `_ensure_ffmpeg_by_platform()` 호출로 완전 위임 |
+| Windows 로직 | 제거 (별도 함수로 분리) |
+
+### 핵심 개선 포인트
+
+| 항목 | 기존 | ✅ 개선 후 |
+|------|------|-----------|
+| **확장자 분기** | `sys.platform == "win32"` 분기가 여러 곳에 흩어짐 | `_exe_suffix()` **단일 함수**로 중앙 집중화 |
+| **Windows 로직** | `ensure_ffmpeg()`에 인라인으로 존재 | `_ensure_ffmpeg_windows()`로 **완전 분리** |
+| **확장성** | if-elif 수동 분기 추가 필요 | `_ensure_ffmpeg_by_platform()` 디스패처에 분기만 추가 |
+| **에러 처리** | `RuntimeError` 발생 가능성 | 문자열 반환으로 기존 일관성 유지 |
+
+### 부가 효과
+
+- **테스트 용이성**: 각 OS 전략을 독립적으로 모킹 가능
+- **단일 책임 원칙**: 한 함수가 한 역할만 수정
+- **개방-폐쇄 원칙**: 새로운 OS 추가 시 디스패처에 분기만 넣으면 됨
+- **코드 가독성**: 퍼사드는 입구 역할만, 실제 작업은 전략 함수에서 처리
+
+### 검증
+- `py_compile` OK (components.py)
+- Windows/macOS/Linux 각 플랫폼 시뮬레이션 테스트 PASS
+- `_exe_suffix()` 정상 동작 확인 (win32 → `.exe`, 나머지 → `""`)
+- `_ensure_ffmpeg_by_platform()` 분기 정상 동작 확인
+
