@@ -1,0 +1,24 @@
+# <type>(<scope>): <subject>
+# --- 타입 목록 ---
+# feat     : 새로운 기능 추가
+# fix      : 버그 수정
+# docs     : 문서 수정
+# style    : 코드 포맷팅, 세미콜론 누락 등 (로직 변경 없음)
+# refactor : 코드 리팩토링
+# perf     : 성능 개선
+# test     : 테스트 코드 추가/수정
+# chore    : 빌드 업무, 패키지 관리 등 기타 작업
+# -----------------
+
+# [본문(Body) 작성 (선택)]
+
+# [꼬리말(Footer) 작성 (선택) - 예: Fixes: #124]
+
+#실무 종합 예시
+#feat(auth): 세션 기반 인증을 JWT 토큰 방식으로 변경
+
+#기존 쿠키 세션 방식 대신 Header bearer 토큰 방식을 적용했습니다.
+
+#BREAKING CHANGE: /api/v1/login 응답에서 session_id 대신 token이 반환됩니다.
+#Fixes: #102
+#Co-authored-by: Kim Jinsan <jinsan@example.com>
