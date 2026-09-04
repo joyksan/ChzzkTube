@@ -1,4 +1,4 @@
-##### updater.py - component (yt-dlp / streamlink / bgutil) version check and update helper
+##### updater.py - pip component (yt-dlp / streamlink) version check and update helper
 """PyPI metadata query for latest versions, optional pip upgrade on demand.
 *  Version check: PyPI JSON API (lightweight, no pip needed)
 *  Upgrade: python -m pip install -U <pkg> subprocess — must run in a worker thread (tens of seconds blocking)
@@ -12,9 +12,12 @@ import socket
 import urllib.request
 
 # (log_label, pypi_name) — log_label is shown in the DEPS PLATFORM column
-PACKAGES = [("ytdlp", "yt-dlp"), ("streamlink", "streamlink"), ("bgutil", "bgutil-ytdlp-pot-provider")]
-# [DNS hang guard] urlopen timeout doesn't apply to DNS resolve, socket-level default
-socket.setdefaulttimeout(2)
+# [전환] bgutil-ytdlp-pot-provider 제외: 플러그인(pip)에서 독립 Node 서버로
+# 이동 — 버전 관리 주체는 pot_provider(latest_server_ver)가 담당.
+PACKAGES = [("ytdlp", "yt-dlp"), ("streamlink", "streamlink")]
+# [주의] socket.setdefaulttimeout() 절대 사용 금지 — 프로세스 전체의 소켓 기본
+# 타임아웃을 오염시켜 yt-dlp 미디어 스트림 재시도 루프(0.0% 스톨)를 유발.
+# DNS hang 방어는 아래 latest_version의 ThreadPoolExecutor + urlopen(timeout)으로 충분.
 
 _PYPI_API = "https://pypi.org/pypi/{pkg}/json"
 
@@ -64,7 +67,7 @@ def outdated_packages():
         cur = installed_version(pypi_name)
         latest = latest_version(pypi_name)
         if not cur:
-            stale.append((label, pypi_name, "not installed", latest or "1.3.2"))
+            stale.append((label, pypi_name, "not installed", latest or "?"))
         elif latest and is_outdated(cur, latest):
             stale.append((label, pypi_name, cur, latest))
     return stale

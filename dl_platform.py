@@ -38,8 +38,6 @@ _PLATFORM_ABBREV = {
     "chzzk": "chzzk",
     "streamlink": "sl",
     "yt-dlp": "ytdlp",
-    "bgutil-ytdlp": "bgutil",
-    "bgutil-ytdlp-pot-provider": "bgutil",
     "ffmpeg": "ffmpeg",
     "DEPS": "deps",
     "POT": "pot",

@@ -1,6 +1,5 @@
 ##### 팝업 다이얼로그 모음
 import os
-import sys
 import updater
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -296,10 +295,7 @@ class UpdateWorker(QThread):
         상세로그(F12)에만 쌓인다.
         """
         stale = []
-        frozen = bool(getattr(sys, "frozen", False))
         for label, pypi_name in updater.PACKAGES:
-            if frozen and pypi_name == "bgutil-ytdlp-pot-provider":
-                continue
             # 간결 로그는 TUI 포맷으로, 상세 로그는 raw로
             self.line.emit(emit_component("DEPS", "RUN", label, "checking..."))
             cur = updater.installed_version(pypi_name)

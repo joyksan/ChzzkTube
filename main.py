@@ -996,6 +996,9 @@ class MainWindow(QMainWindow):
             (self.extracted_data.get("info") or {}).get("is_live")
         )
         # 최고 품질 자동 선택 — 콤보 박스 없이 기본값 사용
+        # [다운로드 일관성] 분석에서 실증·통과한 클라이언트 그대로 전달 —
+        # 시청 기록 다운로드가 봇 게이트/PO 토큰 경로에 재진입해 0%에
+        # 머무르는 현상 방지 (auto면 기존 동작 유지).
         self.ctrl.spawn_worker(
             targets,
             self.cfg,
@@ -1004,6 +1007,7 @@ class MainWindow(QMainWindow):
             is_live_hint=live_hint,
             v_spec=None,  # 사양 미지정 — 분석 결과 선두 포맷 기준
             audio_desc="",
+            yt_client=self.extracted_data.get("yt_client", "auto"),
         )
 
     def skip_current(self):

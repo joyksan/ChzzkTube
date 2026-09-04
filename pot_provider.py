@@ -1,5 +1,3 @@
-import importlib.metadata as im
-import importlib.util
 import os
 import shutil
 import socket
@@ -98,8 +96,7 @@ def read_server_log_tail(n=10):
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 4416
-_PKG = "bgutil-ytdlp-pot-provider"
-_FALLBACK_PLUGIN_VER = "1.3.2"
+_SERVER_FALLBACK_VER = "1.3.2"
 _TAG_ZIP = "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{ver}.zip"
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -257,38 +254,47 @@ def node_exe():
         return majors[0][0]  # 버전 판별 전면 실패 폴백 — 무한 재설치 방지
     return None
 
-def plugin_version():
-    """설치된 플러그인 버전 조회."""
+def latest_server_ver(timeout=3):
+    """bgutil 서버 최신 릴리스 태그 (GitHub API). 실패 시 None — 호출부 폴백."""
     try:
-        return im.version(_PKG)
+        req = urllib.request.Request(
+            "https://api.github.com/repos/Brainicism/bgutil-ytdlp-pot-provider/releases/latest",
+            headers={"User-Agent": "ChzzkTube"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return (json.load(resp).get("tag_name") or "").strip() or None
     except Exception:
         return None
 
-def plugin_installed():
-    """yt-dlp 플러그인이 로컬 격리 경로 또는 시스템 패키지에 적재되어 있는지 확인."""
-    if plugin_version():
-        return True
+
+def server_installed_ver():
+    """로컬에 전개된 bgutil 서버 버전 (.version 마커). 없으면 None."""
     try:
-        if importlib.util.find_spec("yt_dlp_plugins.extractor.getpot_bgutil") is not None:
-            return True
-    except Exception:
-        pass
-        
-    local_plugin_dir = os.path.join(get_writable_base(), "yt_dlp_plugins", "extractor")
-    if os.path.isdir(local_plugin_dir):
-        if any(f.startswith("getpot_bgutil") and f.endswith(".py") for f in os.listdir(local_plugin_dir)):
-            return True
-            
-    if _is_portable():
-        root = _bundle_root()
-        if root:
-            ext_dir = os.path.join(root, "yt_dlp_plugins", "extractor")
-            if os.path.isdir(ext_dir) and any(
-                f.startswith("getpot_bgutil") and f.endswith(".py")
-                for f in os.listdir(ext_dir)
-            ):
-                return True
-    return False
+        with open(os.path.join(server_home(), ".version"), encoding="utf-8") as f:
+            return f.read().strip() or None
+    except OSError:
+        return None
+
+
+def clean_stale_plugin():
+    """구버전에서 설치된 bgutil Python 플러그인 제거.
+
+    yt_dlp_plugins/ 아래 getpot_bgutil이 남으면 yt-dlp 플러그인 로더가
+    자동 로드해 fetch_po_token과 이중 주입 → 토큰 충돌 위험. 기동 시 1회.
+    대상: <writable_base>/yt_dlp_plugins, <components>/yt-dlp/yt_dlp_plugins
+    """
+    import components
+    roots = [
+        os.path.join(get_writable_base(), "yt_dlp_plugins"),
+        os.path.join(components.components_root(), "yt-dlp", "yt_dlp_plugins"),
+    ]
+    removed = False
+    for d in roots:
+        if os.path.isdir(d):
+            shutil.rmtree(d, ignore_errors=True)
+            removed = True
+    return removed
+
 
 def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
     """서버 상태 모니터링 (HTTP /ping 응답 기준)"""
@@ -313,14 +319,48 @@ def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
     except OSError:
         return "down", ""
 
-def server_running(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
-    return probe_server(host, port, timeout)[0] == "ok"
 
-def _wait_port(seconds):
+def fetch_po_token(video_id, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5):
+    """bgutil 독립 서버에서 PO 토큰 직접 패칭 (플러그인 우회).
+
+    POST /get_pot {"content_binding": video_id} → {"poToken": "..."}
+    서버 미기동/오류 시 None 반환 — 호출부는 PO 없이 진행.
+    """
+    url = f"http://{host}:{port}/get_pot"
+    try:
+        body = json.dumps({"content_binding": video_id}).encode("utf-8")
+        req = urllib.request.Request(
+            url, data=body, method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        token = data.get("poToken") or ""
+        if token:
+            return token
+    except Exception:
+        pass
+    return None
+
+
+def extract_video_id(url):
+    """YouTube URL에서 11자리 video ID 추출 (실패 시 None)."""
+    m = re.search(
+        r"(?:v=|/shorts/|/embed/|youtu\.be/)([a-zA-Z0-9_-]{11})", str(url or "")
+    )
+    return m.group(1) if m else None
+
+def _wait_port(seconds, log_full_func=None):
+    """포트가 열릴 때까지 폴링. log_full_func가 있으면 5초마다 진척 로그 출력."""
     deadline = time.time() + seconds
+    last_log = 0.0
     while time.time() < deadline:
-        if server_running():
+        if probe_server()[0] == "ok":
             return True
+        now = time.time()
+        if log_full_func and now - last_log >= 5.0:
+            log_full_func(f"[pot:spawn] waiting for server... {int(seconds - (deadline - now))}s / {seconds}s")
+            last_log = now
         time.sleep(0.5)
     return False
 
@@ -370,7 +410,7 @@ def _spawn_node_server(log_full_func=None):
         if log_full_func:
             log_full_func(f"server Popen failed: {e}")
         return None
-    if _wait_port(45):
+    if _wait_port(45, log_full_func):
         return proc
     _kill(proc)
     if log_full_func:
@@ -382,11 +422,6 @@ def _spawn_node_server(log_full_func=None):
 
 def _spawn_existing(log_full_func=None):
     return _spawn_node_server(log_full_func)
-
-def _tail(stdout, stderr, n=4):
-    text = (stderr or "").strip() or (stdout or "").strip()
-    lines = [l for l in text.splitlines() if l.strip()]
-    return "\n".join(lines[-n:])
 
 def _download_with_progress(url, dest_path, log_func, desc):
     """청크 단위 분할 다운로드 및 콘솔에 친절한 진행률 출력."""
@@ -415,17 +450,36 @@ def _download_with_progress(url, dest_path, log_func, desc):
             except Exception:
                 pass
 
+def bundled_npm_ok(node_path):
+    """번들 Node dir의 npm 무결성 — validate-engines가 require하는 package.json.
+
+    [배경] 부분 추출/AV 격리로 npm 루트 파일(package.json)만 소실되는 케이스
+    확인. node.exe는 멀쩡해 버전 검사를 통과하고, 정작 npm ci가
+    'Cannot find module ../../package.json'으로 즉사 — 수리 트리거로 사용.
+    """
+    if not node_path:
+        return False
+    return os.path.isfile(
+        os.path.join(os.path.dirname(node_path), "node_modules", "npm", "package.json")
+    )
+
 def ensure_node_runtime(log_func):
     """bgutil 서버 요구(Node >= 22) 충족을 위한 Node.js 런타임 자동 수급/재구성.
 
     [수정 이력] 구버전은 v20.18.0을 받아 bgutil의 require(esm) 요구를 충족하지
     못해 서버가 ERR_REQUIRE_ESM으로 크래시했다 (PO Token 기동 실패의 근본 원인).
+    [자가 치유] node.exe는 살아있어도 번들 npm이 깨진 경우(부분 추출/AV 격리)
+    재설치로 수리 — bundled_npm_ok 참조.
     """
     cur = node_exe()
     cur_major = node_major_version(cur) if cur else None
-    if cur_major is not None and cur_major >= NODE_MIN_MAJOR:
+    if cur_major is not None and cur_major >= NODE_MIN_MAJOR and (
+        bundled_npm_ok(cur) or shutil.which("npm")
+    ):
         return True
-    if cur_major is not None:
+    if cur_major is not None and cur_major >= NODE_MIN_MAJOR and not bundled_npm_ok(cur):
+        log_func("[~] node ok but bundled npm broken — reinstalling runtime.")
+    elif cur_major is not None:
         log_func(
             f"Node.js v{cur_major} is below bgutil requirement "
             f"(Node >= {NODE_MIN_MAJOR}) — reconfiguring to latest runtime."
@@ -486,12 +540,20 @@ def ensure_node_runtime(log_func):
                             except (PermissionError, OSError):
                                 pass
         else:
+            # [수리] zip 경로도 잔해 완전 제거 후 추출 — 부분 추출 위에 덧대면
+            # npm package.json 소실 같은 반쯤 깨진 런타임이 재현된다.
+            if os.path.exists(node_dir):
+                try:
+                    shutil.rmtree(node_dir, ignore_errors=True)
+                except Exception:
+                    pass
+            os.makedirs(node_dir, exist_ok=True)
             with zipfile.ZipFile(archive_dest, "r") as z:
                 z.extractall(node_dir)
         _node_ver_cache.clear()
         new_node = node_exe()
         new_major = node_major_version(new_node) if new_node else None
-        if new_major is not None and new_major >= NODE_MIN_MAJOR:
+        if new_major is not None and new_major >= NODE_MIN_MAJOR and bundled_npm_ok(new_node):
             log_func(f"portable Node.js v{new_major} ready.")
             _prune_outdated_node_dirs(node_dir)
             return True
@@ -578,10 +640,15 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None):
             log_full_func(f"subprocess Popen error: {e}")
         return -1
 
-def ensure_node_server(log, log_full, want_ver):
-    """Node.js HTTP 서버 및 빌드 소스 구성을 완료한다."""
+def ensure_node_server(log, log_full, want_ver, rebuild=False):
+    """Node.js HTTP 서버 및 빌드 소스 구성을 완료한다.
+
+    rebuild=True면 기존 빌드가 있어도 npm ci + tsc 재실행 (버전 갱신 경로).
+    [무파괴] build/ 선삭제 금지 — tsc가 build/main.js를 overwrite. npm 실패 시
+    호출부가 기존 빌드로 폴백 가능.
+    """
     js = built_server_js()
-    if js:
+    if js and not rebuild:
         # [결함 수리] 빌드 산출물이 있어도 Node가 없거나 요구 버전(Node >= 22)
         # 미달이면 스폰이 무조건 실패하고 err=None이라 사유도 없었다 —
         # 런타임만 재구성한 뒤 성공 판정 (npm ci/tsc 재실행은 스킵).
@@ -650,62 +717,6 @@ def ensure_node_server(log, log_full, want_ver):
     except Exception as e:
         return None, f"{type(e).__name__}: {e}"
 
-def download_and_hot_reload_plugin(log_func, want_ver=_FALLBACK_PLUGIN_VER):
-    """Download bgutil-ytdlp-pot-provider wheel and hot-reload into isolated path."""
-    log_func("PO plugin fetching...")
-    target_plugin_dir = os.path.join(get_writable_base(), "yt_dlp_plugins")
-    os.makedirs(target_plugin_dir, exist_ok=True)
-    
-    pypi_url = f"https://pypi.org/pypi/{_PKG}/json"
-    whl_url = None
-    try:
-        req = urllib.request.Request(pypi_url, headers={"User-Agent": "ChzzkTube"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            releases = data.get("releases", {})
-            current_ver = data.get("info", {}).get("version", want_ver)
-            files = releases.get(current_ver, [])
-            for f in files:
-                if f.get("filename", "").endswith(".whl"):
-                    whl_url = f.get("url")
-                    break
-    except Exception:
-        pass
-        
-    if not whl_url:
-        whl_url = f"https://files.pythonhosted.org/packages/py3/{_PKG[0]}/{_PKG}/{_PKG.replace('-', '_')}-{want_ver}-py3-none-any.whl"
-        
-    tmp_whl = os.path.join(get_writable_base(), "temp_plugin.whl")
-    try:
-        _download_with_progress(whl_url, tmp_whl, log_func, "PO plugin downloading...")
-        log_func("PO plugin extracting...")
-        
-        with zipfile.ZipFile(tmp_whl, "r") as z:
-            for member in z.namelist():
-                if member.startswith("yt_dlp_plugins/"):
-                    z.extract(member, get_writable_base())
-                    
-        writable_base_path = get_writable_base()
-        if writable_base_path not in sys.path:
-            sys.path.insert(0, writable_base_path)
-            
-        importlib.invalidate_caches()
-        
-        for mod_name in list(sys.modules.keys()):
-            if mod_name.startswith("yt_dlp_plugins") or mod_name.startswith("yt_dlp.plugins"):
-                del sys.modules[mod_name]
-                
-        log_func("PO plugin hot-reload applied.")
-        return True
-    except Exception as e:
-        log_func(f"plugin hot-fetch failed: {e}")
-        return False
-    finally:
-        if os.path.exists(tmp_whl):
-            try:
-                os.remove(tmp_whl)
-            except Exception:
-                pass
 
 class POTProviderWorker(QThread):
     """앱 시작 시 PO Token 서버 및 플러그인을 무중단으로 준비하고 로드하는 스레드."""
@@ -772,13 +783,14 @@ class POTProviderWorker(QThread):
             self._note(f"ffmpeg fetch module exception: {ff_ex}", False, True)
             self._dbg(f"ffmpeg fetch module exception: {type(ff_ex).__name__}: {ff_ex}")
 
-        if not plugin_installed():
-            self._note("plugin missing — downloading", True)
-            self._dbg("plugin missing → download attempt")
-            ok = download_and_hot_reload_plugin(self._note, _FALLBACK_PLUGIN_VER)
-            self._dbg(f"plugin download result: {'OK' if ok else 'FAIL'}")
-        else:
-            self._note("plugin installed — skip", True)
+        # [전환] Python 플러그인 설치/검사 완전 제거 — 토큰은 다운로드 시점에
+        # fetch_po_token()으로 직접 패칭(target_downloader._apply_pot_opts).
+        # 구버전 잔재( yt_dlp_plugins )가 있으면 yt-dlp 자동 로드로 이중 주입되니 정리.
+        try:
+            if clean_stale_plugin():
+                self._dbg("stale yt_dlp_plugins removed")
+        except Exception as cp_ex:
+            self._dbg(f"stale plugin cleanup failed: {cp_ex}")
 
         self._note("probing server...", True)
         state, detail = probe_server()
@@ -799,20 +811,39 @@ class POTProviderWorker(QThread):
             self._dbg("conflict branch — port occupied")
             return
 
-        self._dbg("trying to spawn existing build")
-        if _spawn_existing(self.log_full.emit):
-            self.outcome = (
-                "ok",
-                emit_component("pot", "OK", "pot", f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
-            )
-            self._dbg("existing build spawn ok")
-            return
-        self._dbg("existing build spawn failed — building fresh")
+        # [버전 체크] GitHub 최신 릴리스 vs 로컬 .version 마커 — stale면 소스 재수급.
+        # (구 ensure_all이 안 하던 "서버 갱신"을 이 워커가 담당 — components 정리 참조)
+        remote = latest_server_ver()
+        local = server_installed_ver()
+        need_refresh = local is None or (remote is not None and remote != local)
+        self._dbg(f"server version: local={local!r} remote={remote!r} refresh={need_refresh}")
 
-        ver = plugin_version() or _FALLBACK_PLUGIN_VER
-        self._dbg(f"plugin version: {ver}")
+        if built_server_js() and not need_refresh:
+            self._dbg("trying to spawn existing build")
+            self._note("pot server starting...", True)
+            if _spawn_existing(self.log_full.emit):
+                self.outcome = (
+                    "ok",
+                    emit_component("pot", "OK", "pot", f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
+                )
+                self._dbg("existing build spawn ok")
+                self._note("pot server ready", True)
+                return
+            self._dbg("existing build spawn failed — rebuilding")
+
         self._note("building PO token server...", True)
-        _, err = ensure_node_server(self._note, self.log_full.emit, ver)
+        ver = remote or local or _SERVER_FALLBACK_VER
+        have_build = built_server_js() is not None
+        src_pkg = os.path.join(server_home(), "server", "package.json")
+        if remote and (not os.path.isfile(src_pkg) or local != remote):
+            try:
+                download_and_install_source(remote, self._note)
+            except Exception as ds_ex:
+                self._dbg(f"source refresh failed ({ds_ex}) — building from existing source")
+        # [무파괴] build/ 선삭제 금지 — tsc가 build/main.js를 overwrite.
+        # npm 실패 시 호출부가 기존 빌드로 폴백 가능 (stale이어도 0% 스톨 없는 서버가 낫다)
+        self._dbg(f"server source version target: {ver} (rebuild={have_build})")
+        _, err = ensure_node_server(self._note, self.log_full.emit, ver, rebuild=have_build)
         self._dbg(f"ensure_node_server done: err={err!r}")
 
         if err is None and _spawn_existing(self.log_full.emit):
@@ -821,6 +852,23 @@ class POTProviderWorker(QThread):
                 emit_component("pot", "OK", "pot", f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
             )
             self._dbg("fresh build spawn ok")
+            self._note("pot server ready", True)
+            # [마커] 빌드+스폰 성공 시에만 기록 — 실패 시 다음 부팅에 재시도
+            try:
+                with open(os.path.join(server_home(), ".version"), "w", encoding="utf-8") as f:
+                    f.write(str(ver))
+            except OSError:
+                pass
+            return
+
+        # [폴백] 갱신 실패 — 기존 빌드가 살아있으면 최소한 동작 서버로
+        if built_server_js() and _spawn_existing(self.log_full.emit):
+            self.outcome = (
+                "ok",
+                emit_component("pot", "WARN", "pot", "refresh failed — stale server"),
+            )
+            self._dbg("fallback spawn of existing build ok")
+            self._note("pot server ready (stale)", True)
             return
 
         self.outcome = (

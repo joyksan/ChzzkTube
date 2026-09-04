@@ -15,7 +15,7 @@ from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
 from log_console import format_target_url
 from utils import get_filename_template
 from dl_platform import detect_content_type
-from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ffmpeg_opts
+from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts, _apply_pot_opts
 from progress_emitter import emit_err
 
 
@@ -32,13 +32,28 @@ def _make_ytdl_opts(worker, fmt):
         "format": fmt,
         "merge_output_format": worker.cfg.get("container", "mp4"),
         "retries": 3,
+        "socket_timeout": 30,
+        # [0% 스톨 픽스] PO 토큰 불일치 시 googlevideo가 "묵살 스로틀"
+        # (연결 수락 + 데이터 거의 안 보냄) → speed < 100KB/s 3초 지속되면
+        # yt-dlp가 ThrottledDownload raise → 재추출+재시도.
+        # [주의] dest가 throttledratelimit (camelCase 아님, yt-dlp 옵션 표준)
+        "throttledratelimit": 100_000,
     }
     if worker.cfg.get("fast_download"):
         opts["concurrent_fragment_downloads"] = 4
     _apply_cookie_opts(opts, worker.cfg)
-    _apply_client_opts(opts, worker.cfg)
+    _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+    _apply_ejs_opts(opts)
+    _apply_pot_opts(opts, _extract_yt_id(url),
+                    client=(worker.yt_client if worker.yt_client != "auto" else "web_embedded"))
     _apply_ffmpeg_opts(opts)
     return opts
+
+
+def _extract_yt_id(url):
+    """YouTube URL에서 video ID 추출 (PO 토큰 content_binding용)."""
+    import pot_provider
+    return pot_provider.extract_video_id(url)
 
 
 def _format_selector(worker):
@@ -166,7 +181,8 @@ def _flatten(worker, url):
         "skip_download": True,
     }
     _apply_cookie_opts(opts, worker.cfg)
-    _apply_client_opts(opts, worker.cfg)
+    _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+    _apply_ejs_opts(opts)
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     entries = info.get("entries") or []

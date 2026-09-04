@@ -31,7 +31,7 @@ import log_console
 from dl_platform import detect_content_type
 from playlist import normalize_youtube_channel_url
 from speed_window import SpeedWindow
-from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ffmpeg_opts, _dedupe_by_label
+from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts, _dedupe_by_label
 import progress_emitter as _pe
 import live_recorder as _lr
 import target_downloader as _td
@@ -86,6 +86,73 @@ class AnalyzeWorker(QThread):
         self.target_url = target_url
         self.cfg = cfg
         self.logger = YtLoggerBridge(self.log_full)
+        # [다운로드 일관성] 분석에서 통과한 클라이언트 기록 — 다운로드가
+        # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
+        self.client_used = "auto"
+
+    # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — ios는 PO Token
+    # 불필요·SABR 무관(720p급), tv는 최후 수단(SABR 360p 리스크).
+    _RETRY_CLIENTS = ["ios", "tv"]
+
+    @staticmethod
+    def _is_bot_block(ex):
+        """YouTube 봇 체크/JS 챌린지 실패 판별 — 클라이언트 회전 대상 여부."""
+        s = str(ex).lower()
+        return (
+            "the page needs to be reloaded" in s
+            or "n challenge solving failed" in s
+            or "challenge solving failed" in s
+        )
+
+    def _extract_youtube(self, url, flat):
+        """yt-dlp 추출 — bot-check 실패 시 ios→tv 클라이언트 회전.
+
+        [회전 정책] 사용자가 특정 클라이언트를 지정했으면 그 값 하나만
+        시도하고 자동 회전하지 않는다(auto일 때만 ios→tv). 회전 흔적은
+        상세 로그(F12)에만 남기고 간결 로그는 조용히 유지한다.
+        """
+        configured = str(self.cfg.get("yt_player_client", "auto") or "auto")
+        base = {
+            "logger": self.logger,
+            "skip_download": True,
+            # [가드] updater.py의 socket.setdefaulttimeout(2) 전역값이 새 소켓에
+            # 적용되는 것 대비 — 명시 타임아웃으로 안전하게 오버라이드.
+            "socket_timeout": 30,
+        }
+        if flat:
+            base["extract_flat"] = True
+        else:
+            base["noplaylist"] = True
+            base["extract_flat"] = False
+
+        attempts = [configured]
+        if configured == "auto":
+            attempts += list(self._RETRY_CLIENTS)
+
+        last_err = None
+        for idx, client in enumerate(attempts):
+            ydl_opts = dict(base)
+            _apply_cookie_opts(ydl_opts, self.cfg)
+            if client != "auto":
+                ydl_opts["extractor_args"] = {
+                    "youtube": {"player_client": [client]}
+                }
+            _apply_ffmpeg_opts(ydl_opts)
+            _apply_ejs_opts(ydl_opts)
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=False)
+                self.client_used = client
+                return info
+            except Exception as e:
+                last_err = e
+                if not self._is_bot_block(e):
+                    break
+                nxt = attempts[idx + 1] if idx + 1 < len(attempts) else "give up"
+                self.log_full.emit(
+                    f"[client retry] bot check — {client} → {nxt}"
+                )
+        raise last_err
 
     def run(self):
         self.log_full.emit(f"--- [format analysis start] {self.target_url} ---")
@@ -162,16 +229,9 @@ class AnalyzeWorker(QThread):
                 is_channel = any(k in self.target_url for k in ["/@", "/channel/", "/c/", "/user/"])
                 
                 if is_playlist or is_channel:
-                    ydl_opts = {
-                        "logger": self.logger,
-                        "extract_flat": True,
-                        "skip_download": True,
-                    }
-                    _apply_cookie_opts(ydl_opts, self.cfg)
-                    _apply_client_opts(ydl_opts, self.cfg)
-                    _apply_ffmpeg_opts(ydl_opts)
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(normalize_youtube_channel_url(self.target_url), download=False)
+                    info = self._extract_youtube(
+                        normalize_youtube_channel_url(self.target_url), flat=True
+                    )
                     
                     entries = info.get("entries") or []
                     video_count = len(entries)
@@ -186,19 +246,7 @@ class AnalyzeWorker(QThread):
                     })
                     return
 
-                ydl_opts = {
-                    "logger": self.logger,
-                    "skip_download": True,
-                    "noplaylist": True,
-                    "extract_flat": False,
-                }
-
-                _apply_cookie_opts(ydl_opts, self.cfg)
-                _apply_client_opts(ydl_opts, self.cfg)
-                _apply_ffmpeg_opts(ydl_opts)
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(self.target_url, download=False)
+                info = self._extract_youtube(self.target_url, flat=False)
 
                 if info:
                     if "entries" in info:
@@ -279,6 +327,7 @@ class AnalyzeWorker(QThread):
                             "v_list": v_list,
                             "a_list": a_list,
                             "is_chzzk": False,
+                            "yt_client": getattr(self, "client_used", "auto") or "auto",
                         }
                     )
                 else:
@@ -294,8 +343,12 @@ class AnalyzeWorker(QThread):
                 self.error_occurred.emit(
                     "age/membership restricted"
                 )
+            elif "the page needs to be reloaded" in ex_str or "challenge solving failed" in ex_str:
+                # [봇 체크] EJS 솔버 + ios/tv 회전까지 실패하면 남은 수단은
+                # 브라우저에서 영상 재생(세션 갱신) — 미니멀 영문 매핑.
+                self.error_occurred.emit("bot check — reload browser")
             else:
-                self.error_occurred.emit(f"analysis error: {str(ex)}")
+                self.error_occurred.emit(f"analysis error: {clean_ansi(str(ex))}")
 
 class DownloadWorker(QThread):
     log_concise = pyqtSignal(str, bool, bool)
@@ -312,6 +365,7 @@ class DownloadWorker(QThread):
         is_live_hint=False,
         v_spec=None,
         audio_desc="",
+        yt_client="auto",
     ):
         super().__init__()
         self.targets = targets
@@ -322,6 +376,8 @@ class DownloadWorker(QThread):
         self.audio_desc = str(audio_desc or "")
         self.v_spec = v_spec or {}
         self.is_live_hint = bool(is_live_hint)
+        # [다운로드 일관성] 분석 단계에서 실증·통과한 클라이언트 (auto면 yt-dlp 기본)
+        self.yt_client = str(yt_client or "auto")
         self.current_file = None
         self._meta_logged = False
         self._last_tick_t = 0.0
