@@ -18,6 +18,7 @@ from media import cleanup_temp_files, format_bytes, remux_live_to_container
 from utils import get_filename_template
 from dl_platform import _dl_platform
 from progress_emitter import emit_dl, emit_live_final_stats
+import live_recorder as _lr
 
 def download_youtube_live(worker, url):
     """유튜브 라이브 — yt-dlp로 통합 포맷 URL만 추출 후 ffmpeg로 녹화."""
@@ -49,10 +50,10 @@ def download_youtube_live(worker, url):
         worker.cfg["download_path"],
         get_filename_template(worker.cfg) % info,
     )
-    temp_ts, thumb, _ = worker._prepare_live_paths(out_file, info.get("thumbnail"))
+    temp_ts, thumb, _ = _lr.prepare_live_paths(worker, out_file, info.get("thumbnail"))
 
     cmd = ["ffmpeg", "-y", "-i", stream_url, "-c", "copy", "-f", "mpegts", temp_ts]
-    return worker._record_live_stream(cmd, temp_ts, out_file, thumb)
+    return _lr.record_live_stream(worker, cmd, temp_ts, out_file, thumb)
 
 
 def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
