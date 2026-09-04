@@ -33,4 +33,13 @@ jobs:
 
       - name: Sync Markdown files to Google Drive
         run: |
-          rclone sync . gdrive: --include "*.md" --exclude ".git/**" --progress
+          rclone sync . gdrive: \
+            --include "*.md" \
+            --exclude "node_modules/**" \
+            --exclude ".git/**" \
+            --exclude "build/**" \
+            --exclude "dist/**" \
+            --transfers 8 \
+            --checkers 16 \
+            --fast-list \
+            --progress
