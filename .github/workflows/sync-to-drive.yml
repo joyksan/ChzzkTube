@@ -1,0 +1,38 @@
+name: Sync Markdown Mirrors to Google Drive
+
+on:
+  push:
+    branches:
+      - main  # 또는 사용하는 기본 브랜치명 (master 등)
+    paths:
+      - '**.md'  # 마크다운 파일이 변경될 때만 실행 (필요시 경로 수정 가능)
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup rclone
+        uses: AnimMouse/setup-rclone-action@v1 # rclone 설치 툴
+
+      - name: Create rclone configuration
+        run: |
+          mkdir -p ~/.config/rclone
+          cat << EOL > ~/.config/rclone/rclone.conf
+          [gdrive]
+          type = drive
+          scope = drive
+          service_account_file = ${{ github.workspace }}/sa.json
+          root_folder_id = ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          EOL
+          
+          # GitHub Secret에 저장한 JSON 키를 파일로 복원
+          echo '${{ secrets.GCP_SA_KEY }}' > ${{ github.workspace }}/sa.json
+
+      - name: Sync Markdown files to Google Drive
+        run: |
+          # 미러 파일이 들어있는 로컬 디렉토리 경로로 수정하세요 (예: ./mirrors 또는 . 등)
+          # 아래 명령은 레포지토리 전체의 .md 파일들을 드라이브로 동기화합니다.
+          rclone sync . gdrive: --include "*.md" --exclude ".git/**" --progress
