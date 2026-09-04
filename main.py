@@ -978,11 +978,8 @@ class MainWindow(QMainWindow):
         self.console.add_task_separator()
 
     def on_download_finished(self, success_count, fail_count):
-        self.ctrl.end_download()
-
-        if success_count > 0:
-            self.url_input.clear()
-            self.extracted_data = {"info": None, "v_list": [], "a_list": []}
+        # 상태 초기화와 분석 데이터 클리어는 Controller에 위임
+        self.ctrl.on_download_finished(success_count, fail_count)
 
         self.url_input.setEnabled(True)
         self.update_ui_state()
@@ -990,6 +987,7 @@ class MainWindow(QMainWindow):
         self.add_concise_task_separator()
 
         if success_count > 0:
+            self.url_input.clear()
             if self.cfg.get("play_sound") and winsound:
                 try:
                     winsound.MessageBeep(winsound.MB_ICONASTERISK)

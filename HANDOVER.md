@@ -395,14 +395,13 @@ U+2028 문자로 남는다. 문서 끝 텍스트 비교 시 `\u2028` 정규화 �
 
 ## 9. 남은 과제 (우선순위순)
 
-1. **`.gitattributes` eol 정규화** — diff 노이즈 제거
-2. **AnalyzeWorker의 컨트롤러 이관** — DownloadController와 대칭 완성 (선택)
-3. **MainWindow 잔여 상태 로직**(on_download_finished의 요약/사운드 분기 등) 컨트롤러화 — 회귀 리스크 大, 신중히
-4. `versions/` 정리 및 git 태그화 여부 결정
-5. 유튜브 라이브: 배치(txt) 안의 watch?v= 라이브 URL은 힌트가 없어 VOD
-   경로로 감(다운로드 자체는 되지만 ffmpeg 강제 다운로더 문제가 재발).
-   필요 시 다운로드 전 경량 is_live 프리체크 도입을 검토할 것.
-   (→ 구 PO Token node 번들 과제는 §8 'node.exe 번들까지 완결'로 **완료**)
+1. ~~**`.gitattributes` eol 정규화** — diff 노이즈 제거~~ — **완료 (2026-09-05)**
+2. ~~**AnalyzeWorker의 컨트롤러 이관**~~ — **완료 (§15 MVC 4계층 완성 리팩토링)**
+3. ~~**MainWindow 잔여 상태 로직 컨트롤러화**~~ — **완료 (2026-09-05)**
+   - `on_download_finished()` → `MediaController.on_download_finished()` 이관
+4. ~~**`versions/` 정리 및 git 태그화**~~ — **완료 (폴더 미존재로 정리 불필요)**
+5. ~~**유튜브 라이브: 배치(txt) 안의 watch?v= 라이브 URL 감지**~~ — **완료 (2026-09-05)**
+   - `_is_youtube_live_url()` 경량 프리체크 도입으로 해결
 
 ## 10. 하지 말 것
 

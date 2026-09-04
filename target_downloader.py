@@ -158,6 +158,29 @@ def _emit_error_log(worker, url, reason, failed_targets):
     failed_targets.append((url, reason))
 
 
+def _is_youtube_live_url(worker, url):
+    """유튜브 URL이 라이브인지 경량 프리체크 (yt-dlp extract_info 사용).
+
+    배치(txt) 입력 시 is_live_hint가 없어 VOD 경로로 가는 문제를 해결하기 위해
+    다운로드 전에 스트림 정보만 추출하여 is_live 여부를 확인한다.
+    """
+    try:
+        opts = {
+            "logger": worker.logger,
+            "noplaylist": True,
+            "skip_download": True,
+            "extract_flat": False,
+        }
+        _apply_cookie_opts(opts, worker.cfg)
+        _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+        _apply_ejs_opts(opts)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return bool(info and info.get("is_live"))
+    except Exception:
+        return False
+
+
 def download_target(worker, url, failed_targets):
     """개별 URL 다운로드 — 콘텐츠 타입 분기 및 정밀한 예외 식별."""
     try:
@@ -168,8 +191,8 @@ def download_target(worker, url, failed_targets):
             return _download_youtube_live(worker, url)
         if ct == "stream":
             return _download_streamlink(worker, url)
-        # youtube video — 라이브 힌트가 있으면 라이브 분기로
-        if getattr(worker, "is_live_hint", False):
+        # youtube video — 라이브 힌트가 있거나 경량 프리체크로 라이브 확인 시 라이브 분기로
+        if getattr(worker, "is_live_hint", False) or _is_youtube_live_url(worker, url):
             return _download_youtube_live(worker, url)
         return _download_vod(worker, url)
 
