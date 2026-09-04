@@ -482,6 +482,4 @@ def _verify_ffmpeg(ffmpeg_path):
     except Exception:
         return False
 
-def ensure_ffmpeg(log, force=False):`r`n    """병합/리먹싱용 ffmpeg 자동 수급 — 시스템 설치 우선, 없으면 바이너리 다운로드.`r`n    성공/스킵 시 None, 실패 시 오류 문자열.`r`n    """`r`n    log = _logcb(log)`r`n    log(emit_component("DEPS", "RUN", "ffmpeg", "checking..."))`r`n    try:`r`n        # 1. 시스템 ffmpeg 검색 (OS별 확장자 자동 처리)`r`n        suffix = _exe_suffix()`r`n        which = shutil.which("ffmpeg") or shutil.which(f"ffmpeg{suffix}")`r`n        if which and not force:`r`n            if os.access(which, os.X_OK) and _verify_ffmpeg(which):`r`n                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))`r`n                return None`r`n            else:`r`n                log(emit_component("DEPS", "WARN", "ffmpeg", f"found but not working ({which})"))`r`n`r`n        # 2. 로컬 캐시 확인`r`n        cached = ffmpeg_exe()`r`n        if cached and not force:`r`n            _wire_ffmpeg_path(os.path.dirname(cached))`r`n            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))`r`n            return None`r`n`r`n        # 3. OS별 전략 호출`r`n        return _ensure_ffmpeg_by_platform(log, force)`r`n    except Exception as e:`r`n        return f"{type(e).__name__}: {e}"
-
 
