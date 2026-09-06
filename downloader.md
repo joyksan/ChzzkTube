@@ -12,6 +12,14 @@ import time
 import urllib.request
 import yt_dlp
 
+# [플러그인 기생 차단] 구 getpot bgutil 플러그인(venv pip + %APPDATA% 잔재)이
+# 모든 yt-dlp 추출에 자동 로딩되어 자체 deno PO 생성(generate_once.ts — 첫 실행
+# 시 TS 컴파일+FFI로 수십 초, 15~20초 타임아웃 반복)을 돌려 분석 스톨과
+# "page needs to be reloaded" 실패를 유발했다. 앱의 PO 공급은 자체 Node 서버
+# (pot_provider)로 완전 이전했으므로 외부 플러그인을 전면 차단한다.
+# 반드시 첫 YoutubeDL 생성 전에 설정 (plugins 로딩은 1회성 lazy init).
+yt_dlp.plugins.plugin_dirs.value = []
+
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
@@ -425,7 +433,7 @@ class DownloadWorker(QThread):
                 pass
             else:
                 self.log_concise.emit(
-                    _pe.emit_err(str(ex)), is_status=False, is_error=True
+                    _pe.emit_err(str(ex)), False, True
                 )
 
             _fin.finalize(self, self.total_count, failed_targets, success_count)

@@ -144,7 +144,7 @@ class MainWindow(QMainWindow):
             if getattr(self, "verbose_win", None) is not None:
                 self.verbose_win.close()
             self.ctrl.shutdown(1000)
-            if self.ctrl.worker is not None and self.ctrl.worker.isRunning():
+            if self.ctrl.worker_dl is not None and self.ctrl.worker_dl.isRunning():
                 log_history.log(
                     "shutdown: download worker not stopped (1s) — cancelling then exiting",
                     "WARN",
@@ -940,7 +940,7 @@ class MainWindow(QMainWindow):
         self.ctrl.begin_download()
 
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "-", "analyzing..."),
+            log_console.emit_event("DL", "RUN", "-", "downloading..."),
             is_status=True,
             is_error=False,
         )

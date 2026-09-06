@@ -6,6 +6,7 @@
   chzzk(clip/vod) → 직접 HTTP 스트림, youtube VOD → yt-dlp,
   youtube live → _download_youtube_live(ffmpeg), stream → streamlink
 """
+import functools
 import os
 import re
 
@@ -17,15 +18,17 @@ from utils import get_filename_template
 from dl_platform import detect_content_type
 from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts, _apply_pot_opts
 from progress_emitter import emit_err
+import progress_emitter as _pe
 import live_recorder as _lr
 
 
-def _make_ytdl_opts(worker, fmt):
+def _make_ytdl_opts(worker, fmt, url):
     """yt-dlp 다운로드 옵션 — outtmpl/훅/병합/쿠키/player_client 주입."""
     opts = {
         "logger": worker.logger,
         "noplaylist": True,
-        "progress_hooks": [worker.hook],
+        # [Thin Wrapper 제거 후속] progress hook은 모듈 함수(worker 선결 바인딩)
+        "progress_hooks": [functools.partial(_pe.hook, worker)],
         "outtmpl": os.path.join(
             worker.cfg.get("download_path") or ".",
             get_filename_template(worker.cfg),
@@ -128,7 +131,7 @@ def _download_streamlink(worker, url):
 def _download_vod(worker, url):
     """유튜브 VOD — yt-dlp 다운로드 (progress_hook → hook/틱)."""
     fmt = _format_selector(worker)
-    opts = _make_ytdl_opts(worker, fmt)
+    opts = _make_ytdl_opts(worker, fmt, url)
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     if not info:
@@ -152,8 +155,8 @@ def _emit_error_log(worker, url, reason, failed_targets):
     """에러 로그 출력 및 실패 목록에 추가."""
     worker.log_concise.emit(
         emit_err(f"{format_target_url(url, 40)} — {reason}"),
-        is_status=False,
-        is_error=True,
+        False,
+        True,
     )
     failed_targets.append((url, reason))
 

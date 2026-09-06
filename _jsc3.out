@@ -1,7 +1,0 @@
-﻿1967: for retry in self.RetryManager(fatal=False):
-1974: retry.error = f'{video_id}: Video is no longer live'
-1976: retry.error = f'Cannot find refreshed url for format {itag}{bug_reports_message()}'
-2165: video_id=video_id, retry_fatal=fatal)
-2542: # Attempt to get the replies
-2635: 'Received incomplete data for a comment reply thread and retrying did not help. '
-3356: f'n challenge solving failed: Some formats may be missing. {help_message}',

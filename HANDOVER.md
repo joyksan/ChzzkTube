@@ -132,6 +132,19 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False, v_spe
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
 
+### 2026-09-06 — DEPS/POT/분석 스톨 3연쇄 수리 + 구 getpot 플러그인 퇴출
+
+| 모듈 | 변경 |
+|------|------|
+| `components.py` | 누락된 `_exe_suffix()` 정의 복구 — ffmpeg 검색 NameError 수리 |
+| `pot_provider.py` | tsc 실행 전 산출물(build/main.js) 부재 + `tsconfig.tsbuildinfo` 잔존 시 캐시 삭제 — incremental emit 스킵(exit 0 무산출) 함정 수리 |
+| `downloader.py` | **yt-dlp 외부 플러그인 전면 차단**(`yt_dlp.plugins.plugin_dirs.value = []`) — 구 getpot bgutil 플러그인 기생 제거. DownloadWorker 예외 emit 키워드 인자 TypeError 수리 |
+| `target_downloader.py` | `worker.hook` AttributeError → `functools.partial(_pe.hook, worker)`. 누락 `_pe` import 추가. `_make_ytdl_opts`에 `url` 미전달 NameError 수리. `_emit_error_log` emit 키워드 인자 수리 |
+| `main.py` | closeEvent의 `ctrl.worker` → `ctrl.worker_dl` (매 종료 시 AttributeError). START 버튼의 "analyzing..." 오표기 → "downloading..." |
+| `smoke_test.py` | 리다이렉트 시 cp949 UnicodeEncodeError 방지 — stdout/stderr UTF-8 강제 |
+| `pyproject.toml` / `uv.lock` | `bgutil-ytdlp-pot-provider==1.3.2` 의존성 제거 (`uv remove`) — 자체 Node PO 서버로 완전 이전 완수. %APPDATA% getpot 플러그인 잔재 삭제 |
+| 검증 | 실측: 분석 3.6s (v_list=25, maxh=2160), 서버 스폰 → /ping 200, py_compile 0, smoke PASS |
+
 ### 2026-09-05 — 퍼사드 + 전략 패턴 리팩토링
 
 | 모듈 | 변경 |
