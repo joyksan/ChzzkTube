@@ -1,0 +1,9 @@
+﻿19: from PyQt6.QtCore import Qt, QThread, QTimer, QEvent
+88: self.analyze_timer = QTimer()
+89: self.analyze_timer.setSingleShot(True)
+103: QTimer.singleShot(500, self._start_update_check)
+107: QTimer.singleShot(15000, self._force_unlock_input)
+145: _DEFAULT_AUTHED_CLIENTS = ('web_embedded', 'tv_downgraded', 'web')
+147: _DEFAULT_PREMIUM_CLIENTS = ('web_creator', 'tv_downgraded', 'web')
+1134: # Skip download of additional client configs (remix client config in this case)
+3154: append_client('tv_downgraded')
