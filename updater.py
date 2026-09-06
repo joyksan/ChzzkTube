@@ -39,8 +39,13 @@ def installed_version(pypi_name):
     except Exception:
         return None
 
-def latest_version(pypi_name, timeout=2):
+def latest_version(pypi_name, timeout=1.5):
     """Latest stable version from PyPI, or None on failure.
+
+    [v3.1.0 변경] 타임아웃 2초→1.5초로 단축. DEPS 로그 표시 시간을
+    줄이기 위해. PyPI JSON API는 충분히 빠르므로 1.5초면 충분.
+    ThreadPoolExecutor는 DNS 레벨까지 카운트다운하므로 urlopen timeout
+    보다 0.5초만 버퍼로 부여.
 
     [DNS hang defence] socket.setdefaulttimeout does not cover getaddrinfo;
     ThreadPoolExecutor + future.result cuts at DNS level too.
@@ -51,7 +56,7 @@ def latest_version(pypi_name, timeout=2):
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
             fut = ex.submit(_fetch)
-            data = fut.result(timeout=timeout + 1)
+            data = fut.result(timeout=timeout + 0.5)
             return (data.get("info") or {}).get("version")
     except Exception:
         return None
@@ -81,10 +86,44 @@ def outdated_packages(channel="stable"):
         pkg_to_check = pypi_nightly if (channel == "nightly" and pypi_nightly) else pypi_name
         latest = latest_version(pkg_to_check)
         if not cur:
-            stale.append((label, pypi_name, "not installed", latest or "?"))
+            stale.append((label, pypi_name, "not installed", latest or "unknown"))
         elif latest and is_outdated(cur, latest):
             stale.append((label, pypi_name, cur, latest))
     return stale
+def check_deps():
+    """모든 의존성 체크 결과 리스트 반환.
+    각 요소: (label, status, version_or_path)
+    status: 표준 status (OK / FAIL 등) — `format_log_line`의 표준 사용.
+    """
+    import os
+    import shutil
+    results = []
+
+    # 1. PyPI 패키지 (yt-dlp, streamlink)
+    for label, pypi_name, _ in PACKAGES:
+        ver = installed_version(pypi_name)
+        results.append((label, "OK" if ver else "FAIL", ver or "not installed"))
+
+    # 2. 외부 실행 파일 (ffmpeg, node)
+    for label, cmd in [("ffmpeg", "ffmpeg"), ("node", "node")]:
+        path = shutil.which(cmd)
+        if path:
+            results.append((label, "OK", os.path.basename(path)))
+        else:
+            # [v3.1.0 정책] 표준 status 사용. msg는 명시적 문자열.
+            results.append((label, "FAIL", "not found"))
+
+    # 3. PO token 서버
+    try:
+        from pot_provider import server_ping
+        if server_ping():
+            results.append(("pot", "OK", "running"))
+        else:
+            results.append(("pot", "FAIL", "not running"))
+    except Exception:
+        results.append(("pot", "FAIL", "unknown"))
+
+    return results
 
 def _exe_suffix():
     return ".exe" if sys.platform == "win32" else ""
@@ -188,41 +227,20 @@ def _frozen_upgrade_streamlink():
         return 1, f"streamlink update failed: {e}"
 
 def upgrade_packages(packages, channel="stable"):
-    """Run pip upgrade (dev) or direct download (frozen).
+    """직접 다운로드 방식으로 패키지 업데이트 (Dev/Frozen 통합).
+
+    [v3.1.0 변경] Dev 환경에서도 pip 대신 직접 다운로드 경로 사용.
+    이유: 포터블 빌드와 Dev에서 동일한 코드 경로를 타야 디버깅이 가능.
+    pip install은 빌드 시에만 사용 (PyInstaller 번들 시점).
+
     Returns (returncode, output tail). Worker thread only.
     """
     is_frozen = getattr(sys, "frozen", False)
 
-    # yt-dlp frozen 처리
-    if is_frozen and "yt-dlp" in packages:
+    # yt-dlp: Dev/Frozen 통합 - 직접 다운로드
+    if "yt-dlp" in packages:
         return _frozen_upgrade_ytdlp(channel)
 
-    # streamlink frozen 처리
-    if is_frozen and "streamlink" in packages:
+    # streamlink: Dev/Frozen 통합 - whl 직접 다운로드
+    if "streamlink" in packages:
         return _frozen_upgrade_streamlink()
-
-    # Dev 환경: pip 사용
-    cmd = [
-        sys.executable,
-        "-m",
-        "pip",
-        "install",
-        "--upgrade",
-        "--no-input",
-        "--disable-pip-version-check",
-    ] + list(packages)
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=600,
-        )
-        tail = "\n".join((proc.stdout or "").strip().splitlines()[-8:])
-        if proc.returncode != 0 and (proc.stderr or "").strip():
-            tail += "\n" + "\n".join(proc.stderr.strip().splitlines()[-3:])
-        return proc.returncode, tail
-    except Exception as e:
-        return 1, str(e)

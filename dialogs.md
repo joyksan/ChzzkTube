@@ -281,10 +281,15 @@ class UpdateWorker(QThread):
         self.upgrade = upgrade
 
     def run(self):
-        if self.upgrade:
-            self._do_upgrade()
-        else:
-            self._do_check()
+        try:
+            if self.upgrade:
+                self._do_upgrade()
+            else:
+                self._do_check()
+        except Exception as e:
+            import traceback
+            self.line.emit(emit_component("SYS", "FAIL", "deps", f"worker crash: {e}"))
+            self.check_done.emit([])
 
     def _do_check(self):
         """버전 확인 — 메인 콘솔에는 결론 한 줄, 상세로그에 raw emit.
@@ -295,36 +300,59 @@ class UpdateWorker(QThread):
         상세로그(F12)에만 쌓인다.
         """
         stale = []
-        for label, pypi_name in updater.PACKAGES:
-            # 간결 로그는 TUI 포맷으로, 상세 로그는 raw로
-            self.line.emit(emit_component("DEPS", "RUN", label, "checking..."))
-            cur = updater.installed_version(pypi_name)
-            latest = updater.latest_version(pypi_name)
-            if latest is None:
-                continue  # [silent] 메인에 일시 장애 표시 안 함
-            if not cur:
-                stale.append((label, pypi_name, "not installed", latest))
-            elif updater.is_outdated(cur, latest):
-                stale.append((label, pypi_name, cur, latest))
-            # [간결 로그] 개별 dep 완료 즉시 출력 — 공백 제거
-            self.line.emit(emit_component("DEPS", "OK", label, "ok"))
-        # 수동 체크는 다이얼로그에서 결과를 보여주므로 메인 콘솔 출력 생략
-        # (앱 시작 시 자동 체크에서만 "deps ok" 출력)
+        for label, status, ver in updater.check_deps():
+            self.line.emit(emit_component("DEPS", status, label, ver))
+        # 수동 체크용 stale 생성 (outdated_packages)
+        for label, pypi_name, cur, latest in updater.outdated_packages():
+            stale.append((label, pypi_name, cur, latest))
         self.check_done.emit(stale)
 
     def _do_upgrade(self):
+        from log_console import emit_component
+        import components
+        import pot_provider
+        ok_overall = True
+        summaries = []
+
+        # 1. PyPI packages (yt-dlp, streamlink)
         pypi_names = [p[1] for p in updater.PACKAGES]
         code, tail = updater.upgrade_packages(pypi_names)
         for l in tail.splitlines():
             if l.strip():
                 self.line.emit(l.strip())
-        ok = code == 0
-        summary = (
-            "done — restart to apply"
-            if ok
-            else f"failed (exit code {code})"
-        )
-        self.upgrade_done.emit(ok, summary)
+        if code != 0:
+            ok_overall = False
+            summaries.append("pypi failed")
+
+        # 2. ffmpeg auto-provisioning
+        self.line.emit(emit_component("DEPS", "RUN", "ffmpeg", "ensuring ffmpeg..."))
+        ff_err = components.ensure_ffmpeg()
+        if ff_err:
+            ok_overall = False
+            summaries.append(f"ffmpeg: {ff_err}")
+            self.line.emit(emit_component("DEPS", "FAIL", "ffmpeg", ff_err))
+        else:
+            self.line.emit(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+
+        # 3. node auto-provisioning (POT server runtime)
+        self.line.emit(emit_component("DEPS", "RUN", "node", "ensuring node.js..."))
+        try:
+            node_ok = pot_provider.ensure_node_runtime(
+                lambda msg: self.line.emit(emit_component("DEPS", "RUN", "node", msg))
+            )
+            if node_ok:
+                self.line.emit(emit_component("DEPS", "OK", "node", "ok"))
+            else:
+                ok_overall = False
+                summaries.append("node setup failed")
+                self.line.emit(emit_component("DEPS", "FAIL", "node", "setup failed"))
+        except Exception as e:
+            ok_overall = False
+            summaries.append(f"node: {e}")
+            self.line.emit(emit_component("DEPS", "FAIL", "node", str(e)))
+
+        summary = "; ".join(summaries) if summaries else "done — restart to apply"
+        self.upgrade_done.emit(ok_overall, summary)
 
 
 class SettingsDialog(QDialog):

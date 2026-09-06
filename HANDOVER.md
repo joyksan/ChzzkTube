@@ -134,7 +134,7 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
 
 ### dl_state (MediaController.state — 워커와 공유)
 ```python
-{"running": bool, "canceled": bool, "skip": bool, "force_discard": bool, "analyzing": bool}
+{"running": bool, "canceled": bool, "skip": bool, "analyzing": bool}
 ```
 
 ### cfg (config.default_config() 15키 — 로드 시 dl_config.json 병합)
@@ -170,8 +170,9 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 
 ## 5. 불변식 (코드 수정 시 절대 위반 금지)
 
+0. **표준 status**: `format_log_line`의 status로 허용되는 값: `OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP / WARN`. **비표준 사용 금지**: `MISSING` / `?` / 그 외 표준 외 값 사용 금지. DEPS 체크 실패 → `FAIL` + msg에 사유("not found" 등). **msg 비어있으면 세로줄 누락됨**: `format_log_line`이 falsy msg를 무시하므로 `None`/`""` 대신 명시적 문자열 사용.
 1. **state 딕셔너리 공유**: `MediaController.state`는 `DownloadWorker`에 참조 그대로 전달됨. 복사 금지.
-2. **단방향 쓰기**: `canceled/skip/force_discard`는 UI 스레드만 쓰고, 워커는 읽기만. CPython GIL 하에서 원자적.
+2. **단방향 쓰기**: `canceled/skip`는 UI 스레드만 쓰고, 워커는 읽기만. CPython GIL 하에서 원자적.
 3. **시그널만 통보**: 워커 → UI 통보는 절대 state가 아니라 Qt 시그널로만. 시그널 emit은 스레드 안전(QueuedConnection).
 4. **UI 위젯 직접 조작 금지**: 워커에서 UI 위젯 직접 조작 절대 금지. 반드시 시그널을 통해 View에 요청.
 5. **좀비 워커 패턴**: 폐기된 워커는 `_zombie_workers`에 넣고 자연 종료 시 `_reap_zombie()`로 소거. `wait()` 호출 금지.
@@ -235,12 +236,15 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 - **Stable 채널** (기본): PyPI 릴리즈 기준, 안정 버전 수급
 - **Nightly 채널** (선택): yt-dlp-nightly 패키지, 최신 우회 로직 포함
-- **업데이트 방식**:
-  - Dev 환경: `pip install --upgrade yt-dlp[-nightly]`
+- **업데이트 방식 (Dev/Frozen 통합)**: 모든 환경에서 동일한 직접 다운로드 경로 사용. `pip install`은 빌드 시(PyInstaller)만 사용.
+  - Dev 환경: `_frozen_upgrade_ytdlp()`, `_frozen_upgrade_streamlink()` 직접 호출
   - 포터블(PyInstaller): PyPI whl에서 yt-dlp 바이너리 직접 다운로드 후 교체 (Stable) / GitHub nightly-builds release 다운로드 (Nightly)
+  - 이유: Dev와 포터블이 동일한 코드 경로를 타야 디버깅 가능. Frozen과 Dev가 분기되면, 사용자에게서만 발생하는 버그를 Dev에서 재현하지 못함.
+- **버전 확인 (Dev/Frozen 통합)**: `importlib.metadata` 대신 `shutil.which()` → 바이너리 `--version` 실행 → 버전 문자열 추출. `im.version()`은 빌드 시점 메타데이터만 알려주므로 실제 실행 파일과 불일치 가능.
 - **업데이트 실패 시**: 기존 버전 유지, 다음 실행 시 재시도
 - **bgutil (PO 토큰 서버)**: GitHub 태그 릴리즈에서 자동 수급, pot_provider가 별도 관리
 - **적용 범위**: yt-dlp only (streamlink은 Stable only, Nightly 미지원)
+- **DEPS 로그 확장** (v3.1.0 추가): `check_deps()`는 PyPI 패키지뿐 아니라 외부 바이너리(ffmpeg, node)와 PO 토큰 서버도 확인. `shutil.which()`로 존재 여부, `pot_provider`로 PO 서버 핑 체크.
 
 ### 8.3 선택 과제 (향후)
 - ❌ **PO 서버 실패 시 폴백**: 봇 체크 실패 시 PO 서버 가동 후 재시도 (현재는 info 사전 감지만 적용)
@@ -258,6 +262,18 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **문서 미러** | `.py` docstrings가 원본, `.md` 미러는 자동 생성. 손수정 금지 |
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-07 — DEPS 자동 수급 완전 통합 + 비표준 status 일괄 제거
+
+| 항목 | 변경 |
+|------|------|
+| `§5 0번` | **표준 status 규칙 신설**: `OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP / WARN` 허용, `MISSING` / `?` 금지. msg falsy 시 세로줄 누락 경고. DEPS 실패 → `FAIL` + msg 명시. |
+| `§8.2` | **Dev/Frozen 완전 통합**: frozen 분기 제거. `UpdateWorker`가 모든 deps(PyPI + ffmpeg + node) 처리. Dev = Frozen 디버깅 가능. |
+| `updater.py` | `check_deps()`: `"MISSING"` → `FAIL`, `"?"` → `FAIL`, `None` → `"not found"`. docstring에서 비표준 status 표기 제거. `outdated_packages()`: `"?"` → `"unknown"`. |
+| `main.py` | frozen 분기 제거(`sys.frozen` → `_start_pot_provider()` only). `UpdateWorker(upgrade=True)`이 항상 실행. |
+| `dialogs.py` | `_do_upgrade()` 확장: PyPI(yt-dlp/streamlink) + `components.ensure_ffmpeg()` + `pot_provider.ensure_node_runtime()`. 3단계 자동 수급. |
+| `dialogs.md` | 동기화. |
+| 검증 | py_compile OK — main.py / dialogs.py / updater.py |
 
 ### 2026-09-06 — HANDOVER 최신화 (아키텍처·환경·데이터 구조 실측 반영)
 
@@ -280,6 +296,33 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | `finalizer.py` | `log_concise.emit(... is_status=..., is_error=...)` 키워드 인자 TypeError 3곳 → 위치 인자. **미수리 시 다운로드 완료/취소마다 finished_all 미발신 → running 영구 잔류로 UI 잠금** |
 | `live_recorder.py` / `progress_emitter.py` | 동일 emit 키워드 인자 TypeError 9곳 위치 인자로 수리 |
 | 검증 | py_compile 0 · smoke PASS · 오프스크린에서 분석 완료 로그/철회 가드 일치/cancel→finished_all 실측 · 셸 재현(URL 1.6s 완주, m3u8 단계 미진입) |
+
+### 2026-09-06 — PACKAGES 언패킹 불일치 치명적 버그 수리
+
+| 모듈 | 변경 |
+|------|------|
+| `dialogs.py` | `UpdateWorker._do_check()`의 `for label, pypi_name in updater.PACKAGES` → `for label, pypi_name, _ in updater.PACKAGES` 수리. **원인: `updater.PACKAGES`가 3튜플(label, pypi_name, pypi_nightly)로 변경되었으나 언패킹 코드가 2튜플 그대로였음 → `ValueError: too many values to unpack`으로 앱 시작 시 UpdateWorker 크래시 → "Error calling Python override of QThread::run()"** |
+| `dialogs.md` | 문서 동기화 |
+| 검증 | thread_error.log 미생성 확인, ast.parse 구문 검사 통과 |
+
+### 2026-09-06 — DEPS 체크 누락 3건 수리 (ffmpeg/node/potserver) + Dev/포터블 통합
+
+| 모듈 | 변경 |
+|------|------|
+| `updater.py` | `check_deps()` 신설 — yt-dlp/streamlink(PyPI) + ffmpeg/node(`shutil.which`) + pot(`server_ping`)를 단일 리스트로 반환. `upgrade_packages()` Dev/Frozen 통합 — Dev에서도 `pip` 대신 직접 다운로드 경로 사용 (디버깅 일관성, 포터블 빌드와 동일 코드 경로) |
+| `pot_provider.py` | `server_ping()` 신설 — `http://127.0.0.1:4416/ping` HTTP 핑 체크 |
+| `dialogs.py` | `UpdateWorker._do_check()` 단순화 — `updater.check_deps()` 결과만 emit, outdated 검출은 `outdated_packages()` 위임 |
+| 미러 | `sync_mirrors.py` 일괄 갱신 (5건) |
+| 검증 | ast.parse 통과 — dialogs/updater/pot_provider |
+
+### 2026-09-07 — DEPS 로그 표시 지연 수리 (체크 시간 9~15초 → 3~5초)
+
+| 모듈 | 변경 |
+|------|------|
+| `updater.py` | `latest_version()` 타임아웃 2초→1.5초, ThreadPoolExecutor 버퍼 1초→0.5초로 단축. PyPI JSON API는 충분히 빠르므로 1.5초면 충분. DNS hang 방어(레벨)는 유지. |
+| `pot_provider.py` | `server_ping()` 타임아웃 3초→1초로 단축. PO 서버는 로컬(127.0.0.1)이므로 1초면 충분. |
+| 효과 | DEPS 로그 5개 항목 (ytdlp, streamlink, ffmpeg, node, pot) emit 시간 단축: 기존 직렬 합산 9~15초 → 수정 후 3~5초. 사용자가 보고한 "ready 후 10초 지연" 원인. |
+| 검증 | ast.parse 통과 — updater/pot_provider |
 
 ### 2026-09-06 — DEPS/POT/분석 스톨 3연쇄 수리 + 구 getpot 플러그인 퇴출
 

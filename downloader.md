@@ -433,7 +433,15 @@ class DownloadWorker(QThread):
                 self.current_url = url
                 if self.state["canceled"]:
                     break
-                self.state["skip"] = False
+                if self.state["skip"]:
+                    self.state["skip"] = False
+                    self._reset_loop_state()
+                    self.log_concise.emit(
+                        _pe.emit_dl("SKIP", "-", spec="-", speed="-", pct=None, bar_frac=None,
+                                    msg=f"skipped ({idx}/{self.total_count})"),
+                        False, False,
+                    )
+                    continue
                 self._reset_loop_state()
 
                 if _td.download_target(self, url, failed_targets):

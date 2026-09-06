@@ -305,6 +305,20 @@ def clean_stale_plugin():
     return removed
 
 
+def server_ping(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1):
+    """PO token server alive 확인. HTTP /ping으로 체크. 성공 시 True.
+
+    [v3.1.0 변경] 타임아웃 3초→1초로 단축. DEPS 로그 표시 시간을
+    줄이기 위해. PO 서버는 로컬(127.0.0.1)이므로 1초면 충분.
+    """
+    try:
+        url = f"http://{host}:{port}/ping"
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
     """서버 상태 모니터링 (HTTP /ping 응답 기준)"""
     url = f"http://{host}:{port}/ping"

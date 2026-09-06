@@ -12,7 +12,7 @@ class MediaController(QObject):
 
     계약:
     *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유하며 기존 MainWindow.dl_state와 완전히 동치이다.
-    *  스레드 경계 — state 플래그는 단방향 쓰기: canceled/skip/force_discard 는
+    *  스레드 경계 — state 플래그는 단방향 쓰기: canceled/skip 는
        UI 스레드만 쓰고 워커 스레드는 읽기만 한다. CPython GIL 하에서 dict 단일 키 읽기/쓰기는 원자적이고
        각 키의 쓰기 주체가 하나뿐이므로 lock 없이도 경쟁상태(lost update)가 발생하지 않는다.
     *  워커 → UI 통보는 절대 state가 아니라 Qt 시그널(log_concise/log_full/
@@ -34,7 +34,6 @@ class MediaController(QObject):
             "running": False,
             "canceled": False,
             "skip": False,
-            "force_discard": False,
             "analyzing": False,
             "picking": False,  # 포맷 직접 고르기 대기 (UI pick 입력 수신 중)
         }
@@ -137,12 +136,12 @@ class MediaController(QObject):
     ### ── 세션 상태 머신 ────────────────────────────────────────
     def begin_download(self):
         self.state.update(
-            {"running": True, "canceled": False, "skip": False, "force_discard": False}
+            {"running": True, "canceled": False, "skip": False}
         )
 
     def end_download(self):
         self.state.update(
-            {"running": False, "canceled": False, "skip": False, "force_discard": False}
+            {"running": False, "canceled": False, "skip": False}
         )
 
     def on_download_finished(self, success_count, fail_count):

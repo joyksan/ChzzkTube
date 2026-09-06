@@ -1,4 +1,4 @@
-##### main.py - 메인 윈도우 및 앱 실행 진입점
+﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
 import os
 import platform
 import re
@@ -785,14 +785,9 @@ class MainWindow(QMainWindow):
                 is_status=True,
                 is_error=False,
             )
-            return
-        # [stale case] 포터블이면 업그레이드 skip, 그 외엔 백그라운드 자동 설치
-        if getattr(sys, "frozen", False):
-            self._stale_updates = False
-            self._start_pot_provider()
-            return
+        # [stale case] Dev/Frozen integration — UpdateWorker handles all deps (PyPI + ffmpeg + node)
         self.update_worker = UpdateWorker(self, upgrade=True)
-        self.update_worker.line.connect(self._component_line)  # detail 채널
+        self.update_worker.line.connect(self._component_line)
         self.update_worker.upgrade_done.connect(self._on_auto_upgrade_done)
         self.update_worker.start()
 
