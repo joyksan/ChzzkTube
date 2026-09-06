@@ -98,13 +98,36 @@ def _download_to(url, dest, timeout=120):
     except Exception:
         return False
 
+def _get_pypi_whl_url(pypi_name):
+    """PyPI에서 최신 whl 다운로드 URL을 조회. 실패 시 None."""
+    try:
+        with urllib.request.urlopen(_PYPI_API.format(pkg=pypi_name), timeout=10) as resp:
+            data = json.load(resp)
+        urls = data.get("urls") or []
+        # manylinux/macosx/windows whl 우선순호
+        preferred = [f for f in urls if "whl" in f.get("filename", "")]
+        if preferred:
+            return preferred[0].get("url")
+    except Exception:
+        pass
+    return None
+
+def _extract_from_whl(whl_path, dest_dir):
+    """whl 파일(zip)을 dest_dir에 압축 해제."""
+    import zipfile
+    try:
+        with zipfile.ZipFile(whl_path) as zf:
+            zf.extractall(dest_dir)
+        return True
+    except Exception:
+        return False
+
 def _frozen_upgrade_ytdlp(channel="stable"):
     """PyInstaller frozen build: yt-dlp를 직접 다운로드하여 교체.
     Stable: PyPI release whl에서 yt-dlp.exe 추출.
     Nightly: GitHub nightly-builds release에서 yt-dlp.exe 다운로드.
     """
     suffix = _exe_suffix()
-    # 현재 yt-dlp 위치 파싱
     try:
         import yt_dlp
         ytdlp_dir = os.path.dirname(yt_dlp.__file__)
@@ -115,25 +138,14 @@ def _frozen_upgrade_ytdlp(channel="stable"):
     if channel == "nightly":
         url = _NIGHTLY_API.format(_ext=suffix)
     else:
-        # PyPI에서 최신 릴리즈 whl URL 획득
-        try:
-            with urllib.request.urlopen(_PYPI_API.format(pkg="yt-dlp"), timeout=10) as resp:
-                data = json.load(resp)
-            urls = (data.get("urls") or [])
-            whl_url = None
-            for u in urls:
-                if u.get("filename", "").endswith(".whl"):
-                    whl_url = u.get("url")
-                    break
-            if not whl_url:
-                return 1, "No whl found on PyPI"
-        except Exception as e:
-            return 1, f"PyPI query failed: {e}"
-        # whl 다운로드 후 zip으로 압축해제
+        url = _get_pypi_whl_url("yt-dlp")
+        if not url:
+            return 1, "No whl found on PyPI"
+        # whl에서 yt-dlp.exe 추출
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 whl_path = os.path.join(tmp, "yt-dlp.whl")
-                if not _download_to(whl_url, whl_path):
+                if not _download_to(url, whl_path):
                     return 1, "whl download failed"
                 import zipfile
                 with zipfile.ZipFile(whl_path) as zf:
@@ -150,6 +162,31 @@ def _frozen_upgrade_ytdlp(channel="stable"):
         return 0, f"updated to {channel}"
     return 1, "download failed"
 
+def _frozen_upgrade_streamlink():
+    """PyInstaller frozen build: streamlink를 직접 다운로드하여 교체.
+    PyPI whl에서 패키지 전체를 site-packages에 압축 해제.
+    """
+    try:
+        import streamlink
+        pkg_dir = os.path.dirname(streamlink.__file__)
+    except Exception:
+        return 1, "streamlink not found"
+
+    whl_url = _get_pypi_whl_url("streamlink")
+    if not whl_url:
+        return 1, "No whl found on PyPI"
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            whl_path = os.path.join(tmp, "streamlink.whl")
+            if not _download_to(whl_url, whl_path):
+                return 1, "whl download failed"
+            if _extract_from_whl(whl_path, pkg_dir):
+                return 0, "updated to latest"
+        return 1, "whl extract failed"
+    except Exception as e:
+        return 1, f"streamlink update failed: {e}"
+
 def upgrade_packages(packages, channel="stable"):
     """Run pip upgrade (dev) or direct download (frozen).
     Returns (returncode, output tail). Worker thread only.
@@ -160,9 +197,9 @@ def upgrade_packages(packages, channel="stable"):
     if is_frozen and "yt-dlp" in packages:
         return _frozen_upgrade_ytdlp(channel)
 
-    if is_frozen:
-        # streamlink 등 나머지: pip 없음 → 다운로드 시도
-        return 1, "Portable build: direct download not implemented for this package"
+    # streamlink frozen 처리
+    if is_frozen and "streamlink" in packages:
+        return _frozen_upgrade_streamlink()
 
     # Dev 환경: pip 사용
     cmd = [

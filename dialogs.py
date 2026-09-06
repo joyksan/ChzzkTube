@@ -687,6 +687,30 @@ class SettingsDialog(QDialog):
         self.cb_container.currentIndexChanged.connect(self.update_filename_preview)
         self.update_filename_preview()
 
+        # ── Update Channel 섹션 ──
+        update_row = QHBoxLayout()
+        _sec_update = QGroupBox("Update Channel")
+        _sec_update.setProperty("class", "tui-panel")
+        _sec_update.setLayout(update_row)
+        update_row.addWidget(QLabel("채널"))
+        update_row.addStretch()
+        self.cb_update_channel = make_combo(
+            [
+                ("stable", "Stable (안정)"),
+                ("nightly", "Nightly (최신 우회)"),
+            ],
+            140,
+        )
+        self.cb_update_channel.currentIndexChanged.connect(
+            lambda: self._apply_change("update_channel", self.cb_update_channel.currentData())
+        )
+        update_row.addWidget(self.cb_update_channel)
+        update_row.addSpacing(12)
+        self.chk_auto_update = QCheckBox("시작 시 자동 확인")
+        self.chk_auto_update.toggled.connect(lambda on: self._apply_change("auto_update_check", on))
+        update_row.addWidget(self.chk_auto_update)
+        layout.addWidget(_sec_update)
+
         layout.addStretch()
 
     def update_filename_preview(self):

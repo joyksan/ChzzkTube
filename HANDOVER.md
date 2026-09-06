@@ -26,12 +26,16 @@
 ### 5. 단계적 우회 계층화 (Tiered Bypass Architecture)
 YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.
 
-- **Tier 1 (기본, 항상 가동)**: 자체 PO Token 서버(`pot_provider`) + 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
+- **Tier 1 (기본, 항상 가동)**: 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
+- **PO Token 서버 (선택적 가동)**: `pot_provider`는 **필요 시에만** 가동한다.
+  - 가동 조건: `age_limit > 0` (연령 제한) 또는 `availability` in ('needs_auth', 'premium_only', 'subscriber_only', 'private')
+  - 일반 공개 영상은 PO 서버 없이 다운로드 → 리소스 절약
+  - 분석(`AnalyzeWorker`) 완료 후 판단, 필요 시 `[POT] RUN — starting...` 로그 출력
 - **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`ios` → `tv`), JS 런타임 Solver(`ejs:github` + deno), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
 - **운용 경계**: `cfg["yt_player_client"]`가 `"auto"`일 때만 Tier 2 폴백이 활성화된다. 사용자가 특정 클라이언트를 지정하면 Tier 1 해당 클라이언트 1회 시도 후 즉시 실패 처리(폴백 무한 방지).
 - **측정**: 어떤 Tier로 다운로드가 성공했는지 상세 로그(F12)에 기록(`[client retry] bot check — X → Y`). 이는 "왜 폴백이 발동했는지" 추적하는 유일한 증거이며, 로컬 전용(간결 로그 미노출).
 
-> 원칙: **기본은 Tier 1, Tier 2는 명시적 폴백**. 핵심 코어(`media`/`downloader` 추출 파이프라인)와 우회 로직(`client_opts`)의 결합도를 헬퍼 모듈로 분리해, 우회 로직 변경이 코어에 영향을 주지 않도록 한다.
+> 원칙: **기본은 Tier 1, PO 서버는 필요 시에만, Tier 2는 명시적 폴백**. 핵심 코어(`media`/`downloader` 추출 파이프라인)와 우회 로직(`client_opts`)의 결합도를 헬퍼 모듈로 분리해, 우회 로직 변경이 코어에 영향을 주지 않도록 한다.
 
 ### 2. UI 레이아웃 & 폰트 표준
 - **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인 및 높낮이 튐 현상을 근본적으로 차단.
@@ -225,6 +229,23 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
   - 사용 모듈은 코드 변경 시 `grep -rn 'PySide6.Qt' --include='*.py'`로 확인 후 목록 갱신.
 - **효과**: 전체 포함 시 ~80-100MB → 체리피킹 시 ~50-60MB (30-40% 감소).
 - **원칙**: "안 쓰는 모듈은 빌드에 넣지 않는다" — 구체 목록보다 **원칙을 우선**하며, 새 Qt 모듈 추가 시 이 섹션의 사용 모듈 목록도 함께 갱신할 것.
+
+### 8.2 자동 업데이트 정책 (Nightly Channel)
+포터블 빌드에서도 yt-dlp 자동 업데이트를 지원한다. 네트워크 의존은 이 앱에서 본질적이다 (웹 미디어 추출기).
+
+- **Stable 채널** (기본): PyPI 릴리즈 기준, 안정 버전 수급
+- **Nightly 채널** (선택): yt-dlp-nightly 패키지, 최신 우회 로직 포함
+- **업데이트 방식**:
+  - Dev 환경: `pip install --upgrade yt-dlp[-nightly]`
+  - 포터블(PyInstaller): PyPI whl에서 yt-dlp 바이너리 직접 다운로드 후 교체 (Stable) / GitHub nightly-builds release 다운로드 (Nightly)
+- **업데이트 실패 시**: 기존 버전 유지, 다음 실행 시 재시도
+- **bgutil (PO 토큰 서버)**: GitHub 태그 릴리즈에서 자동 수급, pot_provider가 별도 관리
+- **적용 범위**: yt-dlp only (streamlink은 Stable only, Nightly 미지원)
+
+### 8.3 선택 과제 (향후)
+- ❌ **PO 서버 실패 시 폴백**: 봇 체크 실패 시 PO 서버 가동 후 재시도 (현재는 info 사전 감지만 적용)
+- ✅ **설정 UI**: 업데이트 채널 (Stable/Night) 선택 다이얼로그 — 완료
+- ✅ **streamlink 직접 다운로드**: 포터블 빌드에서 streamlink whl 직접 수급 — 완료
 
 ## 9. 파일 규칙
 
