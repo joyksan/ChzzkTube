@@ -54,6 +54,27 @@ def _apply_ejs_opts(opts):
     return opts
 
 
+def _apply_light_analysis_opts(opts):
+    """[경량 분석] YouTube HLS/DASH 매니페스트 열거 생략 — 분석 스톨 차단.
+
+    yt-dlp youtube 추출기는 web 붕괴 시 tv/visionos 등 HLS 계열 클라이언트로
+    폴백하며, 이때 'Downloading m3u8 information' 단계에서 매니페스트 전체
+    변형을 내려받는다. 이 요청은 googlevideo 셔드 지연/스로틀 환경에서
+    멈춰 분석이 'analyzing...'에 영원히 갇히는 원인이 된다.
+
+    분석은 채널명/제목/포맷 개수 등 기본 정보만 필요하므로 매니페스트를
+    열거하지 않고 플레이어 응답의 직접 URL 포맷만 취한다. 실제 데이터 수급
+    (매니페스트 재열거 + JS 챌린지/PO 토큰 우회)은 DownloadWorker의 무거운
+    경로가 담당한다 — 가벼운 동작(살펴보기)과 무거운 동작(내려받기) 분리.
+    """
+    ea = opts.setdefault("extractor_args", {}).setdefault("youtube", {})
+    skip = ea.setdefault("skip", [])
+    for manifest in ("hls", "dash"):
+        if manifest not in skip:
+            skip.append(manifest)
+    return opts
+
+
 def _apply_pot_opts(opts, video_id, client="web_embedded"):
     """bgutil 독립 서버에서 PO 토큰을 직접 패칭해 extractor_args로 주입.
 

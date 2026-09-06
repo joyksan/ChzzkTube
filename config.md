@@ -42,6 +42,7 @@ def default_config():
         "completion_action": "none",
         "play_sound": True,
         "max_video_res": "none",
+        "pick_format": False,
         "filename_prefix": "none",
         "filename_suffix": "id",
         "browser_cookie": "auto",

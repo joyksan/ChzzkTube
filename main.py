@@ -452,9 +452,11 @@ class MainWindow(QMainWindow):
             )
 
     def _esc_action(self):
-        """ESC 컨텍스트 액션 — 실행 중이면 중단, 아니면 입력 필드 클리어."""
+        """ESC 컨텍스트 액션 — 실행 중이면 중단, pick 대기면 취소, 아니면 입력 클리어."""
         if self.ctrl.running:
             self.abort_download()
+        elif self.ctrl.picking:
+            self._cancel_pick()
         else:
             self.url_input.clear()
 
@@ -550,7 +552,9 @@ class MainWindow(QMainWindow):
         self._last_input_len = len(text)
         is_bulk_input = (len(text) - prev_len) > 1
 
-        if not self.ctrl.running and getattr(self, "_startup_completed", False):
+        if not self.ctrl.running and not self.ctrl.picking and getattr(
+                self, "_startup_completed", False
+            ):
             # [URL 형태 가드] 스킴 또는 '문자.문자' 형태의 도메인이 없으면
             # 분석 후보가 아니다 — 부분 타이핑에서의 불필요한 점화 방지.
             if "://" in text or re.search(r"\S\.\S", text):
@@ -660,17 +664,40 @@ class MainWindow(QMainWindow):
             len(self.extracted_data.get("v_list", [])),
             len(self.extracted_data.get("a_list", [])),
         )
+        msg = log_console.emit_event(
+            "ANAL",
+            "OK",
+            "YT",
+            f"stream analyzed{counts}{self._format_analysis_summary()}",
+        )
         self.append_concise_log(
-            log_console.emit_event(
-                "ANAL", "OK", "YT", f"stream analyzed{counts}"
-            ),
+            msg,
             is_status=False,
             is_error=False,
         )
-        # 마지막 블록 철회 가드
+        # 마지막 블록 철회 가드 — 'stream analyzed' 블록이 실제 마지막 콘텐츠
+        # 블록임을 렌더링 텍스트 그대로 기억한다.
+        # (formatted_url NameError 수리: 미정의 심볼을 제거하고 실측 텍스트로 대체)
         self._analysis_block_active = True
         self._analysis_block_count = self.console.last_status_block_count
-        self._analysis_last_line = formatted_url.split("\n")[-1]
+        self._analysis_last_line = self.console.last_content_block_text()
+
+    def _format_analysis_summary(self):
+        """분석 완료 요약 — 채널명 · 제목 등 기본 정보 (플레이리스트/치지직 공용)."""
+        data = self.extracted_data or {}
+        info = data.get("info") or {}
+        uploader = (
+            info.get("uploader")
+            or info.get("channel")
+            or info.get("uploader_id")
+            or info.get("creator")
+            or ""
+        )
+        title = info.get("title") or data.get("title") or ""
+        meta = " · ".join(x for x in (uploader, title) if x)
+        if not meta:
+            return ""
+        return " — " + meta[:80]
 
     def _discard_analysis_result(self):
         """직전 분석 결과 블록을 철회한다 (마지막 콘텐츠일 때만)."""
@@ -756,15 +783,25 @@ class MainWindow(QMainWindow):
         if self._is_stale_analyze_signal():
             return
         self.extracted_data = data
+        if data.get("is_playlist"):
+            self.stop_analysis_anim()
+            return
+        # [포맷 직접 고르기] 딥 분석 결과 → 메뉴 출력 + 입력 대기
+        if getattr(self, "_pick_pending", False):
+            self._pick_pending = False
+            self._show_pick_menu(data)
+            return
         self.stop_analysis_anim()
         # 콜백은 결과만 보관 — 콤보/버튼이 없으므로 UI 갱신 없음
-        if data.get("is_playlist"):
-            return
         # 좌측 패널이 자동 처리 — 별도 UI 갱신 없음
 
     def on_analyze_error(self, err_msg):
         if self._is_stale_analyze_signal():
             return
+        pick_pending = getattr(self, "_pick_pending", False)
+        self._pick_pending = False
+        if pick_pending:
+            self.ctrl.state["picking"] = False
         self.stop_analysis_anim(ok=False)
         self.append_concise_log(
             log_console.emit_event("ANAL", "FAIL", "-", err_msg),
@@ -777,9 +814,15 @@ class MainWindow(QMainWindow):
         is_running = self.ctrl.running
         startup_completed = getattr(self, "_startup_completed", False)
         self.url_input.setEnabled(not is_running and startup_completed)
-        # ESC 버튼 동적 라벨 — 실행 중 Abort / 대기 중 Clear
+        # ESC 버튼 동적 라벨 — 실행 중 Abort / pick 대기 Cancel / 대기 Clear
         if getattr(self, "btn_esc", None) is not None:
-            self.btn_esc.setText("[ ESC: Abort ]" if is_running else "[ ESC: Clear ]")
+            if is_running:
+                esc_label = "[ ESC: Abort ]"
+            elif self.ctrl.picking:
+                esc_label = "[ ESC: Cancel ]"
+            else:
+                esc_label = "[ ESC: Clear ]"
+            self.btn_esc.setText(esc_label)
         self.console.reset_status_flag()
 
     def showEvent(self, event):
@@ -923,6 +966,9 @@ class MainWindow(QMainWindow):
     def toggle_download(self):
         if self.ctrl.running:
             return
+        if self.ctrl.picking:
+            self._submit_pick()
+            return
         try:
             targets = MediaController.parse_targets(
                 self.url_input.text().strip(),
@@ -937,6 +983,15 @@ class MainWindow(QMainWindow):
         if not targets:
             return
 
+        # [포맷 직접 고르기] 1개 타깃 + pick_format 켜짐 → 딥 분석 후 선택 분기
+        if self.cfg.get("pick_format") and len(targets) == 1:
+            self._start_pick_flow(targets[0])
+            return
+
+        self._start_download(targets, "auto", "auto")
+
+    def _start_download(self, targets, v_id, a_id):
+        """워커 스폰 공통 루틴 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 공용."""
         self.ctrl.begin_download()
 
         self.append_concise_log(
@@ -950,19 +1005,91 @@ class MainWindow(QMainWindow):
         live_hint = len(targets) == 1 and bool(
             (self.extracted_data.get("info") or {}).get("is_live")
         )
-        # 최고 품질 자동 선택 — 콤보 박스 없이 기본값 사용
         # [다운로드 일관성] 분석에서 실증·통과한 클라이언트 그대로 전달 —
         # 시청 기록 다운로드가 봇 게이트/PO 토큰 경로에 재진입해 0%에
         # 머무르는 현상 방지 (auto면 기존 동작 유지).
         self.ctrl.spawn_worker(
             targets,
             self.cfg,
-            "auto",  # video_id — 최고 품질 자동
-            "auto",  # audio_id — 최고 품질 자동
+            v_id,
+            a_id,
             is_live_hint=live_hint,
-            v_spec=None,  # 사양 미지정 — 분석 결과 선두 포맷 기준
+            v_spec=None,
             audio_desc="",
             yt_client=self.extracted_data.get("yt_client", "auto"),
+        )
+
+    # ── 포맷 직접 고르기 흐름 ──────────────────────────────────────────
+    def _start_pick_flow(self, url):
+        """딥 분석 스폰 → on_analyze_success에서 _show_pick_menu로 이어진다."""
+        self._pick_targets = [url]
+        self._pick_pending = True
+        self.append_concise_log(
+            log_console.emit_event("ANAL", "RUN", "-", "format list analyzing..."),
+            is_status=True,
+            is_error=False,
+        )
+        self.ctrl.spawn_analyzer(url, self.cfg, deep=True)
+
+    def _show_pick_menu(self, data):
+        """포맷 목록을 콘솔에 번호 매겨 출력하고 입력 대기 상태로 전환."""
+        v_list = data.get("v_list", [])
+        a_list = data.get("a_list", [])
+        if not v_list and not a_list:
+            self.append_concise_log(
+                log_console.emit_event("ANAL", "FAIL", "YT", "no formats for pick"),
+                False, True,
+            )
+            return
+        lines = log_console.format_pick_menu(v_list, a_list)
+        lines.append("enter: 'N' video  /  'N.M' v+a  /  empty=best")
+        self.append_concise_log("\n".join(lines), False, False)
+        self.ctrl.state["picking"] = True
+        self.url_input.setFocus()
+
+    def _submit_pick(self):
+        """pick 입력 파싱(1-based) 후 다운로드 시작 — v/a 각각 format_id 지정."""
+        targets = getattr(self, "_pick_targets", None)
+        if not targets:
+            self.ctrl.state["picking"] = False
+            return
+        text = self.url_input.text().strip()
+        v_list = self.extracted_data.get("v_list", [])
+        a_list = self.extracted_data.get("a_list", [])
+        v_id, a_id = "auto", "auto"
+        if text:
+            parts = re.split(r"[.,\s]+", text)
+            try:
+                if parts[0]:
+                    idx = int(parts[0])
+                    if not (1 <= idx <= len(v_list)):
+                        raise ValueError
+                    v_id = v_list[idx - 1]["id"]
+                if len(parts) > 1 and parts[1].strip():
+                    idx = int(parts[1])
+                    if not (1 <= idx <= len(a_list)):
+                        raise ValueError
+                    a_id = a_list[idx - 1]["id"]
+            except (ValueError, IndexError):
+                self.append_concise_log(
+                    log_console.emit_event("ANAL", "FAIL", "YT", "pick fail — retry"),
+                    False, True,
+                )
+                return
+        self.ctrl.state["picking"] = False
+        self.append_concise_log(
+            log_console.emit_event("DL", "OK", "YT", f"picked {v_id} · {a_id}"),
+            False, False,
+        )
+        self._start_download(list(targets), v_id, a_id)
+
+    def _cancel_pick(self):
+        self.ctrl.state["picking"] = False
+        self._pick_pending = False
+        self._pick_targets = []
+        self.append_concise_log(
+            log_console.emit_event("DL", "ABORT", "YT", "format pick canceled"),
+            False, True,
         )
 
     def skip_current(self):

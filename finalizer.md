@@ -15,7 +15,7 @@ def finalize(worker, total, failed_targets, success_count):
             worker.log_concise.emit(
                 emit_dl("ABORT", "-", spec="-", speed="-", pct=0, bar_frac=0,
                         msg="download canceled by user"),
-                is_status=False, is_error=False,
+                False, False,
             )
 
     if failed_targets:
@@ -31,7 +31,7 @@ def finalize(worker, total, failed_targets, success_count):
         for u, reason in failed_targets:
             worker.log_concise.emit(
                 emit_err(f"{u} — {reason}"),
-                is_status=False, is_error=True,
+                False, True,
             )
 
     # [결론 라인] — 성공/실패 카운트는 MSG 전용 (SPEC/SPEED 침범 금지)
@@ -45,7 +45,7 @@ def finalize(worker, total, failed_targets, success_count):
             bar_frac=1.0,
             msg=f"batch finished (success: {success_count}, fail: {fail_count})",
         ),
-        is_status=False, is_error=fail_count > 0,
+        False, fail_count > 0,
     )
 
     worker.finished_all.emit(success_count, fail_count)

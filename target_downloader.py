@@ -16,7 +16,14 @@ from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
 from log_console import format_target_url
 from utils import get_filename_template
 from dl_platform import detect_content_type
-from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts, _apply_pot_opts
+from client_opts import (
+    _apply_client_opts,
+    _apply_cookie_opts,
+    _apply_ejs_opts,
+    _apply_ffmpeg_opts,
+    _apply_light_analysis_opts,
+    _apply_pot_opts,
+)
 from progress_emitter import emit_err
 import progress_emitter as _pe
 import live_recorder as _lr
@@ -61,9 +68,22 @@ def _extract_yt_id(url):
 
 
 def _format_selector(worker):
-    """yt-dlp format 선택 문자열 — UI 단순화(auto 등)에 대응."""
+    """yt-dlp format 선택 문자열 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 대응."""
     if worker.cfg.get("audio_only"):
         return "bestaudio/best"
+
+    # [포맷 직접 고르기] 분석 목록에서 사용자가 선택한 format_id 우선
+    v_id = str(worker.v_sel or "").strip()
+    a_id = str(worker.a_sel or "").strip()
+    if v_id and v_id != "auto":
+        if a_id and a_id != "auto":
+            return f"{v_id}+{a_id}"
+        return f"{v_id}+bestaudio"
+
+    # [자동 경로] 해상도 제한 내 최고 품질
+    res = str(worker.cfg.get("max_video_res") or "none").strip()
+    if res.isdigit():
+        return f"bv*[height<={res}]+ba/b"
     return "bv*+ba/b"  # 기본 최고 품질 (명시/통합 동일)
 
 
@@ -176,6 +196,7 @@ def _is_youtube_live_url(worker, url):
         }
         _apply_cookie_opts(opts, worker.cfg)
         _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+        _apply_light_analysis_opts(opts)
         _apply_ejs_opts(opts)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -246,6 +267,7 @@ def _flatten(worker, url):
     }
     _apply_cookie_opts(opts, worker.cfg)
     _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+    _apply_light_analysis_opts(opts)
     _apply_ejs_opts(opts)
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
@@ -278,7 +300,7 @@ def expand_targets(worker):
         except Exception as ex:
             worker.log_concise.emit(
                 emit_err(f"{format_target_url(url, 40)} — {str(ex)}"),
-                is_status=False,
-                is_error=True,
+                False,
+                True,
             )
     return expanded or worker.targets

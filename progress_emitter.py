@@ -98,8 +98,8 @@ def emit_progress_tick(worker, d):
             bar_frac=min(pct / 100.0, 1.0),
             msg=f"{title}" if title else "",
         ),
-        is_status=False,
-        is_error=False,
+        False,
+        False,
     )
 
 
@@ -111,8 +111,8 @@ def log_success_info(worker, file_path):
     worker.log_concise.emit(
         emit_event("DL", "OK", _dl_platform(getattr(worker, "current_url", "") or ""),
                    f"{os.path.basename(file_path)} ({format_bytes(size)})" if file_path else "done"),
-        is_status=False,
-        is_error=False,
+        False,
+        False,
     )
 
 
@@ -133,8 +133,8 @@ def emit_download_header(worker, info):
         msg += f" ({fmt_desc})"
     worker.log_concise.emit(
         emit_event("DL", "RUN", _dl_platform(getattr(worker, "current_url", "") or ""), msg),
-        is_status=False,
-        is_error=False,
+        False,
+        False,
     )
     worker._meta_logged = True
 
@@ -146,13 +146,13 @@ def emit_live_header(worker, info, res_label=""):
         worker.log_concise.emit(
             emit_dl("RUN", _dl_platform(getattr(worker, "current_url", "") or ""),
                     spec=res_label, stage="LIVE", msg=title),
-            is_status=False, is_error=False,
+            False, False,
         )
     else:
         worker.log_concise.emit(
             emit_dl("RUN", _dl_platform(getattr(worker, "current_url", "") or ""),
                     stage="LIVE", msg=title),
-            is_status=False, is_error=False,
+            False, False,
         )
     worker._meta_logged = True
 
@@ -166,8 +166,8 @@ def emit_chzzk_header(worker, ch_info, fmt):
         msg += f" ({fmt_desc})"
     worker.log_concise.emit(
         emit_event("DL", "RUN", "chzzk", msg),
-        is_status=False,
-        is_error=False,
+        False,
+        False,
     )
     worker._meta_logged = True
 
@@ -187,7 +187,7 @@ def emit_live_final_stats(worker, total_bytes, start_time):
             stage="LIVE",
             msg=f"live done ({format_bytes(total_bytes)})",
         ),
-        is_status=False,
-        is_error=False,
+        False,
+        False,
     )
     worker.live_partially_saved = False

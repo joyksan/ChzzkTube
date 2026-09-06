@@ -73,8 +73,8 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
                     stage="LIVE",
                     msg="exit code error",
                 ),
-                is_status=False,
-                is_error=True,
+                False,
+                True,
             )
         cleanup_temp_files(temp_file)
         return False
@@ -93,8 +93,8 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
                 stage="LIVE",
                 msg=f"saved — {os.path.basename(out_path)} ({format_bytes(size)})",
             ),
-            is_status=False,
-            is_error=False,
+            False,
+            False,
         )
         worker.log_success_info(out_path)
     cleanup_temp_files(temp_file)
@@ -165,8 +165,8 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                             stage="LIVE",
                             msg=f"recording — {fname}",
                         ),
-                        is_status=False,
-                        is_error=False,
+                        False,
+                        False,
                     )
 
                 # 취소 요청 — 자식 죽이고 stdout queue drain ('truncated' 오탐 방지)
@@ -204,8 +204,8 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                 stage="LIVE",
                 msg=f"{log_tag} fail",
             ),
-            is_status=False,
-            is_error=True,
+            False,
+            True,
         )
     finally:
         stderr_t.join(timeout=1.0)

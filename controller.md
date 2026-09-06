@@ -36,6 +36,7 @@ class MediaController(QObject):
             "skip": False,
             "force_discard": False,
             "analyzing": False,
+            "picking": False,  # 포맷 직접 고르기 대기 (UI pick 입력 수신 중)
         }
         self.worker_dl = None
         self.worker_analyze = None
@@ -49,13 +50,20 @@ class MediaController(QObject):
     def analyzing(self):
         return self.state["analyzing"]
 
+    @property
+    def picking(self):
+        return self.state["picking"]
+
     # ── 분석 워커 생명주기 (main.py에서 구출 완료) ──
-    def spawn_analyzer(self, url, cfg):
-        """URL 분석 워커 생성 및 관리 (기존 분석 강제 유기 포함)"""
+    def spawn_analyzer(self, url, cfg, deep=False):
+        """URL 분석 워커 생성 및 관리 (기존 분석 강제 유기 포함)
+
+        deep=True: 매니페스트(스클) 포함 포맷 목록 확보 — 포맷 직접 고르기 전용.
+        """
         self._abandon_analyzer()
 
         self.state["analyzing"] = True
-        self.worker_analyze = AnalyzeWorker(url, cfg)
+        self.worker_analyze = AnalyzeWorker(url, cfg, deep=deep)
         # View 시그널로 포워딩 (Controller가 중개)
         self.worker_analyze.result_ready.connect(self.analyze_result_ready)
         self.worker_analyze.error_occurred.connect(self.analyze_error_occurred)

@@ -601,6 +601,34 @@ class SettingsDialog(QDialog):
         row2.addWidget(self.cb_completion)
         layout.addWidget(_sec2)
 
+        row3 = QHBoxLayout()
+        _sec3 = QGroupBox("Format Picker")
+        _sec3.setProperty("class", "tui-panel")
+        _sec3.setLayout(row3)
+        row3.addWidget(QLabel("해상도 제한"))
+        row3.addStretch()
+        self.cb_max_res = make_combo(
+            [
+                ("none", "(무제한)"),
+                ("2160", "4K (2160p)"),
+                ("1440", "2K (1440p)"),
+                ("1080", "1080p"),
+                ("720", "720p"),
+                ("480", "480p"),
+                ("360", "360p"),
+            ],
+            140,
+        )
+        self.cb_max_res.currentIndexChanged.connect(
+            lambda: self._apply_change("max_video_res", self.cb_max_res.currentData())
+        )
+        row3.addWidget(self.cb_max_res)
+        row3.addSpacing(12)
+        self.chk_pick = QCheckBox("포맷 직접 고르기 (최고 품질 off)")
+        self.chk_pick.toggled.connect(lambda on: self._apply_change("pick_format", on))
+        row3.addWidget(self.chk_pick)
+        layout.addWidget(_sec3)
+
         format_layout = QHBoxLayout()
         _sec_filename = QGroupBox("Filename")
         _sec_filename.setProperty("class", "tui-panel")
@@ -697,6 +725,8 @@ class SettingsDialog(QDialog):
         set_combo(self.cb_prefix, self.cfg.get("filename_prefix", "none"))
         set_combo(self.cb_suffix, self.cfg.get("filename_suffix", "id"))
         set_combo(self.cb_yt_client, self.cfg.get("yt_player_client", "auto"))
+        set_combo(self.cb_max_res, self.cfg.get("max_video_res", "none"))
+        self.chk_pick.setChecked(self.cfg.get("pick_format", False))
 
         self.chk_sub.setChecked(self.cfg.get("embed_subtitles", False))
         self.chk_audio.setChecked(self.cfg.get("audio_only", False))

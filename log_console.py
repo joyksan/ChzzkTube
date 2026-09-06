@@ -561,6 +561,31 @@ def format_analysis_counts(v_count, a_count):
         return f" (a:{a_count})"
     return ""
 
+
+def format_pick_menu(v_list, a_list, max_rows=40):
+    """[포맷 직접 고르기] 비디오/오디오 목록을 번호 매긴 선택 메뉴로 변환.
+
+    각 항목 라벨은 media.format_dropdown_label(py)이 이미 파이프 컬럼 식이므로
+    앞에 1-based 인덱스만 붙여 출력한다. UX 규칙 — 빈 입력 = 최고 품질,
+    'N' = 비디오 N, 'N.M' = 비디오 N + 오디오 M.
+    """
+    lines = []
+    if v_list:
+        lines.append("video formats")
+        for idx, f in enumerate(v_list[:max_rows], 1):
+            label = f.get("label") or f.get("id") or "?"
+            lines.append(f"  {idx:>2}  {label}")
+        if len(v_list) > max_rows:
+            lines.append(f"  ... {len(v_list) - max_rows} more")
+    if a_list:
+        lines.append("audio formats")
+        for idx, f in enumerate(a_list[:max_rows], 1):
+            label = f.get("label") or f.get("id") or "?"
+            lines.append(f"  {idx:>2}  {label}")
+        if len(a_list) > max_rows:
+            lines.append(f"  ... {len(a_list) - max_rows} more")
+    return lines
+
 ### ──────────────────────────────────────────────────────────────
 ### 컬럼 로그 라인 — TUI 스타일 고정 칼럼 포맷
 ### ──────────────────────────────────────────────────────────────

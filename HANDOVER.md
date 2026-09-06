@@ -1,49 +1,104 @@
 # HANDOVER.md — ChzzkTube 인수인계서
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
-> 코드 수정 전 반드시 **§5 불변식**과 **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 전체 구조 재구성 (수정 이력 요약 압축 + 중복 제거)
+> 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
+> 마지막 갱신: v3.1.0 — 아키텍처/실행환경/데이터 구조 실측 최신화 + emit 위험 규약 반영
 
 ---
 
 ## 1. 프로젝트 개요
 
-- **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 GUI 앱 (Windows 우선)
-- **버전**: `v3.0.2 (PyQt6안정화버전)` — 정의 위치 `config._APP_VERSION`
-- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PyQt6 + yt-dlp + streamlink + FFmpeg(리먹싱)
+- **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
+- **버전**: `v3.1.0` — 정의 위치 `config._APP_VERSION`
+- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PyQt6 + yt-dlp + streamlink + FFmpeg(리먹싱) + Node.js 22+(PO Token 서버)
 - **진입점**: `main.py` (`python main.py`)
-- **빌드**: PyInstaller — `ChzzkTube.spec` (entry: `main.py` ✓ 수정됨)
+- **빌드**: PyInstaller — `ChzzkTube.spec`
 - **설정 파일**: `dl_config.json` (CONFIG_DIR에 생성, UTF-8 / indent=4)
+
+---
+
+## 1.1 개발 방향성 및 TUI 표준 (v3.1.0+)
+
+### 1. 핵심 철학 (Core Philosophy)
+- **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 위젯을 완전히 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃으로 전면 전환.
+- **도구의 순수성**: 개인용·비상업적 듀얼유즈 툴로서 미디어 추출 본연의 안정성과 속도에 집중. 외부 우회 로직은 아래 "단계적 우회 계층화" 원칙에 따라 기본을 안전 경로로 고정하고, 차단 시에만 점진적 폴백.
+
+### 5. 단계적 우회 계층화 (Tiered Bypass Architecture)
+YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.
+
+- **Tier 1 (기본, 항상 가동)**: 자체 PO Token 서버(`pot_provider`) + 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
+- **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`ios` → `tv`), JS 런타임 Solver(`ejs:github` + deno), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
+- **운용 경계**: `cfg["yt_player_client"]`가 `"auto"`일 때만 Tier 2 폴백이 활성화된다. 사용자가 특정 클라이언트를 지정하면 Tier 1 해당 클라이언트 1회 시도 후 즉시 실패 처리(폴백 무한 방지).
+- **측정**: 어떤 Tier로 다운로드가 성공했는지 상세 로그(F12)에 기록(`[client retry] bot check — X → Y`). 이는 "왜 폴백이 발동했는지" 추적하는 유일한 증거이며, 로컬 전용(간결 로그 미노출).
+
+> 원칙: **기본은 Tier 1, Tier 2는 명시적 폴백**. 핵심 코어(`media`/`downloader` 추출 파이프라인)와 우회 로직(`client_opts`)의 결합도를 헬퍼 모듈로 분리해, 우회 로직 변경이 코어에 영향을 주지 않도록 한다.
+
+### 2. UI 레이아웃 & 폰트 표준
+- **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인 및 높낮이 튐 현상을 근본적으로 차단.
+- **Flat TUI 3-Layer 구조**:
+  - **Configuration Bar (상단)**: 저장 경로 및 클릭 가능한 ASCII 버튼 태그 (`[ F1: Change ]`, `[ F2: Open ]`, `[ F12: Full Log ]`, `[ F3: Settings ]`).
+  - **Input & Action Bar (중간)**: 프롬프트(`>`) 기반 URL 입력창. 레거시 `(x)` GUI 버튼을 제거하고 `[ ESC: Clear │ ENTER: Start ]` 단축키 중심 연동.
+  - **Live Console Monitor (하단, `stretch=1`)**: 메인 윈도우 면적을 100% 모니터링 로그에 할당. Raw 디버그 로그는 `F12` 독립 서브 윈도우(`QDialog`)로 완전 격리.
+
+### 3. 고정 칼럼 로그 규격 (Column-Aligned Monitor Standard)
+- **표준 출력 포맷**:
+  `[HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ SPEED │ PCT │ BAR │ MSG`
+- **컬럼 역할 분리**:
+  - `SPEC`: 순수 미디어 스펙만 출력 (`1080p30` 등).
+  - `SPEED`: 실시간 다운로드 속도 전용 칼럼 (`12.4M/s` 등).
+  - `MSG`: 타이틀·상태 메시지 전용. 길이 초과 시 `log_console._render_clamp` 픽셀 단위 절단 적용.
+
+### 6. 터미널 네이티브 포팅 방향 (TTY Porting Direction)
+현재 UI는 PyQt6 위젯을 QSS로 평탄화한 "TUI-스타일"이지만, 궁극적으로는 **curses 단독 포팅**을 지향한다. 포팅 시 원칙:
+
+- **핵심 로직 재사용 의무**: `media`(포맷/코덱/비트레이트), `log_console`(컬럼 포맷·트리 조판), `downloader`/`target_downloader`(추출 파이프라인), `client_opts`(옵션 빌드)는 **프레임워크 비의존**이므로 그대로 재사용. 이 모듈들은 curses 전환 시 수정 불포함.
+- **교체 대상**: `main`(QMainWindow), `dialogs`(QDialog 6종), `log_console.ConciseLogConsole`(QTextEdit 렌더) — 이 3개 모듈만 curses 위젯으로 재작성.
+- **점진적 전환 + 보험**: 전면 재작성 리스크를 줄이기 위해 (1) 포맷/포맷 선택 로직을 먼저 curses 없이 검증(Q1 완료), (2) curses 전환 시 기존 포맷 함수(`format_dropdown_label`, `cli_format_desc`, `format_tree_item`)를 문자열 생성기로 재사용해 렌더 레이어만 교체, (3) 스모크 테스트로 회귀 감지.
+- **의존성**: curses는 표준 라이브러리(유닉스). Windows는 `windows-curses` pip 패키지 필요 — 이 의존성은 `pyproject.toml`에만 추가하고 코드는 `try/except import`로 가드.
+- **In-Place Overwrite (제자리 갱신)**: `DL │ RUN` 및 `LIVE │ RUN` 틱 로그는 매 틱마다 새 줄을 만들지 않고 커서 조작을 통해 마지막 줄을 제자리 갱신.
+- **상태 및 스테이지 코드**:
+  - `LIVE` 스테이지 코드 신설 (VOD 다운로드 `DL`과 라이브 녹화 구분).
+  - 사용자 취소는 `DL │ ABORT`로 독립 표기 (`FAIL` 오류와 명확히 분리).
+
+### 4. 시각적 디테일 및 영문 미니멀화
+- **파스텔 톤 에러 컬러**: 눈 피로도를 높이는 원색 Red(`#FF0000`)를 Soft Pastel Red(`#E06C75` / `#F87171`)로 교체.
+- **MSG 영문 미니멀화**: 서술형 한글 문장을 배제하고 1~3단어 수준의 소문자 영문 CLI 태그로 축소 (`deps ok`, `pot server bound`, `stream analyzed`, `download canceled by user`).
 
 ## 2. 실행 환경
 
 | 항목 | 상태 |
 |------|------|
-| PyQt6, yt-dlp, streamlink | `uv sync`로 설치 완료 (uv.lock 잠금) |
-| pyproject.toml / uv.lock | **의존성 단일 출처** — PyQt6 6.11.0 / yt-dlp 2026.8.19 / streamlink 8.5.0 / bgutil-ytdlp-pot-provider 1.3.2 고정 |
-| FFmpeg | 런타임 필요 (media.py 리먹싱) |
-| Node.js 22+ | PO Token 서버용 (시스템 우선, 없으면 포터블 다운로드) |
-| D2Coding-Regular.ttf | BASE_DIR에 있으면 로드 (콘솔 폰트) |
+| Python | 3.12.14 (pyenv, `.python-version` 고정) |
+| 의존성 단일 출처 | `pyproject.toml` / `uv.lock` — PyQt6 6.11.0 · yt-dlp 2026.8.19 · streamlink 8.5.0 고정. build 그룹엔 pyinstaller (Windows 빌드용) |
+| FFmpeg | 런타임 수급 — `components.ensure_ffmpeg()` 퍼사드 (시스템 PATH 우선 → GitHub 릴리스 → macOS Homebrew 전략) |
+| Node.js 22+ | PO Token 서버용 (`pot_provider`) — 시스템 우선, 없으면 포터블 다운로드 |
+| 콘솔 폰트 | `CascadiaMono-VariableFont_wght.ttf` (BASE_DIR, 11px — theme.py 단일 출처). `D2Coding-Regular.ttf`는 레거시 잔재(미로드) |
+| 히스토리 로그 | `logs/chzzktube_YYYY-MM-DD.log` (`log_history`, 날짜별 append, 30일 보존, thread-safe) |
+| 스모크 | `smoke_test.py` — `QT_QPA_PLATFORM=offscreen` 강제로 CI 가능 |
 
-## 3. 아키텍처 (4계층 · 역방향 참조 0 · 순환 import 0)
+## 3. 아키텍처 (역방향 참조 0 · 순환 import 0 — 실측 검증됨)
 
 ```
-[View]      main(825) ─ dialogs(799) · theme(283) · log_console(327)
-[Control]   controller(117)
-[Worker]    downloader(1159)
-[Domain]    media(196) · chzzk_api(94) · cookies(76) · config(71) · utils(65) · updater(102)
+[View]      main(1042) · dialogs(834) · theme(306) · log_console(734)*
+[Control]   controller(210)
+[Worker]    downloader(451) ─ target_downloader(292) · live_recorder(211)
+                              progress_emitter(193) · finalizer(52) · speed_window(47)
+                              client_opts(107) · dl_platform(100) · playlist(37)
+[Domain]    media(334) · chzzk_api(207) · cookies(80) · config(70) · utils(68) · updater(105)
+[Infra]     pot_provider(935) · components(522) · log_history(95)
 ```
+※ `log_console`은 View 렌더와 Worker 포맷 양쪽에서 호출되는 공용 로그 파이프라인(테마/이벤트 포맷 참조). 아래부터는 시그널 emit **위치 인자 계약**(§5-8) 준수 필수.
 
 | 모듈 | 책임 |
 |------|------|
-| `main` | 진입점 + MainWindow(UI 조립·로그 출력·종료 처리). UI 전환만 담당 |
-| `controller` | MediaController — 다운로드/분석 세션 state 머신, 타겟 파싱, 워커 생명주기 |
-| `downloader` | AnalyzeWorker / DownloadWorker(QThread) + YtLoggerBridge |
-| `dialogs` | ExitConfirm·Settings·CookieSelect·CookieViewer·ActionCountdown 5종 |
+| `main` | 진입점 + MainWindow(UI 조립·로그 출력·종료 처리). 분석 완료 요약(`_format_analysis_summary`) 포함 |
+| `controller` | MediaController — 다운로드/분석 세션 state 머신, 타겟 파싱, 워커 생명주기(좀비 유기) |
+| `downloader` | AnalyzeWorker / DownloadWorker(QThread) + YtLoggerBridge. **경량 분석**(youtube:skip) 분기 |
+| `dialogs` | ExitConfirm·Settings·CookieSelect·CookieViewer·ActionCountdown·VerboseLogWindow 6종 + CustomComboBox + UpdateWorker |
 | `theme` | 색상 토큰 + QSS 상수 20종 (**QSS 단일 출처**) |
-| `log_console` | ConciseLogConsole — 간결 로그 덮어쓰기 파이프라인 |
-| `media` | map_res, format_bytes, codec rank, cleanup_temp_files, remux_live_to_container |
-| `chzzk_api` | 치지직 클립 공개 API 분석 (yt-dlp 우회 경로) |
+| `log_console` | ConciseLogConsole — 간결 로그 덮어쓰기 파이프라인 + 컬럼 포맷 규격(`format_log_line`/`emit_event`) |
+| `media` | map_res, format_bytes, codec rank, format_title, cleanup_temp_files, remux_live_to_container |
+| `chzzk_api` | 치지직 클립/VOD 공개 API 분석 (yt-dlp 우회 경로) |
 | `cookies` | Firefox/Chromium 쿠키 DB 추출 |
 | `config` | 경로(frozen/dev), 기본값, 로드/저장 — 제로 의존 leaf |
 | `utils` | clean_ansi, get_filename_template, _open_windows_explorer, parse_sec |
@@ -53,14 +108,24 @@
 
 | 모듈 | 책임 |
 |------|------|
-| `progress_emitter` | 로그 이벤트 포맷팅 |
-| `live_recorder` | 라이브 녹화 파이프라인 (ffmpeg/streamlink) |
-| `target_downloader` | 개별 URL 다운로드 분기 (VOD/라이브/치지직/Streamlink) |
-| `finalizer` | 다운로드 완료 요약 로그 |
-| `client_opts` | yt-dlp 옵션 주입 (쿠키, 클라이언트, PO Token, FFmpeg) |
+| `progress_emitter` | 로그 이벤트 포맷팅 (DL/LIVE 헤더·틱·완료) |
+| `live_recorder` | 라이브 녹화 파이프라인 (ffmpeg/streamlink, 취소·릴레이 계측) |
+| `target_downloader` | 개별 URL 다운로드 분기 (VOD/라이브/치지직/Streamlink) + 대상 평탄화 |
+| `finalizer` | 다운로드 완료 요약 로그 (ABORT/개별 실패/배치 결론) |
+| `client_opts` | yt-dlp 옵션 주입 (쿠키·클라이언트·PO Token·FFmpeg·경량 분석 `skip`) |
 | `speed_window` | 속도 측정 슬라이딩 윈도우 |
 | `dl_platform` | URL → 플랫폼/콘텐츠 타입 감별 |
 | `playlist` | YouTube 채널 URL 정규화 |
+
+### 인프라 모듈 (부트/유지보수)
+
+| 모듈 | 책임 |
+|------|------|
+| `pot_provider` | PO Token bgutil Node 서버 기동/감시 + `fetch_po_token`(직접 HTTP POST `/get_pot`) |
+| `components` | ffmpeg 런타임 수급 퍼사드 (Windows/macOS/Linux 전략) |
+| `log_history` | 날짜별 원본 로그 히스토리 (thread-safe, 30일 보존, session_begin/end) |
+| `smoke_test` | offscreen 기동 검증 하네스 (리다이렉트 인코딩 강제) |
+| `sync_mirrors` | `.py` docstring → 동일 이름 `.md` 미러 자동 동기화 도구 |
 
 ## 4. 핵심 데이터 구조
 
@@ -69,37 +134,54 @@
 {"running": bool, "canceled": bool, "skip": bool, "force_discard": bool, "analyzing": bool}
 ```
 
-### cfg 14키 (config.default_config())
-```
+### cfg (config.default_config() 15키 — 로드 시 dl_config.json 병합)
+```python
 download_path, container("mp4"), embed_subtitles, audio_only,
 fast_download(True), remove_duplicates(True), auto_open_folder(True),
 completion_action("none"), play_sound(True), max_video_res("none"),
 filename_prefix("none"), filename_suffix("id"),
-browser_cookie("auto"), cookie_file_path("")
+browser_cookie("auto"), cookie_file_path(""), yt_player_client("auto")
 ```
+> 런타임 cfg = `default_config()` + `dl_config.json` 통째 병합(`load_config`의 `cfg.update`).
+> 기존 설정 파일에 남은 레거시 키(`use_cut`/`cut_start`/`cut_end`/`max_res`/`use_date`/
+> `use_uploader`/`use_title`/`use_id`/`filename_format`/`auto_shutdown`)는 보존되지만
+> **현재 어떤 모듈도 읽지 않는다(데드 키)** — 제거 시 깔끔해진다.
 
 ### Worker ↔ UI 시그널 계약
 ```
-AnalyzeWorker:
-    result_ready(dict)           : 분석 성공 — 스트림/포맷 정보 딕셔너리
-    error_occurred(str)          : 분석 실패 — 오류 메시지
-    log_full(str)                : yt-dlp 원본 로그 라인
+AnalyzeWorker(target_url, cfg):
+    result_ready(dict) : 성공 — {info, v_list, a_list, is_chzzk:False, yt_client}
+                         또는 {info, v_list, a_list, is_chzzk:True}
+                         또는 {is_playlist:True, title, count, v_list:[], a_list:[]}
+    error_occurred(str): 실패 — 미니멀 영문 오류 코드
+    log_full(str)      : yt-dlp 원본 로그 라인
 
-DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False, v_spec=None):
-    log_concise(str, bool, bool) : (텍스트, is_status, is_error) 간결 로그
+DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
+               v_spec=None, audio_desc="", yt_client="auto"):
+    log_concise(str, bool, bool) : (텍스트, is_status, is_error) — 위치 인자 3개
     log_full(str)                : yt-dlp 원본 로그 라인
     finished_all(int, int)       : (성공 수, 실패 수)
 ```
+> `yt_client`(분석에서 실증·통과한 player_client)는 다운로드가 분석과 같은
+> 클라이언트로 0% 스톨 경로를 재진입하지 않도록 강제하는 핵심 값.
 
 ## 5. 불변식 (코드 수정 시 절대 위반 금지)
 
 1. **state 딕셔너리 공유**: `MediaController.state`는 `DownloadWorker`에 참조 그대로 전달됨. 복사 금지.
 2. **단방향 쓰기**: `canceled/skip/force_discard`는 UI 스레드만 쓰고, 워커는 읽기만. CPython GIL 하에서 원자적.
 3. **시그널만 통보**: 워커 → UI 통보는 절대 state가 아니라 Qt 시그널로만. 시그널 emit은 스레드 안전(QueuedConnection).
-4. **UI 위직 직접 조작 금지**: 워커에서 UI 위젯 직접 조작 절대 금지. 반드시 시그널을 통해 View에 요청.
+4. **UI 위젯 직접 조작 금지**: 워커에서 UI 위젯 직접 조작 절대 금지. 반드시 시그널을 통해 View에 요청.
 5. **좀비 워커 패턴**: 폐기된 워커는 `_zombie_workers`에 넣고 자연 종료 시 `_reap_zombie()`로 소거. `wait()` 호출 금지.
 6. **QSS 단일 출처**: 모든 스타일은 `theme.py`에서만 정의. 인라인 스타일 금지.
 7. **의존성 단일 출처**: `pyproject.toml`이 유일한 의존성 정의 파일. 수동 설치 금지.
+8. **emit 위치 인자 계약**: PyQt 시그널 emit은 **키워드 인자 절대 금지** (`log_concise.emit(msg, False, True)`). 키워드 인자는 런타임
+   `TypeError: pyqtBoundSignal.emit() takes no keyword arguments` → 시그널 미도착 → `running` 잔류로 이어지는 실사고 이력 있음
+   (2026-09-06 finalizer/progress_emitter/live_recorder 광역 수리).
+9. **extractor_args 병합 규칙**: youtube 추출 옵션 주입은 반드시 `setdefault` 기반 병합(`client_opts` 계열 헬퍼 경유).
+   player_client/skip/po_token을 통째로 덮어쓰면 다운로드 일관성(0% 스톨)이 깨진다.
+10. **경량 분석/무거운 다운로드 분리**: `AnalyzeWorker`는 항상 `youtube:skip=[hls,dash]`(매니페스트 미열거), `DownloadWorker`는 항상
+    매니페스트 재열거. 분석 옵션을 다운로드에 재사용 금지. **포맷 선택 UI 도입 시에도 분석 결과의 v_list/a_list를 다운로드
+    포맷으로 직접 신뢰 금지** — 다운로드 경로에서 재열거된 `info` 기준으로 다시 매칭해야 한다.
 
 ## 6. 하지 말 것 (회귀 방지)
 
@@ -113,12 +195,26 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False, v_spe
 - ❌ `except Exception`으로 모든 예외 뭉뚱그리기 (세분화된 예외 처리 적용)
 - ❌ 상태 변수 개별 초기화 (초기화 메서드로 통합)
 - ❌ View에서 비즈니스 로직 수행 (Controller로 이관)
+- ❌ `log_console.emit_event/format_log_line`을 거치지 않고 컬럼 로그 문자열(`[HH:MM:SS] STAGE │ ...`)을 직접 조립하는 것 — TUI 규격 단일 출처 위반
+- ❌ `.emit(..., is_status=..., is_error=...)` 키워드 인자 시그니처로 되돌리는 것 (커밋 전 `grep -n 'is_status=' '*.py'` 스팟체크)
+- ❌ 분석(경량) 결과의 v_list/a_list를 '실제 다운로드 가능 포맷'으로 간주해 다운로드 포맷 선택에 그대로 쓰는 것
 
-## 7. 검증 워크플로우 (수정 후 필수 3단계)
+## 7. 검증 워크플로우 (수정 후 필수 3단계 + 플랫폼 후속)
 
 1. **py_compile**: 변경된 모듈 전부 `python -m py_compile` 통과
 2. **smoke_test**: `python smoke_test.py` 통과 (offscreen 플래그로 CI 가능)
 3. **기능 확인**: 실제 다운로드/분석/라이브 녹화 1회씩 정상 동작
+4. **플랫폼 교차 검증 (후속 과제)**: 이 앱은 macOS/Windows에서 동작하지만, 개발 머신에서는 **타깃 플랫폼 전용 분기를 직접 실행할 수 없다**.
+   - macOS 개발 시 Windows 전용 분기(`winsound`, `CREATE_NO_WINDOW`, `JobObject`, `AppUserModelID`, Windows 브라우저 쿠키 경로, Gyan ffmpeg 수급)는 **import 가드(`try/except`, `platform.system()`) 검증만 가능**하고 실제 동작 검증 불가.
+   - Windows 개발 시 macOS 전용 분기(Homebrew ffmpeg, POSIX 신호) 역시 검증 불가.
+   - **원칙**: 플랫폼 비의존 코드(분석/다운로드/포맷 로직)는 현재 머신에서 전부 검증. 플랫폼 의존 코드는 반드시 **해당 플랡폼에서 수동 확인** 필요.
+   - **수동 테스트 체크리스트 (배포 전)**:
+     - [ ] Windows: 종료 확인 다이얼로그 알림음 + 작업표시줄 반짝임, 완료 비프, AppUserModelID 아이콘 그룹핑
+     - [ ] Windows: `CREATE_NO_WINDOW` 자식 창 억제, JobObject 프로세스 트리 정리
+     - [ ] macOS: Homebrew ffmpeg 수급 경로
+     - [ ] 양쪽: `python -c "import main, downloader, live_recorder, pot_provider, dialogs, cookies"` 임포트 성공
+
+> 핵심: **"돌아간다" ≠ "양쪽 다 돌아간다"**. CI는 offscreen(macOS) 기준이며, Windows 전용 동작은 릴라이즈 전 반드시 Windows 머신에서 직접 확인할 것.
 
 ## 8. 파일 규칙
 
@@ -131,6 +227,28 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False, v_spe
 | **문서 미러** | `.py` docstrings가 원본, `.md` 미러는 자동 생성. 손수정 금지 |
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-06 — HANDOVER 최신화 (아키텍처·환경·데이터 구조 실측 반영)
+
+| 항목 | 변경 |
+|------|------|
+| §1 개요 | macOS/Windows/Linux 정정, 스택에 Node.js(PO Token) 추가 |
+| §2 실행환경 | bgutil-ytdlp-pot-provider 행 제거(의존성 퇴출 반영), 콘솔 폰트 D2Coding→CascadiaMono 정정(레거시 잔재 명기), pyinstaller build 그룹·log_history·smoke_test 행 추가 |
+| §3 아키텍처 | 모듈 라인 수 실측 갱신(main 1042 · downloader 451 등), 인프라 모듈 표 추가(pot_provider/components/log_history/smoke_test/sync_mirrors) |
+| §4 데이터 | default_config 15키(+yt_player_client), 데드 키 10종 명기, 시그널 계약 실제 서명·result_ready 형상 반영 |
+| §5·§6 | **emit 위치 인자 계약**·**extractor_args setdefault 병합**·**경량/무거운 경로 분리** 불변식 8~10 추가 + TUI 규격 우회·분석 결과 direct 신뢰 금지 항목 추가 |
+
+### 2026-09-06 — URL 분석 스톨 해소(경량 분석) + emit 키워드 TypeError 광역 수리 + 분석 요약 표시
+
+| 모듈 | 변경 |
+|------|------|
+| `client_opts.py` | `_apply_light_analysis_opts()` 신설 — `youtube:skip=[hls,dash]`로 매니페스트 열거 생략. "Downloading m3u8 information" 단계(googlevideo 셔드 스로틀에서 영구 멈춤)를 원천 차단 |
+| `downloader.py` | `AnalyzeWorker._extract_youtube`에 경량 분석 적용 — 분석은 플레이어 응답의 직접 URL 포맷(v/a 개수·메타)만 취하고 무거운 우회(클라이언트 폴백·PO 토큰·매니페스트 재열거)는 다운로드 전용으로 분리 |
+| `target_downloader.py` | `_flatten`/`_is_youtube_live_url`에도 경량 분석 적용 (라이브 감지는 `is_live` 플래그 기반이라 영향 없음). `expand_targets` emit 키워드 인자 TypeError 수리 |
+| `main.py` | `stop_analysis_anim`의 미정의 `formatted_url` **NameError 수리** (치명: 분석 성공 시마다 크래시) → `last_content_block_text()` 실측 텍스트로 대체. 분석 완료 로그에 채널명·제목 요약(`_format_analysis_summary`) 추가 |
+| `finalizer.py` | `log_concise.emit(... is_status=..., is_error=...)` 키워드 인자 TypeError 3곳 → 위치 인자. **미수리 시 다운로드 완료/취소마다 finished_all 미발신 → running 영구 잔류로 UI 잠금** |
+| `live_recorder.py` / `progress_emitter.py` | 동일 emit 키워드 인자 TypeError 9곳 위치 인자로 수리 |
+| 검증 | py_compile 0 · smoke PASS · 오프스크린에서 분석 완료 로그/철회 가드 일치/cancel→finished_all 실측 · 셸 재현(URL 1.6s 완주, m3u8 단계 미진입) |
 
 ### 2026-09-06 — DEPS/POT/분석 스톨 3연쇄 수리 + 구 getpot 플러그인 퇴출
 

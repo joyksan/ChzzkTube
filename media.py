@@ -3,7 +3,6 @@ import glob
 import os
 import re
 import subprocess
-import unicodedata
 
 # 침묵 실패(리먹싱 등)의 증거 기록용 — log_history는 config leaf만 의존(비Qt·스레드 안전)
 import log_history
@@ -200,56 +199,6 @@ def format_dropdown_label(f, content_type=""):
     if col4:
         label += f"  │  {col4}"
     return label
-
-### 해상도 매핑 테이블 (height → 라벨)
-_RESOLUTION_MAP = {
-    2160: "4K",
-    1440: "2K",
-    1080: "1080p",
-    720: "720p",
-    480: "480p",
-    360: "360p",
-}
-
-def map_res(res, height):
-    h = int(height or 0)
-    res_str = str(res)
-    return next(
-        (
-            label
-            for height_val, label in _RESOLUTION_MAP.items()
-            if h == height_val or str(height_val) in res_str
-        ),
-        res_str,
-    )
-
-def display_width(text):
-    """터미널/고정폭 폰트 기준 렌더링 폭 — CJK(전각)는 2칸, 나머지는 1칸.
-    컬럼 정렬 로그(TUI 스타일)의 정렬 기준이 되는 단일 출처."""
-    return sum(
-        2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        for ch in str(text)
-    )
-
-
-def format_title(title, max_len=25):
-    """제목을 고정 폭으로 절단 — CJK 전각 문자 폭을 반영해 '…'로 끝내며
-    전체 렌더링 폭이 max_len(표시 셀)을 넘지 않게 한다. 컬럼 어긋남 방지용."""
-    title = str(title or "").strip()
-    max_len = max(4, int(max_len))
-    width = display_width(title)
-    if width <= max_len:
-        return title
-
-    out, used = [], 0
-    for ch in title:
-        w = 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
-        if used + w + 1 > max_len:  # 1칸은 '…' 예약
-            break
-        out.append(ch)
-        used += w
-    return "".join(out).rstrip() + "…"
-
 
 def format_bytes(size):
     """바이트(Bytes) 수치를 KB, MB, GB 단위로 자동 환산"""

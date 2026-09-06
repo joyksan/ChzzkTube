@@ -39,7 +39,14 @@ import log_console
 from dl_platform import detect_content_type
 from playlist import normalize_youtube_channel_url
 from speed_window import SpeedWindow
-from client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts, _dedupe_by_label
+from client_opts import (
+    _apply_client_opts,
+    _apply_cookie_opts,
+    _apply_ejs_opts,
+    _apply_ffmpeg_opts,
+    _apply_light_analysis_opts,
+    _dedupe_by_label,
+)
 import progress_emitter as _pe
 import live_recorder as _lr
 import target_downloader as _td
@@ -89,10 +96,11 @@ class AnalyzeWorker(QThread):
     error_occurred = pyqtSignal(str)
     log_full = pyqtSignal(str)
 
-    def __init__(self, target_url, cfg):
+    def __init__(self, target_url, cfg, deep=False):
         super().__init__()
         self.target_url = target_url
         self.cfg = cfg
+        self.deep = bool(deep)  # True → 매니페스트 열거 포함(포맷 직접 고르기). False → 경량(기본)
         self.logger = YtLoggerBridge(self.log_full)
         # [다운로드 일관성] 분석에서 통과한 클라이언트 기록 — 다운로드가
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
@@ -145,6 +153,11 @@ class AnalyzeWorker(QThread):
                 ydl_opts["extractor_args"] = {
                     "youtube": {"player_client": [client]}
                 }
+            # [경량 분석] 매니페스트(hls/dash) 열거 생략 — m3u8 다운로드 스톨
+            # 원천 차단. 포맷 직접 고르기(deep=True)일 때만 매니페스트를
+            # 열거해 최대 해상도/코덱/비트레이트 정보를 확보한다.
+            if not self.deep:
+                _apply_light_analysis_opts(ydl_opts)
             _apply_ffmpeg_opts(ydl_opts)
             _apply_ejs_opts(ydl_opts)
             try:
