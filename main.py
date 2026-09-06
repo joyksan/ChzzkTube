@@ -562,7 +562,7 @@ class MainWindow(QMainWindow):
                 self.analyze_timer.start(delay)
 
     def _start_pot_provider(self):
-        """앱 시작 시 bgutil PO Token 서버가 있도록 준비 (유튜브 성인제한/봇 확인 대응)."""
+        """PO Token 서버 가동 (필요 시에만)."""
         if hasattr(self, "_pot_worker") and self._pot_worker.isRunning():
             return  # 중복 기동 방지
         try:
@@ -571,8 +571,41 @@ class MainWindow(QMainWindow):
             self._pot_worker.log_full.connect(self.append_full_log)
             self._pot_worker.finished.connect(self._on_pot_provider_finished)
             self._pot_worker.start()
+            self._pot_provider_started = True
         except Exception:
             pass
+
+    def _ensure_pot_for_info(self, info):
+        """PO 필요 여부 판단 후 필요 시에만 서버 가동.
+
+        PO가 필요한 경우:
+        - age_limit > 0 (연령 제한)
+        - availability가 'needs_auth', 'premium_only', 'subscriber_only' 등
+        """
+        if getattr(self, "_pot_provider_started", False):
+            return  # 이미 가동 중이거나 시도함
+
+        needs_pot = False
+        if info:
+            age_limit = info.get("age_limit") or 0
+            if age_limit > 0:
+                needs_pot = True
+            availability = info.get("availability") or ""
+            if isinstance(availability, str) and availability.lower() in (
+                "needs_auth",
+                "premium_only",
+                "subscriber_only",
+                "private",
+            ):
+                needs_pot = True
+
+        if needs_pot:
+            self.append_concise_log(
+                log_console.emit_event("POT", "RUN", "pot", "starting..."),
+                is_status=True,
+                is_error=False,
+            )
+            self._start_pot_provider()
 
     def _force_unlock_input(self):
         """[폴백] 구성요소 체인이 15초 내 완료되지 않으면 입력 강제 개방.
@@ -741,7 +774,17 @@ class MainWindow(QMainWindow):
         else:
             # "deps ok"는 모든 deps(ffmpeg 포함) 체크 완료 후 _on_pot_provider_finished에서 출력
             self._stale_updates = False
-            self._start_pot_provider()
+            self._pot_provider_started = False  # PO 서버는 필요 시에만 가동
+            self.append_concise_log(
+                log_console.emit_event("SYS", "OK", "deps", "deps ok"),
+                is_status=True,
+                is_error=False,
+            )
+            self.append_concise_log(
+                log_console.emit_event("SYS", "READY", "eng", "ready"),
+                is_status=True,
+                is_error=False,
+            )
             return
         # [stale case] 포터블이면 업그레이드 skip, 그 외엔 백그라운드 자동 설치
         if getattr(sys, "frozen", False):
@@ -761,7 +804,13 @@ class MainWindow(QMainWindow):
             is_status=False,
             is_error=not ok,
         )
-        self._start_pot_provider()
+        # PO 서버는 필요 시에만 가동 (선택적 가동)
+        self._pot_provider_started = False
+        self.append_concise_log(
+            log_console.emit_event("SYS", "READY", "eng", "ready"),
+            is_status=True,
+            is_error=False,
+        )
 
     def _is_stale_analyze_signal(self):
         """유령 분석 결과 판별 — 지운 뒤 'stream analyzed'가 한 번 더 뜨는 버그 차단.
@@ -783,6 +832,8 @@ class MainWindow(QMainWindow):
         if self._is_stale_analyze_signal():
             return
         self.extracted_data = data
+        # PO 필요 여부 판단 후 필요 시에만 서버 가동
+        self._ensure_pot_for_info(data.get("info"))
         if data.get("is_playlist"):
             self.stop_analysis_anim()
             return

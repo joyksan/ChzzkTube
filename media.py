@@ -7,6 +7,66 @@ import subprocess
 # 침묵 실패(리먹싱 등)의 증거 기록용 — log_history는 config leaf만 의존(비Qt·스레드 안전)
 import log_history
 
+### 사이트 축약기호 매핑 (extractor → 3~4글자 약자)
+# 공식 브랜드 축약 우선, 없으면 도메인 앞글자 추출
+# 로그 PLATFORM 컬럼에 표시됨 (예: [DEPS] YT, [DL] CHZ)
+_EXTRACTOR_SHORT_STATIC = {
+    # 영상 플랫폼 (공식/통용 축약)
+    "youtube": "YT",
+    "twitch": "TW",
+    "instagram": "IG",
+    "tiktok": "TIKT",
+    "facebook": "FB",
+    "twitter": "X",
+    "x": "X",
+    "naver": "NAV",
+    "afreecaTV": "AFTV",
+    "chzzk": "CHZ",
+    "bilibili": "BILI",
+    "dailymotion": "DM",
+    "vimeo": "VM",
+    "rumble": "RM",
+    "odysee": "ODY",
+    "peertube": "PT",
+    # 음악/오디오
+    "soundcloud": "SC",
+    "spotify": "SP",
+    "bandcamp": "BC",
+    "mixcloud": "MC",
+    # 커뮤니티/포럼 (한국)
+    "fmkorea": "FM",
+    "theqoo": "TQ",
+    "clien": "CL",
+    "dcinside": "DC",
+    "mlbpark": "MP",
+    # 기타
+    "reddit": "RD",
+    "tumblr": "TB",
+    "pornhub": "PH",
+    "xvideos": "XV",
+    "youku": "YK",
+    "iqiyi": "IQ",
+}
+
+def platform_short(extractor):
+    """yt-dlp extractor 이름 → 3~4글자 축약기호.
+
+    규칙:
+    1. 정적 매핑 테이블 우선 (공식 브랜드 축약)
+    2. 없으면 추출기명에서 특수문자 제거 후 앞 3~4글자 대문자
+    3. 2글자 이하면 그대로 대문자
+    """
+    if not extractor:
+        return "???"
+    ext = extractor.strip().lower()
+    if ext in _EXTRACTOR_SHORT_STATIC:
+        return _EXTRACTOR_SHORT_STATIC[ext]
+    # 동적 생성: 언더스코어/하이픈 제거 후 앞 4글자
+    clean = re.sub(r"[_\-\s]+", "", ext)
+    if len(clean) <= 4:
+        return clean.upper()
+    return clean[:4].upper()
+
 ### 코덱 품질 랭킹 데이터 테이블 (높을수록 우선순위 높음)
 _VIDEO_CODEC_RANKS = [
     (("av01", "av1"), 3),
