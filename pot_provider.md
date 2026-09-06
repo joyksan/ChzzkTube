@@ -15,7 +15,7 @@ import tarfile
 import config
 import log_console
 from log_console import emit_component
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 _GLOBAL_JOB_HANDLE = None
 
@@ -768,8 +768,8 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
 
 class POTProviderWorker(QThread):
     """앱 시작 시 PO Token 서버 및 플러그인을 무중단으로 준비하고 로드하는 스레드."""
-    line = pyqtSignal(str, bool, bool)
-    log_full = pyqtSignal(str)
+    line = Signal(str, bool, bool)
+    log_full = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)

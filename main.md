@@ -5,7 +5,7 @@ import re
 import sys
 import time
 
-from PyQt6.QtCore import qInstallMessageHandler
+from PySide6.QtCore import qInstallMessageHandler
 
 
 def qt_message_handler(mode, context, message):
@@ -16,9 +16,9 @@ def qt_message_handler(mode, context, message):
 
 qInstallMessageHandler(qt_message_handler)
 
-from PyQt6.QtCore import Qt, QThread, QTimer, QEvent
-from PyQt6.QtGui import QFont, QFontDatabase, QIcon
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QThread, QTimer, QEvent
+from PySide6.QtGui import QFont, QFontDatabase, QIcon
+from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QGroupBox,
@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
         ├── ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
         └── [10:54:14] DEPS  │ OK  │ ...        ← console (stretch=1)
         """
-        from PyQt6.QtWidgets import QFrame
+        from PySide6.QtWidgets import QFrame
 
         # ── 중앙 위젯 / 메인 레이아웃 (flat, no master wrapper) ──
         main_widget = QWidget()

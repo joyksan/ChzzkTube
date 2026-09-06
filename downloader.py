@@ -20,7 +20,7 @@ import yt_dlp
 # 반드시 첫 YoutubeDL 생성 전에 설정 (plugins 로딩은 1회성 lazy init).
 yt_dlp.plugins.plugin_dirs.value = []
 
-from PyQt6.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
 from log_console import format_kv_line, format_tree_item
@@ -92,9 +92,9 @@ class YtLoggerBridge:
             self.log_full_signal.emit(clean_ansi(msg))
 
 class AnalyzeWorker(QThread):
-    result_ready = pyqtSignal(dict)
-    error_occurred = pyqtSignal(str)
-    log_full = pyqtSignal(str)
+    result_ready = Signal(dict)
+    error_occurred = Signal(str)
+    log_full = Signal(str)
 
     def __init__(self, target_url, cfg, deep=False):
         super().__init__()
@@ -372,9 +372,9 @@ class AnalyzeWorker(QThread):
                 self.error_occurred.emit(f"analysis error: {clean_ansi(str(ex))}")
 
 class DownloadWorker(QThread):
-    log_concise = pyqtSignal(str, bool, bool)
-    log_full = pyqtSignal(str)
-    finished_all = pyqtSignal(int, int)
+    log_concise = Signal(str, bool, bool)
+    log_full = Signal(str)
+    finished_all = Signal(int, int)
 
     def __init__(
         self,

@@ -6,9 +6,9 @@ import time
 import unicodedata
 import theme
 from dl_platform import _short_platform
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QTextEdit
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
+from PySide6.QtWidgets import QTextEdit
 
 class ConciseLogConsole:
     """간결 로그 패널 전용 렌더러."""

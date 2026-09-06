@@ -2,7 +2,7 @@
 import os
 import re
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 from downloader import DownloadWorker, AnalyzeWorker
 
@@ -23,9 +23,9 @@ class MediaController(QObject):
        자연 종료 시 _reap_zombie()로 메모리에서 소거한다. """
 
     # ── 분석 워커 시그널 포워딩 (View 바인딩용) ──
-    analyze_result_ready = pyqtSignal(dict)
-    analyze_error_occurred = pyqtSignal(str)
-    analyze_log_full = pyqtSignal(str)
+    analyze_result_ready = Signal(dict)
+    analyze_error_occurred = Signal(str)
+    analyze_log_full = Signal(str)
 
     def __init__(self, view):
         super().__init__()

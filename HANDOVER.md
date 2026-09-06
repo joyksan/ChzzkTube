@@ -48,13 +48,12 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
   - `SPEED`: 실시간 다운로드 속도 전용 칼럼 (`12.4M/s` 등).
   - `MSG`: 타이틀·상태 메시지 전용. 길이 초과 시 `log_console._render_clamp` 픽셀 단위 절단 적용.
 
-### 6. 터미널 네이티브 포팅 방향 (TTY Porting Direction)
-현재 UI는 PyQt6 위젯을 QSS로 평탄화한 "TUI-스타일"이지만, 궁극적으로는 **curses 단독 포팅**을 지향한다. 포팅 시 원칙:
+### 6. 렌더링 엔진 정책 (Rendering Engine Policy)
+**PySide6 (Qt 엔진) 유지.** 렌더링 주권(폰트 강제, 픽셀 단위 정렬)과 크로스플랫폼 마우스/클립보드를 동시에 확보하기 위해 TTY 계열(curses/Textual)은 배제한다.
 
-- **핵심 로직 재사용 의무**: `media`(포맷/코덱/비트레이트), `log_console`(컬럼 포맷·트리 조판), `downloader`/`target_downloader`(추출 파이프라인), `client_opts`(옵션 빌드)는 **프레임워크 비의존**이므로 그대로 재사용. 이 모듈들은 curses 전환 시 수정 불포함.
-- **교체 대상**: `main`(QMainWindow), `dialogs`(QDialog 6종), `log_console.ConciseLogConsole`(QTextEdit 렌더) — 이 3개 모듈만 curses 위젯으로 재작성.
-- **점진적 전환 + 보험**: 전면 재작성 리스크를 줄이기 위해 (1) 포맷/포맷 선택 로직을 먼저 curses 없이 검증(Q1 완료), (2) curses 전환 시 기존 포맷 함수(`format_dropdown_label`, `cli_format_desc`, `format_tree_item`)를 문자열 생성기로 재사용해 렌더 레이어만 교체, (3) 스모크 테스트로 회귀 감지.
-- **의존성**: curses는 표준 라이브러리(유닉스). Windows는 `windows-curses` pip 패키지 필요 — 이 의존성은 `pyproject.toml`에만 추가하고 코드는 `try/except import`로 가드.
+- **Qt 엔진 유지 이유**: 폰트 종류/크기/행간 강제 제어, 박스 드로잉 픽셀 정렬, OS 레벨 마우스/클립보드/포커스 지원을 모두 충족하는 유일한 선택.
+- **라이선스**: PySide6 (LGPL) — 상용/비상업 가리지 않고 자유롭게 사용 가능. PyQt6 대비 법적 리스크 없음.
+- **핵심 로직 분리**: `media`(포맷/코덱/비트레이트), `log_console`(컬럼 포맷·트리 조판), `downloader`/`target_downloader`(추출 파이프라인), `client_opts`(옵션 빌드)는 **프레임워크 비의존**으로 분리. 향후 렌더러 교체 시 이 모듈들은 수정 불포함.
 - **In-Place Overwrite (제자리 갱신)**: `DL │ RUN` 및 `LIVE │ RUN` 틱 로그는 매 틱마다 새 줄을 만들지 않고 커서 조작을 통해 마지막 줄을 제자리 갱신.
 - **상태 및 스테이지 코드**:
   - `LIVE` 스테이지 코드 신설 (VOD 다운로드 `DL`과 라이브 녹화 구분).
@@ -216,7 +215,18 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 
 > 핵심: **"돌아간다" ≠ "양쪽 다 돌아간다"**. CI는 offscreen(macOS) 기준이며, Windows 전용 동작은 릴라이즈 전 반드시 Windows 머신에서 직접 확인할 것.
 
-## 8. 파일 규칙
+## 8. 빌드 및 배포 (PyInstaller)
+
+### 8.1 체리피킹 원칙
+PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는 Qt 모듈만 포함하고 나머지는 반드시 제거**한다. 개발 중 전체 설치는 어쩔 수 없으나, 배포 바이너리는 `--exclude-module`로 최소화한다.
+
+- **제거 대상 모듈** (런타임 사용 0, PyInstaller 빌드 시 `--exclude-module` 적용):
+  - `PySide6.QtWebEngine`, `PySide6.QtMultimedia`, `PySide6.Qt3D*`, `PySide6.QtCharts`, `PySide6.QtDataVisualization`, `PySide6.QtNetworkAuth`, `PySide6.QtBluetooth`, `PySide6.QtNfc`, `PySide6.QtRemoteObjects`
+  - 사용 모듈은 코드 변경 시 `grep -rn 'PySide6.Qt' --include='*.py'`로 확인 후 목록 갱신.
+- **효과**: 전체 포함 시 ~80-100MB → 체리피킹 시 ~50-60MB (30-40% 감소).
+- **원칙**: "안 쓰는 모듈은 빌드에 넣지 않는다" — 구체 목록보다 **원칙을 우선**하며, 새 Qt 모듈 추가 시 이 섹션의 사용 모듈 목록도 함께 갱신할 것.
+
+## 9. 파일 규칙
 
 | 카테고리 | 규칙 |
 |----------|------|

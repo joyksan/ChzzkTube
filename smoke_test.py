@@ -16,8 +16,8 @@ for _stream in (sys.stdout, sys.stderr):
 
 
 def test_main():
-    print("[Smoke Test] PyQt6 App 및 MainWindow 초기화 테스트 시작")
-    from PyQt6.QtWidgets import QApplication
+    print("[Smoke Test] PySide6 App 및 MainWindow 초기화 테스트 시작")
+    from PySide6.QtWidgets import QApplication
     from dialogs import SettingsDialog
     from main import MainWindow
 

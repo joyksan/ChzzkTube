@@ -1,8 +1,8 @@
 ##### 팝업 다이얼로그 모음
 import os
 import updater
-from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
@@ -57,7 +57,7 @@ class CustomComboBox(QComboBox):
     """표준 QComboBox 기반 콤보 — addItem(text, userData, icon) 계약 유지.
 
     [qfluentwidgets 의존 제거] 실제로 쓰던 기능은 시그니처 정규화뿐이었고,
-    표준 위젯 + 다이얼로그 QSS로 통일해 PyQt6-Fluent-Widgets 의존을 뗀다.
+    표준 위젯 + 다이얼로그 QSS로 통일해 PyQt-Fluent-Widgets 의존을 뗀다.
     """
 
     def __init__(self, parent=None):
@@ -272,9 +272,9 @@ class CookieViewerDialog(QDialog):
 
 
 class UpdateWorker(QThread):
-    line = pyqtSignal(str)
-    check_done = pyqtSignal(list)
-    upgrade_done = pyqtSignal(bool, str)
+    line = Signal(str)
+    check_done = Signal(list)
+    upgrade_done = Signal(bool, str)
 
     def __init__(self, parent=None, upgrade=False):
         super().__init__(parent)
