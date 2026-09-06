@@ -735,6 +735,19 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
             return None, f"npm install failed (exit code {ret})"
 
         log(emit_component("pot", "RUN", "pot", "tsc compiling..."))
+        # [tsc incremental 함정 수리] tsbuildinfo는 콘텐츠 해시로만 최신성을
+        # 판정하고 산출물(build/·dist/)의 존재 유무는 검증하지 않는다.
+        # 산출물이 삭제된 상태에서 캐시가 남아 있으면 tsc가 emit을 스킵한 채
+        # exit 0로 끝나 "missing after compile"로 귀결된다. 산출물 부재 시엔
+        # 캐시가 거짓말이므로 삭제해 완전 재컴파일을 강제한다.
+        if built_server_js() is None:
+            tsbi = os.path.join(server_dir, "tsconfig.tsbuildinfo")
+            if os.path.isfile(tsbi):
+                try:
+                    os.remove(tsbi)
+                    log_full("[pot] stale tsbuildinfo purged — forcing full tsc compile")
+                except OSError as tsbi_ex:
+                    log_full(f"[pot] tsbuildinfo purge failed: {tsbi_ex}")
         local_tsc = os.path.join(server_dir, "node_modules", "typescript", "bin", "tsc")
         if os.path.isfile(local_tsc):
             cmd_build = [curr_node, local_tsc]

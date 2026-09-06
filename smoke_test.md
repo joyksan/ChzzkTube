@@ -4,6 +4,17 @@ import sys
 # Offscreen QPA 플랫폼 활성화 (headless 환경에서 GUI 실행 가능하게 함)
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
+# [Windows 리다이렉트 대비] stdout/stderr가 파이프·파일로 리다이렉트되면
+# 로케일 인코딩(cp949)으로 떨어져 em-dash(\u2014) 등에서 UnicodeEncodeError가
+# 발생한다 — 테스트 자체 결함이 아니라 하네스 결함이므로 UTF-8을 강제한다.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def test_main():
     print("[Smoke Test] PyQt6 App 및 MainWindow 초기화 테스트 시작")
     from PyQt6.QtWidgets import QApplication

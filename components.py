@@ -102,6 +102,11 @@ def _rmtree(p):
     shutil.rmtree(p, ignore_errors=True)
 
 
+def _exe_suffix():
+    """현재 OS의 실행 파일 확장자를 반환한다."""
+    return ".exe" if os.name == "nt" else ""
+
+
 def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
     """zip 을 임시 폴더에 풀고 완성 후 dest_dir 로 교체 (실패 시 기존 버전 보존).
 
