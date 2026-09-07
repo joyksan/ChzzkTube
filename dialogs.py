@@ -338,7 +338,7 @@ class UpdateWorker(QThread):
         self.line.emit(emit_component("DEPS", "RUN", "node", "ensuring node.js..."))
         try:
             node_ok = pot_provider.ensure_node_runtime(
-                lambda msg: self.line.emit(emit_component("DEPS", "RUN", "node", msg))
+                lambda msg, *args: self.line.emit(emit_component("DEPS", "RUN", "node", msg))
             )
             if node_ok:
                 self.line.emit(emit_component("DEPS", "OK", "node", "ok"))

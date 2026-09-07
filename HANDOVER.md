@@ -23,20 +23,6 @@
 - **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 위젯을 완전히 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃으로 전면 전환.
 - **도구의 순수성**: 개인용·비상업적 듀얼유즈 툴로서 미디어 추출 본연의 안정성과 속도에 집중. 외부 우회 로직은 아래 "단계적 우회 계층화" 원칙에 따라 기본을 안전 경로로 고정하고, 차단 시에만 점진적 폴백.
 
-### 5. 단계적 우회 계층화 (Tiered Bypass Architecture)
-YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.
-
-- **Tier 1 (기본, 항상 가동)**: 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
-- **PO Token 서버 (선택적 가동)**: `pot_provider`는 **필요 시에만** 가동한다.
-  - 가동 조건: `age_limit > 0` (연령 제한) 또는 `availability` in ('needs_auth', 'premium_only', 'subscriber_only', 'private')
-  - 일반 공개 영상은 PO 서버 없이 다운로드 → 리소스 절약
-  - 분석(`AnalyzeWorker`) 완료 후 판단, 필요 시 `[POT] RUN — starting...` 로그 출력
-- **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`ios` → `tv`), JS 런타임 Solver(`ejs:github` + deno), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
-- **운용 경계**: `cfg["yt_player_client"]`가 `"auto"`일 때만 Tier 2 폴백이 활성화된다. 사용자가 특정 클라이언트를 지정하면 Tier 1 해당 클라이언트 1회 시도 후 즉시 실패 처리(폴백 무한 방지).
-- **측정**: 어떤 Tier로 다운로드가 성공했는지 상세 로그(F12)에 기록(`[client retry] bot check — X → Y`). 이는 "왜 폴백이 발동했는지" 추적하는 유일한 증거이며, 로컬 전용(간결 로그 미노출).
-
-> 원칙: **기본은 Tier 1, PO 서버는 필요 시에만, Tier 2는 명시적 폴백**. 핵심 코어(`media`/`downloader` 추출 파이프라인)와 우회 로직(`client_opts`)의 결합도를 헬퍼 모듈로 분리해, 우회 로직 변경이 코어에 영향을 주지 않도록 한다.
-
 ### 2. UI 레이아웃 & 폰트 표준
 - **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인 및 높낮이 튐 현상을 근본적으로 차단.
 - **Flat TUI 3-Layer 구조**:
@@ -52,6 +38,24 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
   - `SPEED`: 실시간 다운로드 속도 전용 칼럼 (`12.4M/s` 등).
   - `MSG`: 타이틀·상태 메시지 전용. 길이 초과 시 `log_console._render_clamp` 픽셀 단위 절단 적용.
 
+### 4. 시각적 디테일 및 영문 미니멀화
+- **파스텔 톤 에러 컬러**: 눈 피로도를 높이는 원색 Red(`#FF0000`)를 Soft Pastel Red(`#E06C75` / `#F87171`)로 교체.
+- **MSG 영문 미니멀화**: 서술형 한글 문장을 배제하고 1~3단어 수준의 소문자 영문 CLI 태그로 축소 (`deps ok`, `pot server bound`, `stream analyzed`, `download canceled by user`).
+
+### 5. 단계적 우회 계층화 (Tiered Bypass Architecture)
+YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.
+
+- **Tier 1 (기본, 항상 가동)**: 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
+- **PO Token 서버 (선택적 가동)**: `pot_provider`는 **필요 시에만** 가동한다.
+  - 가동 조건: `age_limit > 0` (연령 제한) 또는 `availability` in ('needs_auth', 'premium_only', 'subscriber_only', 'private')
+  - 일반 공개 영상은 PO 서버 없이 다운로드 → 리소스 절약
+  - 분석(`AnalyzeWorker`) 완료 후 판단, 필요 시 `[POT] RUN — starting...` 로그 출력
+- **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`ios` → `tv`), JS 런타임 Solver(`ejs:github` + deno), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
+- **운용 경계**: `cfg["yt_player_client"]`가 `"auto"`일 때만 Tier 2 폴백이 활성화된다. 사용자가 특정 클라이언트를 지정하면 Tier 1 해당 클라이언트 1회 시도 후 즉시 실패 처리(폴백 무한 방지).
+- **측정**: 어떤 Tier로 다운로드가 성공했는지 상세 로그(F12)에 기록(`[client retry] bot check — X → Y`). 이는 "왜 폴백이 발동했는지" 추적하는 유일한 증거이며, 로컬 전용(간결 로그 미노출).
+
+> 원칙: **기본은 Tier 1, PO 서버는 필요 시에만, Tier 2는 명시적 폴백**. 핵심 코어(`media`/`downloader` 추출 파이프라인)와 우회 로직(`client_opts`)의 결합도를 헬퍼 모듈로 분리해, 우회 로직 변경이 코어에 영향을 주지 않도록 한다.
+
 ### 6. 렌더링 엔진 정책 (Rendering Engine Policy)
 **PySide6 (Qt 엔진) 유지.** 렌더링 주권(폰트 강제, 픽셀 단위 정렬)과 크로스플랫폼 마우스/클립보드를 동시에 확보하기 위해 TTY 계열(curses/Textual)은 배제한다.
 
@@ -63,9 +67,7 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
   - `LIVE` 스테이지 코드 신설 (VOD 다운로드 `DL`과 라이브 녹화 구분).
   - 사용자 취소는 `DL │ ABORT`로 독립 표기 (`FAIL` 오류와 명확히 분리).
 
-### 4. 시각적 디테일 및 영문 미니멀화
-- **파스텔 톤 에러 컬러**: 눈 피로도를 높이는 원색 Red(`#FF0000`)를 Soft Pastel Red(`#E06C75` / `#F87171`)로 교체.
-- **MSG 영문 미니멀화**: 서술형 한글 문장을 배제하고 1~3단어 수준의 소문자 영문 CLI 태그로 축소 (`deps ok`, `pot server bound`, `stream analyzed`, `download canceled by user`).
+---
 
 ## 2. 실행 환경
 
