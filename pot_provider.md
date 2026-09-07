@@ -167,6 +167,22 @@ def _platform_node_url(ver):
     arch = "arm64" if platform.machine() == "arm64" else "x64"
     return f"https://nodejs.org/dist/{ver}/node-{ver}-linux-{arch}.tar.gz"
 
+def npm_exe():
+    """현재 사용 중인 node 런타임과 동일한 디렉터리의 npm 스크립트 경로.
+
+    Windows: node.exe 옆 npm.cmd / Unix: bin/npm. 시스템 npm 폴백은 호출부가.
+    (npm 스크립트는 'env node'로 node를 찾으므로 실행 시 PATH에 node 디렉터리
+    추가 필요 — updater._cli_env 참조)
+    """
+    node = node_exe()
+    if not node:
+        return None
+    base = os.path.dirname(node)
+    name = "npm.cmd" if platform.system() == "Windows" else "npm"
+    cand = os.path.join(base, name)
+    return cand if os.path.isfile(cand) else None
+
+
 def node_ok():
     """현재 탐색된 node가 bgutil 요구 버전(Node >= 22)을 충족하는지."""
     return (node_major_version(node_exe()) or 0) >= NODE_MIN_MAJOR
@@ -487,12 +503,21 @@ def bundled_npm_ok(node_path):
     [배경] 부분 추출/AV 격리로 npm 루트 파일(package.json)만 소실되는 케이스
     확인. node.exe는 멀쩡해 버전 검사를 통과하고, 정작 npm ci가
     'Cannot find module ../../package.json'으로 즉사 — 수리 트리거로 사용.
+
+    [크로스 플랫폼 레이아웃] 검사 경로는 플랫폼별 릴리스 구조를 모두 커버:
+    - Windows zip :  <base>/node_modules/npm/package.json  (node.exe 옆)
+    - Unix tarball : <base>/../lib/node_modules/npm/package.json  (macOS·Linux)
+      macOS/Linux는 bin/node 와 lib/node_modules/npm 이 분리돼 있다.
+      (Windows 전용 경로만 검사하면 정상 npm이 'broken' 오판 → 재다운로드 루프)
     """
     if not node_path:
         return False
-    return os.path.isfile(
-        os.path.join(os.path.dirname(node_path), "node_modules", "npm", "package.json")
+    base = os.path.dirname(node_path)
+    candidates = (
+        os.path.join(base, "node_modules", "npm", "package.json"),
+        os.path.join(base, "..", "lib", "node_modules", "npm", "package.json"),
     )
+    return any(os.path.isfile(os.path.normpath(p)) for p in candidates)
 
 def ensure_node_runtime(log_func):
     """bgutil 서버 요구(Node >= 22) 충족을 위한 Node.js 런타임 자동 수급/재구성.
@@ -818,7 +843,10 @@ class POTProviderWorker(QThread):
         # 플레인 메시지만 TUI 컬럼 포맷으로 래핑
         stage = "SYS" if is_error else "pot"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        self.line.emit(emit_component(stage, status, "pot", concise_msg), is_status, is_error)
+        tui = emit_component(stage, status, "pot", concise_msg)
+        self.line.emit(tui, is_status, is_error)
+        # [2분기 원칙] F12에는 TUI를 베끼지 않는다 — pot 의 실제 CLI 원문(tsc/npm 등)은
+        # log_full 로 이미 들어오므로 여기서 추가 미러하지 않는다.
 
     def _dbg(self, msg):
         """F12 verbose window + history only — not shown in concise log."""

@@ -242,7 +242,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
   - Dev 환경: `_frozen_upgrade_ytdlp()`, `_frozen_upgrade_streamlink()` 직접 호출
   - 포터블(PyInstaller): PyPI whl에서 yt-dlp 바이너리 직접 다운로드 후 교체 (Stable) / GitHub nightly-builds release 다운로드 (Nightly)
   - 이유: Dev와 포터블이 동일한 코드 경로를 타야 디버깅 가능. Frozen과 Dev가 분기되면, 사용자에게서만 발생하는 버그를 Dev에서 재현하지 못함.
-- **버전 확인 (Dev/Frozen 통합)**: `importlib.metadata` 대신 `shutil.which()` → 바이너리 `--version` 실행 → 버전 문자열 추출. `im.version()`은 빌드 시점 메타데이터만 알려주므로 실제 실행 파일과 불일치 가능.
+- **버전 확인 (2분기 구조, v3.1.1)**: dev 는 실제 CLI 실행(.venv/bin/yt-dlp --version → 원문 F12), frozen 은 PYZ 임베드라 importlib.metadata 폴백 — 판정 로직은 updater.check_deps 단일화. **F12 = raw 원문 전용(갱신형 포함), 메인 = TUI 컬럼 가공**. 두 로그가 같은 정보를 이중으로 띄우지 않는다 (교체 원칙). Nightly 채널은 설정 UI 에서 실제 반영 — stale 채널 전환 시 다운그레이드 감지 포함.
 - **업데이트 실패 시**: 기존 버전 유지, 다음 실행 시 재시도
 - **bgutil (PO 토큰 서버)**: GitHub 태그 릴리즈에서 자동 수급, pot_provider가 별도 관리
 - **적용 범위**: yt-dlp only (streamlink은 Stable only, Nightly 미지원)
@@ -252,6 +252,24 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - ❌ **PO 서버 실패 시 폴백**: 봇 체크 실패 시 PO 서버 가동 후 재시도 (현재는 info 사전 감지만 적용)
 - ✅ **설정 UI**: 업데이트 채널 (Stable/Night) 선택 다이얼로그 — 완료
 - ✅ **streamlink 직접 다운로드**: 포터블 빌드에서 streamlink whl 직접 수급 — 완료
+
+### 8.4 빌드 시 해야 할 일 (OS별 체크리스트) — v3.1.1 신설
+
+포터블 빌드는 OS별로 각각 수행한다 (spec 의 _bundle_node_exe 가 빌드 OS 의 node 를
+번들하므로 교차 빌드 불가 — macOS 빌드는 macOS 에서, Windows 빌드는 Windows 에서).
+
+| 확인 항목 | 내용 | 미충족 시 동작 |
+|---|---|---|
+| node 번들 | `shutil.which("node")` 가 잡히는지 — _internal/node.exe 로 심김 | 포터블 캐시(node/) 최초 수급 |
+| ffmpeg | 시스템 PATH 또는 writable_base/ffmpeg 캐시 | 최초 실행 시 플랫폼별 수급(win=zip, mac=bottle, linux=static) |
+| yt-dlp / streamlink | **독립 exe 아님** — PYZ 내부 모듈 임베드. CLI 실행 불가 | 검사=importlib.metadata 폴백, 업데이트=whl 직접 교체(_frozen_upgrade_*) |
+| bgutil 서버 | `~/bgutil-ytdlp-pot-provider/server/build/main.js` 존재 시 스테이징 | 최초 실행 시 GitHub 릴리스에서 수급 |
+| icon | spec 은 icon.ico 고정 — macOS/Linux 빌드 시 아이콘 별도 검토 | 기본 아이콘 |
+
+실행체 해석은 updater._cli_base / components.ffmpeg_exe / pot_provider.node_exe 로
+단일화되어 있으며, dev(.venv/bin/yt-dlp 등) 와 frozen(importlib 폴백) 의 차이는
+이 계층에만 존재한다 — 검사·갱신·설치·로그 파이프라인은 동일 코드를 탄다.
+
 
 ## 9. 파일 규칙
 
@@ -264,6 +282,25 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **문서 미러** | `.py` docstrings가 원본, `.md` 미러는 자동 생성. 손수정 금지 |
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-07 — DEPS 로그 2분기 원문화 + 실행체 통일 + Nightly 채널 활성화
+
+| 모듈 | 변경 |
+|------|------|
+| `dialogs.py` | UpdateWorker 시그널 계약 정리 — line=(msg,is_status,is_error), **full=(raw,is_status)**. _do_check F12 재편: deps[] 요약 제거, 실제 CLI 원문($ yt-dlp --version → 2026.08.19)만 적재. _provision_cb TUI 미러 제거 → 마지막 메시지부 raw(is_status 전달). **VerboseLogWindow.append is_status — F12 갱신형(마지막 줄 덮어쓰기)**. channel/check_updates 파라미터 신설 |
+| `main.py` | full 수신 append_full_log/is_status → _mirror_full_log(진행률은 버퍼 미적재, F12 열려있으면 마지막 줄 갱신). UpdateWorker 생성에 channel=cfg[update_channel], check_updates=cfg[auto_update_check] 전달. **_on_auto_upgrade_done에서 _startup_completed=True** — 기존엔 POT 종료시에만 세팅돼 자동갱신 후 15초 폴백까지 입력 잠금 |
+
+| `updater.py` | **check_deps nightly 인지** — yt-dlp-nightly 는 dist 명이 달라 im.version(yt-dlp) 실패 → nightly 설치물 폴백 표기(2026.9.x (nightly)). outdated_packages(channel) **다운그레이드 감지** — stable 채널+nightly 잔존 → 강제 stale, stale 튜플 pypi_name 고정으로 upgrade_packages None 언팩 방지. cli_raw/_cli_base/_cli_env/npm_exe 신설 — 셸에서 친 것과 동일한 CLI 원문 캡처. _ffmpeg_version Windows creationflags |
+| `pot_provider.py` | _note 의 tui_to_raw F12 미러 2곳 제거 — F12 는 pot 실제 CLI 원문(tsc/npm)만. npm_exe 신설(node 런타임 옆 npm 스크립트) |
+| `log_console.py` | tui_to_raw 제거(미사용 정리). append 진행률 갱신형 계약 주석 명시(한 행=한 정보) |
+| `progress_emitter.py` / `live_recorder.py` | DL/LIVE 틱 is_status=True — 매 틱 새 줄 위반 수리(§6 In-Place) |
+| `components.py` | **bundled_npm_ok 크로스플랫폼** — macOS/Linux tarball(bin/../lib/node_modules/npm) 검사 추가. Windows 전용 경로만 봐서 정상 npm을 broken 오판 → **매 시작 재다운로드 루프**였던 근본 원인 수리 |
+| `config.py` | update_channel / auto_update_check 기본값 |
+| `HANDOVER.md` | §8.4 빌드 시 해야 할 일(OS별 체크리스트) 신설, §8.2 버전 확인 2분기 구조 반영 |
+| 검증 | py_compile 6모듈 · smoke PASS · UpdateWorker 시뮬(stale 없음→간결 침묵) · F12 갱신형 실측(40%→80% 한 줄) · outdated_packages 4시나리오(nightly 설치 판정/stable 다운그레이드/nightly 업그레이드/최신 무표기) · mirrors sync |
+
+
+
 
 ### 2026-09-07 — DEPS 자동 수급 완전 통합 + 비표준 status 일괄 제거
 

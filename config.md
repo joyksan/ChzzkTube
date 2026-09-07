@@ -48,6 +48,8 @@ def default_config():
         "browser_cookie": "auto",
         "cookie_file_path": "",
         "yt_player_client": "auto",
+        "update_channel": "stable",
+        "auto_update_check": True,
     }
 
 def load_config():

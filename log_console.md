@@ -60,7 +60,14 @@ class ConciseLogConsole:
                 self.reflow()
 
     def append(self, msg, is_status=False, is_error=False, fg_color=None):
-        """빈 줄 생성 차단 및 정밀 문단 삭제 파이프라인."""
+        """빈 줄 생성 차단 및 정밀 문단 삭제 파이프라인.
+
+        [진행률 갱신형 계약] 진행률/진행 중 상태 로그는 반드시 is_status=True로
+        호출할 것 — ConciseLogConsole이 직전 상태 블록을 같은 줄에 덮어쓴다
+        (Single-Line In-Place Status, HANDOVER §6). is_status=False로 emit하면
+        매 틱 새 줄이 쌓여 '한 행 = 한 정보' 규칙을 위반한다. DL/LIVE 틱,
+        DEPS 다운로드 %, PO 서버 진행 등 모든 반복 로그가 해당.
+        """
         self._sync_budget()  # 현재 뷰포트/폰트 기준 예산 보장 — 자동랩 침범 방지
         # [리플로우 대비] 원본 로그를 버퍼에 보관 (렌더 시점 절단을 위해 잘리지 않음)
         self._buffer.append(

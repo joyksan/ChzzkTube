@@ -165,7 +165,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                             stage="LIVE",
                             msg=f"recording — {fname}",
                         ),
-                        False,
+                        True,   # is_status=True — 진행률 틱은 한 줄 덮어쓰기(갱신형)
                         False,
                     )
 

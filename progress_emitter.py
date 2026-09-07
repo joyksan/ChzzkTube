@@ -98,7 +98,7 @@ def emit_progress_tick(worker, d):
             bar_frac=min(pct / 100.0, 1.0),
             msg=f"{title}" if title else "",
         ),
-        False,
+        True,   # is_status=True — 진행률 틱은 새 줄 금지, 한 줄 덮어쓰기(갱신형)
         False,
     )
 

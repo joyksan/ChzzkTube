@@ -77,19 +77,36 @@ def is_outdated(current, latest):
         return False
 
 def outdated_packages(channel="stable"):
-    """List of (log_label, pypi_name, cur_ver, latest_ver) needing update or not installed.
-    channel: 'stable' (PyPI release) or 'nightly' (yt-dlp-nightly / GitHub builds).
+    """List of (label, pypi_name, cur, latest) needing update or not installed.
+    channel: stable / nightly (yt-dlp-nightly / GitHub builds).
+
+    [downgrade support] stable channel with yt-dlp-nightly installed (user
+    switched Nightly->Stable): force stale target=stable -- nightly version
+    string compares higher so plain version check would be never-stale.
     """
     stale = []
     for label, pypi_name, pypi_nightly in PACKAGES:
+        if channel == "nightly" and pypi_nightly:
+            cur = installed_version(pypi_nightly) or installed_version(pypi_name)
+            latest = latest_version(pypi_nightly)
+            if not cur:
+                stale.append((label, pypi_name, "not installed", latest or "unknown"))
+            elif latest and is_outdated(cur, latest):
+                stale.append((label, pypi_name, cur, latest))
+            continue
+        # stable channel: leftover nightly -> downgrade target
+        if pypi_nightly and installed_version(pypi_nightly):
+            stale.append((label, pypi_name, str(installed_version(pypi_nightly)) + " (nightly)", "stable"))
+            continue
         cur = installed_version(pypi_name)
-        pkg_to_check = pypi_nightly if (channel == "nightly" and pypi_nightly) else pypi_name
-        latest = latest_version(pkg_to_check)
+        latest = latest_version(pypi_name)
         if not cur:
             stale.append((label, pypi_name, "not installed", latest or "unknown"))
         elif latest and is_outdated(cur, latest):
             stale.append((label, pypi_name, cur, latest))
     return stale
+
+
 def check_deps():
     """모든 의존성 체크 결과 리스트 반환.
     각 요소: (label, status, version_or_path)
@@ -99,16 +116,39 @@ def check_deps():
     import shutil
     results = []
 
-    # 1. PyPI 패키지 (yt-dlp, streamlink)
-    for label, pypi_name, _ in PACKAGES:
+    # 1. PyPI 패키지 (yt-dlp, streamlink) — nightly 채널 설치물 인지
+    #    yt-dlp-nightly 는 dist 명이 달라 im.version("yt-dlp") 가 실패하므로
+    #    nightly 설치물로 폴백 표기 (정상 설치 판정 유지)
+    for label, pypi_name, pypi_nightly in PACKAGES:
         ver = installed_version(pypi_name)
+        if not ver and pypi_nightly:
+            nver = installed_version(pypi_nightly)
+            if nver:
+                ver = f"{nver} (nightly)"
         results.append((label, "OK" if ver else "FAIL", ver or "not installed"))
 
-    # 2. 외부 실행 파일 (ffmpeg, node)
-    for label, cmd in [("ffmpeg", "ffmpeg"), ("node", "node")]:
-        path = shutil.which(cmd)
+    # 2. 외부 실행 파일 (ffmpeg, node) — msg에는 버전/경로 같은 실질 정보만
+    for label in ("ffmpeg", "node"):
+        path = shutil.which(label)
+        if not path and label == "node":
+            # [포터블 폴백] 시스템 PATH 밖의 로컬 포터블 node (writable_base/node)도
+            # DEPS 후보 — 없을 때만 'not found'.
+            try:
+                import pot_provider
+                path = pot_provider.node_exe()
+            except Exception:
+                path = None
         if path:
-            results.append((label, "OK", os.path.basename(path)))
+            if label == "node":
+                try:
+                    import pot_provider
+                    maj = pot_provider.node_major_version(path)
+                except Exception:
+                    maj = None
+                msg = f"v{maj}" if maj else os.path.basename(path)
+            elif label == "ffmpeg":
+                msg = _ffmpeg_version(path) or os.path.basename(path)
+            results.append((label, "OK", msg))
         else:
             # [v3.1.0 정책] 표준 status 사용. msg는 명시적 문자열.
             results.append((label, "FAIL", "not found"))
@@ -124,6 +164,120 @@ def check_deps():
         results.append(("pot", "FAIL", "unknown"))
 
     return results
+
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _cli_base(label):
+    """라벨 → 실제 CLI 명령 배열 (없으면 None). F12 상세 로그용 원문 실행.
+
+    importlib.metadata/shutil.which 로 대체하지 않는 이유: '터미널에서 직접
+    쳤을 때 보이는 원문 출력'을 있는 그대로 남기는 것이 목적이므로, 판별이
+    아닌 실제 실행이 필요하다.
+    """
+    if label == "ytdlp":
+        if getattr(sys, "frozen", False):
+            p = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
+            return [p] if p else None
+        # dev: 앱이 실제로 쓰는 venv 파이썬으로 실행 (PATH 무관)
+        return [sys.executable, "-m", "yt_dlp"]
+    if label == "streamlink":
+        if getattr(sys, "frozen", False):
+            p = shutil.which("streamlink")
+            return [p] if p else None
+        return [sys.executable, "-m", "streamlink"]
+    if label == "ffmpeg":
+        p = shutil.which("ffmpeg")
+        if not p:
+            try:
+                from components import ffmpeg_exe
+                p = ffmpeg_exe()
+            except Exception:
+                p = None
+        return [p] if p else None
+    if label == "node":
+        try:
+            import pot_provider
+            p = pot_provider.node_exe()
+        except Exception:
+            p = None
+        p = p or shutil.which("node")
+        return [p] if p else None
+    if label == "npm":
+        try:
+            import pot_provider
+            p = pot_provider.npm_exe()
+        except Exception:
+            p = None
+        p = p or shutil.which("npm")
+        return [p] if p else None
+    return None
+
+
+def _cli_env(label):
+    """npm 시스 스크립트가 'env node'로 node를 찾도록 PATH 보강 (npm만)."""
+    if label != "npm":
+        return None
+    try:
+        import pot_provider
+        node = pot_provider.node_exe()
+    except Exception:
+        node = None
+    if not node:
+        return None
+    env = os.environ.copy()
+    ndir = os.path.dirname(node)
+    env["PATH"] = ndir + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def cli_raw(label, *args, timeout=15):
+    """실제 CLI를 실행해 '터미널에서 친 것과 동일한 원문 출력'을 반환.
+
+    반환: (cmdline, output) — 도구 없으면 (None, None), 실행 예외면
+    (cmdline, "[Type] msg"). 출력은 stdout+stderr 합본 원문.
+    호출부(F12 상세 로그)가 '$ <cmd>' + 원문 라인을 그대로 적재한다.
+    """
+    cmd = _cli_base(label)
+    if not cmd:
+        return None, None
+    full_cmd = cmd + list(args)
+    env = _cli_env(label)
+    try:
+        proc = subprocess.run(
+            full_cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            env=env,
+            creationflags=_NO_WINDOW if os.name == "nt" else 0,
+        )
+    except Exception as e:
+        return " ".join(full_cmd), f"[{type(e).__name__}] {e}"
+    out = ((proc.stdout or "") + (proc.stderr or "")).strip()
+    return " ".join(full_cmd), out or None
+
+
+def _ffmpeg_version(path, timeout=3):
+    """`ffmpeg -version` 첫 줄에서 버전 추출 (예: '7.1.1'). 실패 시 None."""
+    try:
+        import re
+        out = subprocess.run(
+            [path, "-version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            creationflags=_NO_WINDOW if os.name == "nt" else 0,
+        )
+        line = (out.stdout or out.stderr or "").splitlines()[0]
+        m = re.search(r"version\s+([0-9][0-9.]*)", line)
+        return m.group(1) if m else None
+    except Exception:
+        return None
 
 def _exe_suffix():
     return ".exe" if sys.platform == "win32" else ""

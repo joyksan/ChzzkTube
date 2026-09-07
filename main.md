@@ -745,9 +745,10 @@ class MainWindow(QMainWindow):
 
     def _start_update_check(self):
         """구성요소(yt-dlp/streamlink) 최신 버전 비동기 확인 — 기동 0.5초 후 1회."""
-        self.update_worker = UpdateWorker(self, upgrade=False)
+        self.update_worker = UpdateWorker(self, upgrade=False, channel=self.cfg.get("update_channel", "stable"), check_updates=self.cfg.get("auto_update_check", True))
         # 구성요소 확인 라인은 필터 경유 — 루틴 '최신' 라인 간결 생략 + 히스토리 전건
         self.update_worker.line.connect(self._component_line)
+        self.update_worker.full.connect(self.append_full_log)
         self.update_worker.check_done.connect(self._on_update_check_done)
         # [응답없음 방지] 낮은 우선순위로 시작해 GIL을 메인 스레드에 양보
         self.update_worker.start(QThread.Priority.LowPriority)
@@ -772,33 +773,30 @@ class MainWindow(QMainWindow):
             )
             self._stale_updates = True
         else:
-            # "deps ok"는 모든 deps(ffmpeg 포함) 체크 완료 후 _on_pot_provider_finished에서 출력
             self._stale_updates = False
             self._pot_provider_started = False  # PO 서버는 필요 시에만 가동
-            self.append_concise_log(
-                log_console.emit_event("SYS", "OK", "deps", "deps ok"),
-                is_status=True,
-                is_error=False,
-            )
-            self.append_concise_log(
-                log_console.emit_event("SYS", "READY", "eng", "ready"),
-                is_status=True,
-                is_error=False,
-            )
+            # (READY는 수급 완료 후 _on_auto_upgrade_done에서 단 한 번 출력 — 조기 READY 금지)
         # [stale case] Dev/Frozen integration — UpdateWorker handles all deps (PyPI + ffmpeg + node)
-        self.update_worker = UpdateWorker(self, upgrade=True)
+        # stale로 확인된 패키지만 업그레이드, 나머지는 수급(ensure)만 — 2중 출력 방지
+        self.update_worker = UpdateWorker(self, upgrade=True, stale_updates=stale, channel=self.cfg.get("update_channel", "stable"), check_updates=self.cfg.get("auto_update_check", True))
         self.update_worker.line.connect(self._component_line)
+        self.update_worker.full.connect(self.append_full_log)
         self.update_worker.upgrade_done.connect(self._on_auto_upgrade_done)
         self.update_worker.start()
 
     def _on_auto_upgrade_done(self, ok, summary):
-        """기동 자동 업그레이드 결과."""
-        status = "OK" if ok else "FAIL"
-        self.append_concise_log(
-            log_console.emit_event("SYS", status, "DEPS", f"update {summary}"),
-            is_status=False,
-            is_error=not ok,
-        )
+        """기동 자동 업그레이드 결과 — 실제 작업이 있었을 때만 결론 1줄.
+
+        summary가 비어 있으면(변화 없음) 침묵 — 체크 블록의 상태 라인과
+        READY만 남기고 중복 in-place 라인을 쌓지 않는다.
+        """
+        if summary:
+            status = "OK" if ok else "FAIL"
+            self.append_concise_log(
+                log_console.emit_event("SYS", status, "DEPS", f"update {summary}"),
+                is_status=False,
+                is_error=not ok,
+            )
         # PO 서버는 필요 시에만 가동 (선택적 가동)
         self._pot_provider_started = False
         self.append_concise_log(
@@ -806,6 +804,10 @@ class MainWindow(QMainWindow):
             is_status=True,
             is_error=False,
         )
+        # [기동 완료] 자동 업그레이드는 기동 체인의 마지막 필수 단계 —
+        # POT 종료 콜백(필요 시에만 발화)을 기다리지 않고 여기서 개방한다.
+        self._startup_completed = True
+        self.update_ui_state()
 
     def _is_stale_analyze_signal(self):
         """유령 분석 결과 판별 — 지운 뒤 'stream analyzed'가 한 번 더 뜨는 버그 차단.
@@ -922,7 +924,7 @@ class MainWindow(QMainWindow):
             is_error=is_error,
         )
 
-    def _mirror_full_log(self, msg):
+    def _mirror_full_log(self, msg, is_status=False):
         """상세 로그 버퍼 누적 + F12 창 미러링 (append_*_log 공용).
 
         [수정] 간결 로그의 TUI 포맷 메시지는 상세 로그에 포함하지 않음.
@@ -935,15 +937,16 @@ class MainWindow(QMainWindow):
         ts = time.strftime("%H:%M:%S")
         # 다중 라인 메시지 모두에 동일 타임스탬프 부착
         stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in str(msg).split("\n"))
-        self._full_log_buf.append(stamped)
-        if len(self._full_log_buf) > 5000:
-            del self._full_log_buf[: len(self._full_log_buf) - 5000]
+        if not is_status:
+            self._full_log_buf.append(stamped)
+            if len(self._full_log_buf) > 5000:
+                del self._full_log_buf[: len(self._full_log_buf) - 5000]
         if (
             getattr(self, "verbose_win", None) is not None
             and self.verbose_win.isVisible()
         ):
             try:
-                self.verbose_win.append(stamped)
+                self.verbose_win.append(stamped, is_status)
             except Exception:
                 pass
 
@@ -956,8 +959,9 @@ class MainWindow(QMainWindow):
         # 히스토리 파일 기록
         log_history.log(msg, "ERROR" if is_error else "INFO")
 
-    def append_full_log(self, msg):
-        self._mirror_full_log(msg)
+    def append_full_log(self, msg, is_status=False):
+        # is_status=True: 진행률 틱 — F12에서 마지막 줄 갱신, 버퍼 미적재
+        self._mirror_full_log(msg, is_status)
 
     def toggle_verbose_log(self):
         """F12 상세 로그 창 토글 — 최초 진입 시 누적 버퍼로 초기화 후 미러링."""
