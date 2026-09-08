@@ -9,8 +9,8 @@
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.1.0` — 정의 위치 `config._APP_VERSION`
-- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PyQt6 + yt-dlp + streamlink + FFmpeg(리먹싱) + Node.js 22+(PO Token 서버)
+- **버전**: `v3.1.0` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-08 Qt/PySide6 정리, 로깅 표준화)
+- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PySide6 + yt-dlp + streamlink + FFmpeg(리먹싱) + Node.js 22+(PO Token 서버)
 - **진입점**: `main.py` (`python main.py`)
 - **빌드**: PyInstaller — `ChzzkTube.spec`
 - **설정 파일**: `dl_config.json` (CONFIG_DIR에 생성, UTF-8 / indent=4)
@@ -31,12 +31,54 @@
   - **Live Console Monitor (하단, `stretch=1`)**: 메인 윈도우 면적을 100% 모니터링 로그에 할당. Raw 디버그 로그는 `F12` 독립 서브 윈도우(`QDialog`)로 완전 격리.
 
 ### 3. 고정 칼럼 로그 규격 (Column-Aligned Monitor Standard)
+
+#### 3.1 기본 포맷 (v3.1.0+)
 - **표준 출력 포맷**:
-  `[HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ SPEED │ PCT │ BAR │ MSG`
+  `[HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ MSG`
+  
 - **컬럼 역할 분리**:
-  - `SPEC`: 순수 미디어 스펙만 출력 (`1080p30` 등).
-  - `SPEED`: 실시간 다운로드 속도 전용 칼럼 (`12.4M/s` 등).
-  - `MSG`: 타이틀·상태 메시지 전용. 길이 초과 시 `log_console._render_clamp` 픽셀 단위 절단 적용.
+  - `SPEC`: 순수 미디어 스펙만 출력 (`1080p30`, `h264`, `opus`, `4K`, `2026.8.19` 등) — **채널명·제목·파일명·통계 금지**
+  - `MSG`: 가변 정보 (`제목`, `파일명`, `크기`, `속도`, `진행률` 등) — 길이 초과 시 `log_console._render_clamp` 픽셀 단위 절단 적용
+
+#### 3.2 STAGE 값
+- `SYS`: 시스템/시작 작업 (DEPS, POT, 업데이트, READY 등)
+- `ANAL`: 분석 단계 (비디오/오디오 포맷 분석)
+- `DL`: 다운로드 진행
+- `LIVE`: 라이브 스트리밍 녹화
+- `MERG`: 포맷 병합
+- `BATCH`: 배치 작업 완료
+- `DEPS`: 의존성 체크 (yt-dlp, streamlink, ffmpeg, node, pot)
+- `POT`: PO Token 서버 관련
+
+#### 3.3 STATUS 값
+- `OK`: 작업 성공
+- `READY`: 시스템 준비 완료 (시작 신호)
+- `RUN`: 작업 중 (진행률 표시)
+- `DONE`: 작업 완료
+- `ABORT`: 사용자 취소
+- `FAIL`: 작업 실패
+- `WARN`: 경고
+- `SKIP`: 작업 건너뛰기
+- `END`: 스트림 종료 (라이브)
+
+#### 3.4 PLATFORM 값 (3-8자 축약)
+- 외부 의존성: `YTDL`, `STRE`, `FFMP`, `NODE`, `POT`
+- 영상 플랫폼: `YT`, `CHZK`, `NFX`, `TIKT` 등 (media.py `_EXTRACTOR_SHORT_STATIC` 참조)
+- 내부 구분: `VIDEO`, `AUDIO`, `SYS`
+
+#### 3.5 예시 로그
+```
+[13:34:23] DEPS  │ OK   │ YTDL  │ 2026.8.19 │ 
+[13:34:23] DEPS  │ OK   │ STRE  │ 8.5.0     │ 
+[13:34:23] DEPS  │ OK   │ FFMP  │ 9.0.1     │ 
+[13:34:23] DEPS  │ OK   │ NODE  │ v22       │ 
+[13:34:23] DEPS  │ OK   │ POT   │ running   │ 
+[13:34:23] SYS   │ READY│ SYS   │ - │ ready
+[13:34:24] ANAL  │ OK   │ YT    │ 1080p30   │ stream analyzed · YTN · "제목"
+[13:34:25] ANAL  │ OK   │ VIDEO │ h264      │ 
+[13:34:25] ANAL  │ OK   │ AUDIO │ opus      │ 
+[13:34:26] DL    │ RUN  │ YT    │ 1080p30   │ 12.4M/s · 65% · [█⋯░]
+[13:34:30] DL    │ OK   │ YT    │ -         │ video.mp4 (11.56 MB) · YTN
 
 ### 4. 시각적 디테일 및 영문 미니멀화
 - **파스텔 톤 에러 컬러**: 눈 피로도를 높이는 원색 Red(`#FF0000`)를 Soft Pastel Red(`#E06C75` / `#F87171`)로 교체.
@@ -394,6 +436,44 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | `live_recorder.py` | Thin wrapper 참조 → 직접 모듈 함수 호출 |
 | `controller.py` | `on_download_finished()` 추가 (View → Controller 상태 로직 이관) |
 | `.gitattributes` | EOL 정규화 (Python/Markdown → LF, 배치 → CRLF) |
+
+| `sync_mirrors.py` | `startup_coordinator` 모듈 추가 |
+
+### 2026-09-08 — PyQt6/PySide6 정리 + StartupCoordinator + 로깅 표준화
+
+#### 문제
+- PyQt6가 함께 설치되어 있어 Qt 심볼 충돌 발생 (`/objc[...]: Symbol not found: __ZN14QObjectPrivateC2E...`)
+- READY 로그가 콘솔에 표시되지 않음 — 근본 원인 3중 버그:
+  1. `UpdateWorker.check_done = Signal(list)`를 Coordinator `report_deps(ok, msg)`에 직결 → **시그니처 불일치로 stale→upgrade 기동 체인 사망** → `upgrade` 단계가 영원히 미완료 → READY 게이트 통과 불가
+  2. `_on_update_check_done` not-stale 분기에 결론 라인(`deps ok`) 출력 누락
+  3. `threading.Lock`을 `report_*` → `_try_emit_ready` 경로에서 재획득 → **deadlock** (RLock으로 수리)
+- 로깅 포맷 불일치 → 8칼럼 → 5칼럼 통합 필요
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| **의존성** | PyQt6/PyQt6-Qt6/PyQt6_sip 제거 → PySide6 단일화 |
+| `startup_coordinator.py` | **신규 생성** — 시작 시퀀스 완료 추적 전용 조정자. `report_deps/report_upgrade/report_pot/report_ready` 게이트 + `_ready_emitted` 1회 발산 + `RLock` 재진입. DEPS 5줄·결론 라인은 기존 경로(`_component_line`/`_on_update_check_done`)가 담당하므로 **이중 출력 금지** (플래그만 세팅), 히스토리는 `append_concise_log` 위임 |
+| `main.py` | `check_done` → `_on_update_check_done` 복원(결론 라인 출력 + upgrade 워커 기동 + `report_deps` 보고). `upgrade_done` → `report_upgrade`. `_force_unlock_input` → `report_ready` 위임. 죽은 코드 `_on_auto_upgrade_done`/`_on_pot_provider_finished` 제거 |
+| `log_console.py` | `format_log_line()`: `SPEED │ PCT │ BAR` → `MSG` 통합 (고정 5칼럼 구조) |
+| `progress_emitter.py` | 다운로드 진행 틱에서 제목 제거 (ANAL 단계에 이미 표시됨) |
+| `sync_mirrors.py` | `startup_coordinator` MIRROR_MODULES 추가 |
+| `HANDOVER.md` | 로그 표준 문서화 (STAGE·STATUS·PLATFORM·SPEC·MSG 5컬럼) |
+
+#### 시그널 교통 정리 (최종 계약)
+```
+UpdateWorker.check_done(list) ──> _on_update_check_done  (결론 라인 + upgrade 기동 + report_deps)
+UpdateWorker.upgrade_done(bool,str) ──> Coordinator.report_upgrade (변화 시 결론 1줄)
+POTProviderWorker.finished ──> Coordinator.report_pot (플래그만)
+QTimer 15s ──> _force_unlock_input ──> Coordinator.report_ready (강제)
+Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + 입력 개방
+```
+
+#### 검증
+- ✅ 단위 시퀀스 3종 (변화없음/변화있음/중복방지) ALL PASS
+- ✅ Smoke test PASS
+- ✅ 런타임 실측: DEPS 5줄 → `deps ok` 결론 → `SYS │ READY │ SYS │ - │ ready` **정확히 1건**
+- ✅ READY 로그: `[HH:MM:SS] SYS │ READY │ SYS │ - │ ready`
 
 ### 2026-09-05 — 유튜브 라이브 URL 감지 개선
 

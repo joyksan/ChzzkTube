@@ -1,4 +1,4 @@
-### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD 메타데이터 + 스트림 목록)
+### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD/LIVE 메타데이터 + 스트림 목록)
 import datetime
 import json
 import re
@@ -202,6 +202,129 @@ def analyze_chzzk_vod_api(target_url):
         "date": date,
         "duration": duration,
         "video_no": video_no,
+        "formats": video_formats,
+        "channel_name": channel_name,
+    }
+
+
+def _fetch_m3u8_streams(m3u8_url, headers, timeout=15):
+    """m3u8 HLS 매니페스트를 경량 조회 — 분석 단계에서 format 목록만 추출.
+
+    yt-dlp의 'Downloading m3u8 information' 스텝은 매니페스트 전체를
+    변형하며 (variants/iframe/subtitle 등) googlevideo 셔드 스로틀에서
+    영구 HANG 위험이 있다. 여기서는 #EXT-X-STREAM-INF 라인만 빠르게
+    스캔해 (resolution/bandwidth) 포맷 목록을 반환한다.
+    """
+    req = urllib.request.Request(m3u8_url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as res:
+        content = res.read().decode("utf-8", errors="replace")
+
+    fmt_by_res = {}
+    cur_bw = 0
+    cur_res = ""
+    for line in content.splitlines():
+        line = line.strip()
+        if line.startswith("#EXT-X-STREAM-INF"):
+            attrs = dict(re.findall(r'(\w+)="([^"]*)"', line))
+            cur_bw = int(float(attrs.get("BANDWIDTH", 0) or 0)) // 1000
+            cur_res = attrs.get("RESOLUTION", "")
+        elif line and not line.startswith("#"):
+            height = 0
+            h_match = re.search(r"(\d+)x(\d+)", cur_res)
+            if h_match:
+                height = int(h_match.group(2))
+            elif cur_res:
+                h_match = re.search(r"(\d+)p", cur_res, re.IGNORECASE)
+                if h_match:
+                    height = int(h_match.group(1))
+            if height and height not in fmt_by_res:
+                fmt_by_res[height] = {
+                    "id": line,
+                    "res": cur_res,
+                    "height": height,
+                    "fps": 0,
+                    "bitrate": cur_bw,
+                    "url": line,
+                    "vcodec": "H.264",
+                    "acodec": "AAC",
+                }
+    return sorted(fmt_by_res.values(), key=lambda x: x["height"], reverse=True)
+
+
+def analyze_chzzk_live_api(target_url):
+    """치지직 실시간 방송 — 메타 + HLS 포맷 목록 (m3u8 경량 스캔).
+
+    live ID는 32자리 16진수 해시(a0e26a105c3b5ac212d5e0ca40c5c747)이므로
+    기존 VOD API의 (\\d+) 정규식과 분리 필요.
+    """
+    m = re.search(r"chzzk\.naver\.com/live/([\w-]+)", target_url)
+    if not m:
+        return {"title": None, "date": None, "duration": None, "formats": [], "channel_name": None}
+    live_id = m.group(1)
+    headers = _chzzk_headers()
+
+    title = live_id
+    date = None
+    duration = None
+    channel_name = None
+    video_formats = []
+    live_status = "UNKNOWN"
+
+    try:
+        meta = (
+            _get_json(
+                f"https://api.chzzk.naver.com/service/v1/live/{live_id}",
+                headers,
+            ).get("content", {})
+            or {}
+        )
+        title = meta.get("liveTitle") or live_id
+        title = re.sub(r"\.(mp4|mkv|ts|webm|mov)$", "", title, flags=re.IGNORECASE)
+        date = (meta.get("liveStartTime") or "").split(" ")[0] or None
+        channel = meta.get("channel") or {}
+        channel_name = channel.get("channelName") or meta.get("channelName")
+        live_status = meta.get("liveStatus", "PROGRESS")
+
+        # 스트림 URL 추출
+        stream_info = meta.get("liveStreamInfo", {})
+        if isinstance(stream_info, dict):
+            m3u8_url = (
+                stream_info.get("serviceUrl")
+                or stream_info.get("streamingUrl")
+                or stream_info.get("sourceUrl")
+                or ""
+            )
+        elif isinstance(stream_info, str):
+            m3u8_url = stream_info
+        else:
+            m3u8_url = ""
+
+        if m3u8_url:
+            video_formats = _fetch_m3u8_streams(m3u8_url, headers)
+    except Exception as e:
+        # [증거 남김] live API 실패 → formats 비어 상위에서 fail-fast.
+        log_history.log(
+            f"치지직 LIVE API 실패 (live/{live_id}): {type(e).__name__}: {e}",
+            "WARN",
+        )
+
+    if not video_formats:
+        if live_status != "PROGRESS":
+            log_history.log(
+                f"치지직 LIVE 비방송 중 ({live_status}) — live/{live_id}",
+                "WARN",
+            )
+
+    video_formats.sort(
+        key=lambda x: (x["height"], get_video_codec_rank(x["vcodec"]), x["bitrate"]),
+        reverse=True,
+    )
+    return {
+        "title": title,
+        "date": date,
+        "duration": duration,
+        "live_id": live_id,
+        "live_status": live_status,
         "formats": video_formats,
         "channel_name": channel_name,
     }

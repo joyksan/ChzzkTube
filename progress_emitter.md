@@ -86,7 +86,8 @@ def emit_progress_tick(worker, d):
     speed_s = f"{format_bytes(rate)}/s" if rate else "-"
 
     pct = (done / total * 100.0) if total else 0.0
-    title = os.path.basename(d.get("filename") or getattr(worker, "current_file", "") or "")
+    # 제목은 이미 ANAL 단계에서 표시되었으므로 제외 (중복 방지)
+    title = ""
 
     worker.log_concise.emit(
         emit_dl(
@@ -96,7 +97,7 @@ def emit_progress_tick(worker, d):
             speed=speed_s,
             pct=pct,
             bar_frac=min(pct / 100.0, 1.0),
-            msg=f"{title}" if title else "",
+            msg=title,
         ),
         True,   # is_status=True — 진행률 틱은 새 줄 금지, 한 줄 덮어쓰기(갱신형)
         False,
@@ -108,9 +109,12 @@ def log_success_info(worker, file_path):
     size = 0
     if file_path and os.path.exists(file_path):
         size = os.path.getsize(file_path)
+    # [채널명 포함] DL 완료 Msg에 채널명 추가
+    channel = _dl_platform(getattr(worker, "current_url", "") or "")
+    fname = os.path.basename(file_path) if file_path else "done"
+    msg = f"{fname} ({format_bytes(size)})" if file_path else "done"
     worker.log_concise.emit(
-        emit_event("DL", "OK", _dl_platform(getattr(worker, "current_url", "") or ""),
-                   f"{os.path.basename(file_path)} ({format_bytes(size)})" if file_path else "done"),
+        emit_event("DL", "OK", channel, msg),
         False,
         False,
     )

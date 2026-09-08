@@ -36,6 +36,7 @@ MIRROR_MODULES = [
     "progress_emitter",
     "smoke_test",
     "speed_window",
+    "startup_coordinator",
     "sync_mirrors",
     "target_downloader",
     "theme",

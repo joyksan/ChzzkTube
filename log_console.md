@@ -683,13 +683,18 @@ def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar
     """TUI 스타일 컬럼 로그 라인 — 단일 라인, 고정 칼럼 정렬.
 
     표준 포맷:
-        [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ SPEED │ PCT │ BAR │ MSG
+        [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ MSG
+
+    특징:
+    - SPEC: 순수 미디어 스펙만 (1080p30, h264, opus 등). 파일명·채널명 금지.
+    - MSG: 제목·파일명·속도·진행률·바 등 가변 정보.
+    - PCT/BAR는 SPEC 오른쪽에 MSG로 통합해 세로 정렬 안정화.
 
     인자:
         stage    : SYS / ANAL / DL / LIVE / MERG / BATCH / DEPS / POT ...
         status   : OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP ...
         platform : yt / chzzk / ytdlp / streamlink / pot / deps 등 (8자 축약)
-        spec     : 스트림 속성 전용 (예: 1080p30) — 파일명·통계 금지
+        spec     : 스트림 속성 전용 (예: 1080p30, h264) — 파일명·통계 금지
         speed    : 네트워크 속도 전용 (예: 12.4M/s) — 카운터·기타 금지
         pct      : 진행률 (0~100, None 가능)
         bar_frac : 진행 바 (0.0~1.0, None 가능)
@@ -702,21 +707,23 @@ def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar
     speed_s = str(speed or "-")
     pct_s = _log_pct(pct)
     bar_s = _log_bar(bar_frac)
-    head = _log_ts() + " " + stage_s
-    rest = [status_s, plat_s]
-    if str(spec or "-") not in ("-", ""):
-        rest.append(spec_s)
-    if str(speed or "-") not in ("-", ""):
-        rest.append(speed_s)
+
+    # [핵심] PCT와 BAR를 MSG에 통합해 고정 5칸 구조 유지
+    extra = ""
     if pct is not None:
-        rest.append(pct_s)
-        rest.append(bar_s)
+        extra = f"{pct_s} · {bar_s}"
+
+    head = _log_ts() + " " + stage_s
+    rest = [status_s, plat_s, spec_s, speed_s]
     fixed = head + " │ " + " │ ".join(rest)
+
     if msg:
-        # [리플로우] 생성 시점에 자르지 않는다 — msg 전체를 라인에 넣고,
-        # 화면 표시는 ConciseLogConsole._render_clamp가 예산에 맞춰 절단한다.
-        # 그래야 창을 가로로 늘렸을 때 기존 로그도 펼쳐진다.
-        return fixed + " │ " + msg
+        # MSG가 비어있으면 extra만, 있으면 extra · msg 형태
+        if msg.strip():
+            full_msg = f"{extra} · {msg}" if extra else msg
+        else:
+            full_msg = extra
+        return fixed + " │ " + full_msg
     return fixed
 
 def _log_line_segments(line):

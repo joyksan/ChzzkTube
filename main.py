@@ -33,6 +33,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+# [시퀀스 코디네이터] 시작 시퀀스 단일 책임자
+from startup_coordinator import create_startup_coordinator
+
 ##### 설정 상수/경로/로드·저장은 config 모듈에서 관리
 import config
 import log_console
@@ -42,6 +45,7 @@ import theme
 from controller import MediaController
 from dialogs import ExitConfirmDialog, SettingsDialog, UpdateWorker, VerboseLogWindow
 from utils import _open_windows_explorer
+from startup_coordinator import StartupCoordinator
 
 # [URL 인식 디바운스] 키 입력(타이핑) 침묵 기준 지연 — "타이핑 끝남"은 미래 입력
 # 부재를 감지해야만 알 수 있어 키 입력 경로에선 구조상 필수다.
@@ -82,6 +86,9 @@ class MainWindow(QMainWindow):
         self.ctrl = MediaController(self)
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
+        # StartupCoordinator: DEPS/POT/업데이트 시그널을 중앙에서 수신하고 3대 로그에 전파
+        self._startup_coord = StartupCoordinator(self)
+
         self.settings_dlg = None
         self.verbose_win = None
 
@@ -93,6 +100,9 @@ class MainWindow(QMainWindow):
         self.ctrl.analyze_result_ready.connect(self.on_analyze_success)
         self.ctrl.analyze_error_occurred.connect(self.on_analyze_error)
         self.ctrl.analyze_log_full.connect(self.append_full_log)
+
+        # [시퀀스 코디네이터] 시작 시퀀스 단일 책임자
+        self._startup_coord = create_startup_coordinator(self)
 
         # 락 가드: 앱 시작 및 PO Token 서버 구성 중에는 드롭다운/입력 차단 및 순서 보정
         self._startup_completed = False
@@ -569,7 +579,7 @@ class MainWindow(QMainWindow):
             self._pot_worker = pot_provider.POTProviderWorker(self)
             self._pot_worker.line.connect(self._component_line)
             self._pot_worker.log_full.connect(self.append_full_log)
-            self._pot_worker.finished.connect(self._on_pot_provider_finished)
+            self._pot_worker.finished.connect(self._startup_coord.report_pot)
             self._pot_worker.start()
             self._pot_provider_started = True
         except Exception:
@@ -610,62 +620,13 @@ class MainWindow(QMainWindow):
     def _force_unlock_input(self):
         """[폴백] 구성요소 체인이 15초 내 완료되지 않으면 입력 강제 개방.
 
-        POT server is only needed for age-restricted videos — a stalled chain should not block basic downloads.
+        POT server is only needed for age-restricted videos — a stalled chain
+        should not block basic downloads. 플래그 직접 세팅 대신 Coordinator에
+        위임 — READY 로그도 이 경로에서 단 한 번 발산된다.
         """
         if getattr(self, "_startup_completed", False):
             return
-        self._startup_completed = True
-        self.update_ui_state()
-        # [로그 정책] 폴백 발동도 정상 기동 과정 — 간결 로그에 남기지 않음
-
-    def _on_pot_provider_finished(self):
-        state, msg = self._pot_worker.outcome
-        log_history.log(f"PO server start result: {state} — {msg}")
-
-        # 순서 정합성 패치: PO Token 설정 완료된 가장 마지막 단계에서 버전 체크 결과를 출력
-        # [로그 정책] 구성요소별 '최신/건너뜀' 개별 라인은 간결 로그에서 생략되므로
-        # (_component_line 필터), 그 요약 한 줄만 간결에 남긴다 — 개별 결과는
-        # 상세 로그와 히스토리 파일에 전건 기록. 구버전 감지(_stale_updates) 시엔
-        # 업데이트 진행 라인이 이미 간결에 뜨므로 도장깨기하지 않는다.
-        if state == "ok" and not getattr(self, "_stale_updates", False):
-            self.append_concise_log(
-                log_console.emit_event("DEPS", "OK", "-", "deps ok"),
-                is_status=False,
-                is_error=False,
-            )
-
-        # 실제 성공/실패 여부를 설계 사양과 일치하게 출력
-        if state == "ok":
-            if msg:
-                if log_console.is_tui_line(msg):
-                    # [병기 방지] outcome msg가 이미 TUI 포맷이면 그대로 출력
-                    self.append_concise_log(msg, is_status=False, is_error=False)
-                else:
-                    self.append_concise_log(
-                        log_console.emit_event("SYS", "OK", "pot", msg),
-                        is_status=False,
-                        is_error=False,
-                    )
-        else:
-            self.append_concise_log(
-                log_console.emit_event(
-                    "SYS",
-                    "FAIL",
-                    "pot",
-                    "bind fail — age-only",
-                ),
-                is_status=False,
-                is_error=True,
-            )
-
-        # READY는 히스토리에만 기록 — 간결 콘솔에는 노출하지 않음
-        log_history.log(log_console.emit_event("SYS", "READY", "ENGINE", "ready"), "INFO")
-
-        # 락 가드 해제 및 UI 기동
-        self._startup_completed = True
-        self.update_ui_state()
-
-        self.add_concise_task_separator()  # DEPS 완료와 작업 로그 사이 한 칸 띄우기
+        self._startup_coord.report_ready(True, "ready (fallback timeout)")
 
     def run_analysis(self):
         url = self.url_input.text().strip()
@@ -690,27 +651,55 @@ class MainWindow(QMainWindow):
         if not ok:
             return
 
-        counts = log_console.format_analysis_counts(
-            len(self.extracted_data.get("v_list", [])),
-            len(self.extracted_data.get("a_list", [])),
+        data = self.extracted_data or {}
+        info = data.get("info") or {}
+        v_list = data.get("v_list", [])
+        a_list = data.get("a_list", [])
+        uploader = (
+            info.get("uploader")
+            or info.get("channel")
+            or info.get("uploader_id")
+            or info.get("creator")
+            or ""
         )
-        msg = log_console.emit_event(
-            "ANAL",
-            "OK",
-            "YT",
-            f"stream analyzed{counts}{self._format_analysis_summary()}",
+        title = info.get("title") or data.get("title") or ""
+        meta = " · ".join(x for x in (uploader, title) if x)
+
+        # 플랫폼 축약기호 (YT / CHZ 등)
+        platform = self._platform_of_url()
+
+        # 해상도: v_list 첫 항목에서 추출
+        v_first = v_list[0] if v_list else {}
+        res = ""
+        if isinstance(v_first, dict):
+            h = v_first.get("height") or v_first.get("v_height") or 0
+            fps = v_first.get("fps") or v_first.get("v_fps") or 0
+            if h:
+                res = f"{h}p{fps}" if fps else f"{h}p"
+
+        # ANAL OK 메인 라인: Platform=사이트, Spec=해상도, Msg=stream analyzed · channel · title
+        counts = log_console.format_analysis_counts(len(v_list), len(a_list))
+        base_msg = f"stream analyzed{counts}"
+        if meta:
+            base_msg += f" · {meta[:80]}"
+        # format_log_line에 spec(res=해상도)을 직접 전달
+        full_line = log_console.format_log_line(
+            stage="ANAL", status="OK", platform=platform, spec=res,
+            speed="-", pct=None, bar_frac=None, msg=base_msg,
         )
         self.append_concise_log(
-            msg,
+            full_line,
             True,   # is_status — analyzing... 을 stream analyzed 로 덮어쓰기 (한 줄 유지)
             False,  # is_error
         )
-        # 마지막 블록 철회 가드 — 'stream analyzed' 블록이 실제 마지막 콘텐츠
-        # 블록임을 렌더링 텍스트 그대로 기억한다.
-        # (formatted_url NameError 수리: 미정의 심볼을 제거하고 실측 텍스트로 대체)
+
+        # 마지막 블록 철회 가드
         self._analysis_block_active = True
         self._analysis_block_count = self.console.last_status_block_count
         self._analysis_last_line = self.console.last_content_block_text()
+
+        # 비디오/오디오 포맷 로그: 별도 줄로 출력 (코덱만 표시, 채널명·제목 제외)
+        self._emit_format_logs(v_list, a_list, platform)
 
     def _format_analysis_summary(self):
         """분석 완료 요약 — 채널명 · 제목 등 기본 정보 (플레이리스트/치지직 공용)."""
@@ -751,12 +740,15 @@ class MainWindow(QMainWindow):
         self.update_worker.start(QThread.Priority.LowPriority)
 
     def _on_update_check_done(self, stale):
-        """버전 확인 결과 처리 — 메인에 결론 한 줄, 그 뒤 POT로 진행.
+        """버전 확인 결과 처리 — 메인에 결론 한 줄, 그 뒤 upgrade 워커로 진행.
 
         [min profile] 메인 콘솔에 emit되는 DEPS 라인은 정확히 한 줄:
         결론(최신 / 업데이트 가능 / 일시 장애). 패키지별 raw 라인은
-        _component_line을 통해 상세로그로만 흘러간다. startup 게이트는
-        여전히 _on_pot_provider_finished 책임.
+        _component_line을 통해 상세로그로만 흘러간다.
+
+        [시그널 교통 정리] check_done(list)은 시그니처가 (bool, str)이 아니므로
+        Coordinator에 직결하면 안 된다 — 여기서 결론 라인 출력 + upgrade 워커
+        기동 + Coordinator에 deps 완료 보고(report_deps)를 순서대로 수행한다.
         """
         # [결론 라인] — 메인 콘솔에 단 한 줄
         if stale:
@@ -772,39 +764,22 @@ class MainWindow(QMainWindow):
         else:
             self._stale_updates = False
             self._pot_provider_started = False  # PO 서버는 필요 시에만 가동
-            # (READY는 수급 완료 후 _on_auto_upgrade_done에서 단 한 번 출력 — 조기 READY 금지)
+            # [결론 라인] 최신 상태 — deps ok 단 한 줄 (체크 5줄과 구분되는 결론)
+            self.append_concise_log(
+                log_console.emit_event("DEPS", "OK", "-", "deps ok"),
+                is_status=False,
+                is_error=False,
+            )
         # [stale case] Dev/Frozen integration — UpdateWorker handles all deps (PyPI + ffmpeg + node)
         # stale로 확인된 패키지만 업그레이드, 나머지는 수급(ensure)만 — 2중 출력 방지
         self.update_worker = UpdateWorker(self, upgrade=True, stale_updates=stale, channel=self.cfg.get("update_channel", "stable"), check_updates=self.cfg.get("auto_update_check", True))
         self.update_worker.line.connect(self._component_line)
         self.update_worker.full.connect(self.append_full_log)
-        self.update_worker.upgrade_done.connect(self._on_auto_upgrade_done)
+        self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
         self.update_worker.start()
-
-    def _on_auto_upgrade_done(self, ok, summary):
-        """기동 자동 업그레이드 결과 — 실제 작업이 있었을 때만 결론 1줄.
-
-        summary가 비어 있으면(변화 없음) 침묵 — 체크 블록의 상태 라인과
-        READY만 남기고 중복 in-place 라인을 쌓지 않는다.
-        """
-        if summary:
-            status = "OK" if ok else "FAIL"
-            self.append_concise_log(
-                log_console.emit_event("SYS", status, "DEPS", f"update {summary}"),
-                is_status=False,
-                is_error=not ok,
-            )
-        # PO 서버는 필요 시에만 가동 (선택적 가동)
-        self._pot_provider_started = False
-        # READY는 히스토리에만 기록 — 간결 콘솔에는 노출하지 않음
-        log_history.log(
-            log_console.emit_event("SYS", "READY", "eng", "ready"),
-            "INFO",
-        )
-        # [기동 완료] 자동 업그레이드는 기동 체인의 마지막 필수 단계 —
-        # POT 종료 콜백(필요 시에만 발화)을 기다리지 않고 여기서 개방한다.
-        self._startup_completed = True
-        self.update_ui_state()
+        # [Coordinator 보고] deps 체크 단계 완료 — READY 게이트용 플래그.
+        # 결론 라인은 위에서 이미 출력했으므로 Coordinator는 플래그만 세팅한다.
+        self._startup_coord.report_deps(not bool(stale), "deps ok" if not stale else "update")
 
     def _is_stale_analyze_signal(self):
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단.
