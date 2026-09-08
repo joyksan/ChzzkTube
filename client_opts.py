@@ -22,10 +22,28 @@ def _apply_client_opts(opts, cfg, forced=None):
     forced가 주어지면(분석 단계에서 실증·통과한 클라이언트) cfg 값보다
     우선한다. 다운로드가 분석과 같은 클라이언트를 쓰도록 해 PO 토큰/
     봇 게이트 경로 재진입(0% 스톨)을 막는다.
+
+    [중요] yt-dlp 기본 _DEFAULT_CLIENTS는 ('visionos', 'web')인데,
+    visionos는 연령제한 영상을 처리하지 못해 "No video formats found"로
+    실패한다. 쿠키가 있으면 인증 클라이언트(web, web_embedded, tv_downgraded)
+    를 우선 시도하도록 기본값을 'web'으로 강제한다 — 사용자가 명시적으로
+    'auto'를 선택한 경우에만 yt-dlp 기본을 따른다.
     """
     client = str(forced or cfg.get("yt_player_client", "auto") or "auto")
-    if client != "auto":
-        opts["extractor_args"] = {"youtube": {"player_client": [client]}}
+    if client == "auto":
+        # [연령제한 방어] visionos 기본이 age-gate를 통과 못함.
+        # 쿠키가 있으면 'web'으로 강제 → 인증 클라이언트 경로로 진입.
+        # 쿠키 미설정이면 'auto' 유지(yt-dlp 기본 → 빠른 분석).
+        cookie_file = (cfg.get("cookiefile")
+                       or cfg.get("cookiesfrombrowser")
+                       or cfg.get("cookie_file_path"))
+        browser = cfg.get("browser_cookie", "none")
+        if browser not in ("none", "auto") or cookie_file:
+            client = "web"
+        else:
+            return opts  # 쿠키 없으면 yt-dlp 기본(visionos→web) 사용
+    opts.setdefault("extractor_args", {}).setdefault("youtube", {}) \
+        .setdefault("player_client", []).append(client)
     return opts
 
 

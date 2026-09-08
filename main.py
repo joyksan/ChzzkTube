@@ -658,17 +658,14 @@ class MainWindow(QMainWindow):
                 is_error=True,
             )
 
-        self.append_concise_log(
-            log_console.emit_event("SYS", "READY", "ENGINE", "ready"),
-            is_status=False,
-            is_error=False,
-        )
+        # READY는 히스토리에만 기록 — 간결 콘솔에는 노출하지 않음
+        log_history.log(log_console.emit_event("SYS", "READY", "ENGINE", "ready"), "INFO")
 
         # 락 가드 해제 및 UI 기동
         self._startup_completed = True
         self.update_ui_state()
 
-        self.add_concise_task_separator()  # 한 줄 여백 보증
+        self.add_concise_task_separator()  # DEPS 완료와 작업 로그 사이 한 칸 띄우기
 
     def run_analysis(self):
         url = self.url_input.text().strip()
@@ -705,8 +702,8 @@ class MainWindow(QMainWindow):
         )
         self.append_concise_log(
             msg,
-            is_status=False,
-            is_error=False,
+            True,   # is_status — analyzing... 을 stream analyzed 로 덮어쓰기 (한 줄 유지)
+            False,  # is_error
         )
         # 마지막 블록 철회 가드 — 'stream analyzed' 블록이 실제 마지막 콘텐츠
         # 블록임을 렌더링 텍스트 그대로 기억한다.
@@ -799,10 +796,10 @@ class MainWindow(QMainWindow):
             )
         # PO 서버는 필요 시에만 가동 (선택적 가동)
         self._pot_provider_started = False
-        self.append_concise_log(
+        # READY는 히스토리에만 기록 — 간결 콘솔에는 노출하지 않음
+        log_history.log(
             log_console.emit_event("SYS", "READY", "eng", "ready"),
-            is_status=True,
-            is_error=False,
+            "INFO",
         )
         # [기동 완료] 자동 업그레이드는 기동 체인의 마지막 필수 단계 —
         # POT 종료 콜백(필요 시에만 발화)을 기다리지 않고 여기서 개방한다.
@@ -810,17 +807,20 @@ class MainWindow(QMainWindow):
         self.update_ui_state()
 
     def _is_stale_analyze_signal(self):
-        """유령 분석 결과 판별 — 지운 뒤 'stream analyzed'가 한 번 더 뜨는 버그 차단.
+        """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단.
 
-        [경쟁상태] 워커 스레드의 result_ready/error_occurred는 GUI 이벤트 큐에
+        [경합상태] 워커 스레드의 result_ready/error_occurred는 GUI 이벤트 큐에
         적재(queued connection)된 뒤 전달된다. 유기 패턴의 disconnect()는
-        '이후' 방출을 막을 뿐 이미 큐에 있는 전달은 취소하지 못한다 — 그래서
-        입력을 지운 직전 큐잉된 결과가 슬롯에 도착해 로그를 오염시켰다.
-        발신자(sender)가 현재 활성 워커와 다르면(=유기됨) 또는 입력이 비었으면
-        결과를 완전히 폐기한다.
+        "이후" 방출을 막을 뿐 이미 큐에 있는 전달은 취소하지 못한다 —
+        그래서 입력을 지운 직전 큐잉된 결과가 슬롯에 도착해 로그를 오염시켰다.
+
+        [Signal forwarding] Worker 시그널은 Controller.analyze_* 중계 Signal을
+        거쳐 View 슬롯에 도달한다 (PySide6 Signal to Signal 직접 연결).
+        이 체인에서 self.sender()는 MediaController를 반환하므로 워커 식별이
+        불가능하다. state["analyzing"] 플래그 + URL 입력 여부로 대체 검증한다.
         """
-        if self.sender() is not self.ctrl.worker_analyze:
-            return True  # 유기된 워커의 큐잉된 시그널
+        if not self.ctrl.state.get("analyzing"):
+            return True  # 분석 상태가 아니면(유기·완료) 모든 큐잉된 시그널 폐기
         if not self.url_input.text().strip():
             return True  # 분석 도중 입력이 비워짐
         return False
@@ -853,8 +853,8 @@ class MainWindow(QMainWindow):
         self.stop_analysis_anim(ok=False)
         self.append_concise_log(
             log_console.emit_event("ANAL", "FAIL", "-", err_msg),
-            is_status=False,
-            is_error=True,
+            True,   # is_status — analyzing... 을 에러 메시지로 덮어쓰기
+            True,   # is_error
         )
 
     def update_ui_state(self):
@@ -956,8 +956,8 @@ class MainWindow(QMainWindow):
         # [전체 로그 미러] 상태 줄(진행률 덮어쓰기)은 누적 제외
         if not is_status:
             self._mirror_full_log(msg)
-        # 히스토리 파일 기록
-        log_history.log(msg, "ERROR" if is_error else "INFO")
+            # 히스토리 파일 기록 — 상태 줄(틱)은 기록하지 않음
+            log_history.log(msg, "ERROR" if is_error else "INFO")
 
     def append_full_log(self, msg, is_status=False):
         # is_status=True: 진행률 틱 — F12에서 마지막 줄 갱신, 버퍼 미적재

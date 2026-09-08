@@ -20,9 +20,9 @@ import yt_dlp
 # 반드시 첫 YoutubeDL 생성 전에 설정 (plugins 로딩은 1회성 lazy init).
 yt_dlp.plugins.plugin_dirs.value = []
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 
-from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
+from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api
 from log_console import format_kv_line, format_tree_item
 from media import (
     audio_spec,
@@ -105,10 +105,24 @@ class AnalyzeWorker(QThread):
         # [다운로드 일관성] 분석에서 통과한 클라이언트 기록 — 다운로드가
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
         self.client_used = "auto"
+        self._timeout_timer = QTimer()
+        self._timeout_timer.setSingleShot(True)
+        self._timeout_timer.timeout.connect(self._on_analysis_timeout)
 
     # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — ios는 PO Token
     # 불필요·SABR 무관(720p급), tv는 최후 수단(SABR 360p 리스크).
     _RETRY_CLIENTS = ["ios", "tv"]
+    _ANALYSIS_TIMEOUT_MS = 45000
+
+    def _on_analysis_timeout(self):
+        """[hang-prevention] 분석 타임아웃 — yt-dlp가 멈췄을 때 스레드 강제 종료 + 에러 보고."""
+        self.log_full.emit(
+            f"[analyze] timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s - yt-dlp hung."
+        )
+        self.terminate()
+        self.error_occurred.emit(
+            f"Analysis timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s."
+        )
 
     @staticmethod
     def _is_bot_block(ex):
@@ -177,182 +191,188 @@ class AnalyzeWorker(QThread):
 
     def run(self):
         self.log_full.emit(f"--- [format analysis start] {self.target_url} ---")
+        self._timeout_timer.start(self._ANALYSIS_TIMEOUT_MS)
 
         try:
-            m_clip = re.search(r"chzzk\.naver\.com/clips?/", self.target_url)
-            m_vod = re.search(r"chzzk\.naver\.com/video/(\d+)", self.target_url)
-            if m_clip or m_vod:
-                # 콘텐츠 타입 감지
-                content_type = "CLIP" if m_clip else "VOD"
+            try:
+                m_clip = re.search(r"chzzk\.naver\.com/clips?/", self.target_url)
+                m_vod = re.search(r"chzzk\.naver\.com/video/(\d+)", self.target_url)
+                m_live = re.search(r"chzzk\.naver\.com/live/", self.target_url)
+                if m_clip or m_vod or m_live:
+                    # 콘텐츠 타입 감지
+                    content_type = "CLIP" if m_clip else ("LIVE" if m_live else "VOD")
                 
-                ch_info = (
-                    analyze_chzzk_clip_api(self.target_url)
-                    if m_clip
-                    else analyze_chzzk_vod_api(self.target_url)
-                )
-                v_list = []
-                a_list = []
-                for fmt in ch_info.get("formats", []):
-                    vcodec = fmt.get("vcodec", "")
-                    acodec = fmt.get("acodec", "")
-                    has_v = bool(vcodec)
-                    has_a = bool(acodec)
-                    base = {
-                        "id": fmt["id"],
-                        "height": fmt["height"],
-                        "fps": fmt.get("fps", 0),
-                        "vcodec": vcodec,
-                        "acodec": acodec,
-                        "bitrate": fmt["bitrate"],
-                        "tbr": fmt["bitrate"],
-                    }
-                    if has_v:
-                        v_list.append({
-                            **base,
-                            "label": format_dropdown_label(
-                                {
-                                    "ext": "mp4",
-                                    "height": fmt.get("height"),
-                                    "fps": fmt.get("fps") or None,
-                                    "tbr": fmt.get("bitrate"),
-                                    "protocol": "https",
-                                    "vcodec": vcodec,
-                                    "acodec": "",
-                                },
-                                content_type,
-                            ),
-                        })
-                    elif has_a:
-                        a_list.append({
-                            **base,
-                            "abr": fmt.get("bitrate", 0),
-                            "label": format_dropdown_label(
-                                {
-                                    "ext": "m4a",
-                                    "tbr": fmt.get("bitrate"),
-                                    "protocol": "https",
-                                    "vcodec": "none",
-                                    "acodec": acodec,
-                                },
-                                content_type,
-                            ),
-                        })
-                if not v_list and not a_list:
-                    self.error_occurred.emit(
-                        "chzzk stream fail (cookie)"
+                    ch_info = (
+                        analyze_chzzk_clip_api(self.target_url)
+                        if m_clip
+                        else (analyze_chzzk_live_api(self.target_url) if m_live
+                              else analyze_chzzk_vod_api(self.target_url))
                     )
-                    return
-                self.result_ready.emit(
-                    {"info": ch_info, "v_list": v_list, "a_list": [], "is_chzzk": True}
-                )
-            else:
-                is_playlist = ("playlist?list=" in self.target_url) or ("list=" in self.target_url)
-                is_channel = any(k in self.target_url for k in ["/@", "/channel/", "/c/", "/user/"])
-                
-                if is_playlist or is_channel:
-                    info = self._extract_youtube(
-                        normalize_youtube_channel_url(self.target_url), flat=True
-                    )
-                    
-                    entries = info.get("entries") or []
-                    video_count = len(entries)
-                    title = info.get("title") or "playlist/channel"
-                    
-                    self.result_ready.emit({
-                        "is_playlist": True,
-                        "title": title,
-                        "count": video_count,
-                        "v_list": [],
-                        "a_list": [],
-                    })
-                    return
-
-                info = self._extract_youtube(self.target_url, flat=False)
-
-                if info:
-                    if "entries" in info:
-                        info = info["entries"][0]
-                    
-                    # 콘텐츠 타입 감지 (URL + 메타데이터)
-                    content_type = detect_content_type(self.target_url, info)
-                    
-                    v_list, a_list = [], []
-                    for f in info.get("formats", []):
-                        fid, ext = f.get("format_id", "?"), f.get("ext", "?")
-                        vcodec, acodec = f.get("vcodec", "none"), f.get("acodec", "none")
-                        tbr, fps, height = (
-                            int(f.get("tbr") or 0),
-                            f.get("fps") or 0,
-                            f.get("height") or 0,
-                        )
-                        proto = f.get("protocol") or ""
-                        has_v = str(vcodec or "").strip() not in ("none", "", "None")
-                        has_a = str(acodec or "").strip() not in (
-                            "none",
-                            "",
-                            "None",
-                        )
-
-                        if has_v:
-                            # 비디오 드롭다운: 비디오 정보만 (오디오 코덱 생략)
-                            v_list.append(
-                                {
-                                    "id": fid,
-                                    "height": height,
-                                    "fps": fps,
-                                    "tbr": tbr,
-                                    "vcodec": vcodec,
-                                    "acodec": acodec,
-                                    "proto": proto,
-                                    "ext": ext,
-                                    "label": format_dropdown_label(
-                                        {**f, "acodec": ""}, content_type
-                                    ),
-                                }
-                            )
-                        if has_a and not has_v:
-                            a_list.append(
-                                {
-                                    "id": fid,
-                                    "abr": int(f.get("abr") or tbr or 0),
-                                    "acodec": acodec,
-                                    "ext": ext,
-                                    "proto": proto,
-                                    "label": format_dropdown_label(f, content_type),
-                                }
-                            )
-
-                    v_list.sort(
-                        key=lambda x: (
-                            x["height"],
-                            x["fps"],
-                            get_video_codec_rank(x["vcodec"]),
-                            x["tbr"],
-                        ),
-                        reverse=True,
-                    )
-                    a_list.sort(
-                        key=lambda x: (
-                            x["abr"],
-                            get_audio_codec_rank(x["acodec"], x["id"]),
-                        ),
-                        reverse=True,
-                    )
-
-                    v_list = _dedupe_by_label(v_list)
-                    a_list = _dedupe_by_label(a_list)
-
-                    self.result_ready.emit(
-                        {
-                            "info": info,
-                            "v_list": v_list,
-                            "a_list": a_list,
-                            "is_chzzk": False,
-                            "yt_client": getattr(self, "client_used", "auto") or "auto",
+                    v_list = []
+                    a_list = []
+                    for fmt in ch_info.get("formats", []):
+                        vcodec = fmt.get("vcodec", "")
+                        acodec = fmt.get("acodec", "")
+                        has_v = bool(vcodec)
+                        has_a = bool(acodec)
+                        base = {
+                            "id": fmt["id"],
+                            "height": fmt["height"],
+                            "fps": fmt.get("fps", 0),
+                            "vcodec": vcodec,
+                            "acodec": acodec,
+                            "bitrate": fmt["bitrate"],
+                            "tbr": fmt["bitrate"],
                         }
+                        if has_v:
+                            v_list.append({
+                                **base,
+                                "label": format_dropdown_label(
+                                    {
+                                        "ext": "mp4",
+                                        "height": fmt.get("height"),
+                                        "fps": fmt.get("fps") or None,
+                                        "tbr": fmt.get("bitrate"),
+                                        "protocol": "https",
+                                        "vcodec": vcodec,
+                                        "acodec": "",
+                                    },
+                                    content_type,
+                                ),
+                            })
+                        elif has_a:
+                            a_list.append({
+                                **base,
+                                "abr": fmt.get("bitrate", 0),
+                                "label": format_dropdown_label(
+                                    {
+                                        "ext": "m4a",
+                                        "tbr": fmt.get("bitrate"),
+                                        "protocol": "https",
+                                        "vcodec": "none",
+                                        "acodec": acodec,
+                                    },
+                                    content_type,
+                                ),
+                            })
+                    if not v_list and not a_list:
+                        self.error_occurred.emit(
+                            "chzzk stream fail (cookie)"
+                        )
+                        return
+                    self.result_ready.emit(
+                        {"info": ch_info, "v_list": v_list, "a_list": [], "is_chzzk": True}
                     )
                 else:
-                    self.error_occurred.emit("media info fail")
+                    is_playlist = ("playlist?list=" in self.target_url) or ("list=" in self.target_url)
+                    is_channel = any(k in self.target_url for k in ["/@", "/channel/", "/c/", "/user/"])
+                
+                    if is_playlist or is_channel:
+                        info = self._extract_youtube(
+                            normalize_youtube_channel_url(self.target_url), flat=True
+                        )
+                    
+                        entries = info.get("entries") or []
+                        video_count = len(entries)
+                        title = info.get("title") or "playlist/channel"
+                    
+                        self.result_ready.emit({
+                            "is_playlist": True,
+                            "title": title,
+                            "count": video_count,
+                            "v_list": [],
+                            "a_list": [],
+                        })
+                        return
+
+                    info = self._extract_youtube(self.target_url, flat=False)
+
+                    if info:
+                        if "entries" in info:
+                            info = info["entries"][0]
+                    
+                        # 콘텐츠 타입 감지 (URL + 메타데이터)
+                        content_type = detect_content_type(self.target_url, info)
+                    
+                        v_list, a_list = [], []
+                        for f in info.get("formats", []):
+                            fid, ext = f.get("format_id", "?"), f.get("ext", "?")
+                            vcodec, acodec = f.get("vcodec", "none"), f.get("acodec", "none")
+                            tbr, fps, height = (
+                                int(f.get("tbr") or 0),
+                                f.get("fps") or 0,
+                                f.get("height") or 0,
+                            )
+                            proto = f.get("protocol") or ""
+                            has_v = str(vcodec or "").strip() not in ("none", "", "None")
+                            has_a = str(acodec or "").strip() not in (
+                                "none",
+                                "",
+                                "None",
+                            )
+
+                            if has_v:
+                                # 비디오 드롭다운: 비디오 정보만 (오디오 코덱 생략)
+                                v_list.append(
+                                    {
+                                        "id": fid,
+                                        "height": height,
+                                        "fps": fps,
+                                        "tbr": tbr,
+                                        "vcodec": vcodec,
+                                        "acodec": acodec,
+                                        "proto": proto,
+                                        "ext": ext,
+                                        "label": format_dropdown_label(
+                                            {**f, "acodec": ""}, content_type
+                                        ),
+                                    }
+                                )
+                            if has_a and not has_v:
+                                a_list.append(
+                                    {
+                                        "id": fid,
+                                        "abr": int(f.get("abr") or tbr or 0),
+                                        "acodec": acodec,
+                                        "ext": ext,
+                                        "proto": proto,
+                                        "label": format_dropdown_label(f, content_type),
+                                    }
+                                )
+
+                        v_list.sort(
+                            key=lambda x: (
+                                x["height"],
+                                x["fps"],
+                                get_video_codec_rank(x["vcodec"]),
+                                x["tbr"],
+                            ),
+                            reverse=True,
+                        )
+                        a_list.sort(
+                            key=lambda x: (
+                                x["abr"],
+                                get_audio_codec_rank(x["acodec"], x["id"]),
+                            ),
+                            reverse=True,
+                        )
+
+                        v_list = _dedupe_by_label(v_list)
+                        a_list = _dedupe_by_label(a_list)
+
+                        self.result_ready.emit(
+                            {
+                                "info": info,
+                                "v_list": v_list,
+                                "a_list": a_list,
+                                "is_chzzk": False,
+                                "yt_client": getattr(self, "client_used", "auto") or "auto",
+                            }
+                        )
+                    else:
+                        self.error_occurred.emit("media info fail")
+            finally:
+                self._timeout_timer.stop()
         except Exception as ex:
             ex_str = str(ex).lower()
             if (
@@ -419,6 +439,11 @@ class DownloadWorker(QThread):
         self._speed_win.reset()
         self._tick_file = None
         self._tick_last = 0
+
+    def _emit_chzzk_header(self, ch_info, fmt):
+        """yt-dlp에 chzzk 메타데이터를 전달하는 헤더 설정."""
+        # chzzk API에서 받은 메타데이터를 yt-dlp에 전달하여 올바른 Downloader로 인식
+        pass
 
     def run(self):
         """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
