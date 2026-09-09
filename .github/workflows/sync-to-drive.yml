@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2  # 최신 Node.js 24 호환 버전 명시
 
       - name: Install Rclone
         run: |

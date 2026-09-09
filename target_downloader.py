@@ -41,7 +41,7 @@ from client_opts import (
     _apply_light_analysis_opts,
     _apply_pot_opts,
 )
-from progress_emitter import emit_err
+from log_console import emit_err as _emit_err
 import progress_emitter as _pe
 import live_recorder as _lr
 
@@ -191,7 +191,7 @@ def _download_vod(ctx, url):
 def _emit_error_log(ctx, url, reason, failed_targets):
     """에러 로그 출력 및 실패 목록에 추가."""
     ctx.log_concise.emit(
-        emit_err(f"{format_target_url(url, 40)} — {reason}"),
+        _emit_err(f"{format_target_url(url, 40)} — {reason}"),
         False,
         True,
     )
