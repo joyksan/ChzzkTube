@@ -5,6 +5,19 @@
 - 라이브 틱·마감: 릴레이 파이프 계수 → 동일 컬럼 규격 (용량 rjust(9) / 속도 rjust(11))
 - 헤더(다운로드/라이브/치지직): 제목·포맷 트리 조판, 통합 포맷은 오디오 가지 미표기
 - media.cli_format_desc 가 포맷 표기의 단일 출처.
+
+── Worker Contract ──────────────────────────────────────────────
+본 모듈의 함수들이 요구하는 worker 객체의 인터페이스:
+  worker.logger           : YtLoggerBridge — log_full/log_concise 시그널
+  worker.cfg              : dict  — download_path, container 등 설정
+  worker.v_spec           : dict  — height, fps 등 비디오 스펙
+  worker.audio_desc       : str   — 오디오 설명
+  worker.current_url       : str   — 현재 처리 중인 URL
+  worker.current_file      : str|None — 현재 다운로드 파일 경로
+  worker._speed_win        : SpeedWindow — 이동평균 속도 (hook 내부에서 add)
+  worker.total_count / current_idx : int — 배치 진행 현황
+  worker.live_partially_saved : bool — 라이브 부분 저장 플래그
+──────────────────────────────────────────────────────────────────
 """
 import os
 import time

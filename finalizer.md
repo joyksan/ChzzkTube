@@ -1,4 +1,12 @@
-"""finalizer.py - DownloadWorker의 _finalize 분할 — TUI 컬럼 포맷."""
+"""finalizer.py - DownloadWorker의 _finalize 분할 — TUI 컬럼 포맷.
+
+── Worker Contract ──────────────────────────────────────────────
+본 모듈의 함수들이 요구하는 worker 객체의 인터페이스:
+  worker.logger           : YtLoggerBridge — log_full/log_concise 시그널
+  worker.total_count      : int   — 전체 대상 수
+  worker.current_url       : str   — 현재 처리 중인 URL (실패 시 참조)
+──────────────────────────────────────────────────────────────────
+"""
 import os
 
 from progress_emitter import emit_dl, emit_err

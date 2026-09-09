@@ -502,7 +502,16 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 - ✅ 다운로더 팩토리 분리: 3-way 독립 모듈
 
 #### 남은 트레이드오프
-- **worker grab-bag (D)**: 다음 반복 — 현재 worker 객체는 관용적 패턴으로 충분히 동작. dataclass 컨텍스트 추출은 QThread 상속 + Signal 구조 때문에 오히려 복잡. 계약 문서화로 대체
+- **worker grab-bag (D)**: ✅ 계약 문서화 완료 — `target_downloader.py`, `progress_emitter.py`, `finalizer.py` 상단에 Worker Contract 블록 추가. dataclass 추출은 다음 반복으로 유보
+
+#### 테스트 보강
+- `tests/` 디렉토리 신설 — pytest 기반 단위 테스트 56건 전체 통과
+  - `test_po_client.py` — server_ping/extract_video_id/fetch_po_token
+  - `test_media.py` — format_bytes/short_codec/audio_spec/코덱 랭크
+  - `test_dl_platform.py` — _dl_platform/_short_platform/detect_content_type
+  - `test_log_console.py` — format_log_line 포맷 규격
+  - `test_coordinator.py` — 시퀀스 게이트(READY 1회/중복방지/강제 언락)
+- `pyproject.toml` — `[dependency-groups] dev = ["pytest>=8.0"]` + `[tool.pytest.ini_options]` 추가
 
 ### 2026-09-05 — 유튜브 라이브 URL 감지 개선
 

@@ -5,6 +5,23 @@
 - download_target : 개별 URL 을 타입별로 분기해 실제 다운로드
   chzzk(clip/vod) → 직접 HTTP 스트림, youtube VOD → yt-dlp,
   youtube live → _download_youtube_live(ffmpeg), stream → streamlink
+
+── Worker Contract ──────────────────────────────────────────────
+본 모듈의 함수들이 요구하는 worker 객체의 인터페이스:
+  worker.cfg              : dict  — download_path, max_video_res, container,
+                                     audio_only, fast_download, yt_player_client 등
+  worker.v_sel / a_sel    : str   — 선택된 비디오/오디오 format_id ("auto" 가능)
+  worker.v_spec           : dict  — height, fps 등 비디오 스펙 (v_list[0]에서 추출)
+  worker.audio_desc       : str   — 오디오 설명 (a_list[0]에서 추출)
+  worker.logger           : YtLoggerBridge — log_full/log_concise 시그널
+  worker.current_url       : str   — 현재 처리 중인 URL
+  worker.current_file      : str|None — 현재 다운로드 파일 경로
+  worker.state             : dict  — canceled, skip 플래그 (UI→워커 단방향 쓰기)
+  worker._speed_win        : SpeedWindow — 이동평균 속도
+  worker.total_count / current_idx : int — 배치 진행 현황
+  worker.is_live_hint      : bool — 라이브 스트림 힌트
+  worker.live_partially_saved : bool — 라이브 부분 저장 플래그
+──────────────────────────────────────────────────────────────────
 """
 import functools
 import os

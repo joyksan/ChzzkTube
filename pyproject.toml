@@ -13,6 +13,12 @@ dependencies = [
 [dependency-groups]
 # Windows 빌드(PyInstaller)용 — uv sync --group build
 build = ["pyinstaller"]
+# 개발/테스트 용
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
 
 [tool.uv]
 # 앱 프로젝트 — 패키지로 빌드/배포하지 않으므로 uv run 때마다 프로젝트를 빌드하지 않는다
