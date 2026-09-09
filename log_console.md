@@ -754,6 +754,23 @@ def emit_event(stage, status, platform="-", msg=""):
     )
 
 
+def emit_dl(status, platform="", spec="", speed="", pct=None, bar_frac=None, msg="", stage="DL"):
+    """다운로드 진행률/완료 라인 — SPEC(스트림 속성)과 SPEED(네트워크) 분리.
+
+    예: [12:00:01] DL │ RUN │ YT  │ 1080p30 │ 12.4M/s │ 65.0% │ [█⋯░] │ 제목
+    """
+    return format_log_line(
+        stage=stage,
+        status=status,
+        platform=platform,
+        spec=spec,
+        speed=speed,
+        pct=pct,
+        bar_frac=bar_frac,
+        msg=msg,
+    )
+
+
 def emit_err(msg):
     """에러 1줄 — FAIL 상태, 플랫폼 '-'. 내부적으로 format_log_line 호출."""
     return format_log_line(
