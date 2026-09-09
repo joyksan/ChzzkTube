@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: v3.1.0 — 아키텍처/실행환경/데이터 구조 실측 최신화 + emit 위험 규약 반영
+> 마지막 갱신: v3.1.2 — 2026-09-09 전체 아키텍처/모듈/테스트/CI 실측 최신화
 
 ---
 
@@ -67,18 +67,18 @@
 - 내부 구분: `VIDEO`, `AUDIO`, `SYS`
 
 #### 3.5 예시 로그
-```
+
 [13:34:23] DEPS  │ OK   │ YTDL  │ 2026.8.19 │ 
 [13:34:23] DEPS  │ OK   │ STRE  │ 8.5.0     │ 
 [13:34:23] DEPS  │ OK   │ FFMP  │ 9.0.1     │ 
 [13:34:23] DEPS  │ OK   │ NODE  │ v22       │ 
 [13:34:23] DEPS  │ OK   │ POT   │ running   │ 
-[13:34:23] SYS   │ READY│ SYS   │ - │ ready
+[13:34:23] SYS   │ READY│ SYS   │     -     │ ready
 [13:34:24] ANAL  │ OK   │ YT    │ 1080p30   │ stream analyzed · YTN · "제목"
 [13:34:25] ANAL  │ OK   │ VIDEO │ h264      │ 
 [13:34:25] ANAL  │ OK   │ AUDIO │ opus      │ 
 [13:34:26] DL    │ RUN  │ YT    │ 1080p30   │ 12.4M/s · 65% · [█⋯░]
-[13:34:30] DL    │ OK   │ YT    │ -         │ video.mp4 (11.56 MB) · YTN
+[13:34:30] DL    │ OK   │ YT    │     -     │ video.mp4 (11.56 MB) · YTN
 
 ### 4. 시각적 디테일 및 영문 미니멀화
 - **파스텔 톤 에러 컬러**: 눈 피로도를 높이는 원색 Red(`#FF0000`)를 Soft Pastel Red(`#E06C75` / `#F87171`)로 교체.
@@ -88,7 +88,7 @@
 YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.
 
 - **Tier 1 (기본, 항상 가동)**: 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
-- **PO Token 서버 (선택적 가동)**: `pot_provider`는 **필요 시에만** 가동한다.
+- **PO Token 서버 (선택적 가동)**: `pot_provider`는 실행 초기 DEPS 체크 때 가동여부만 판단 후 **필요 시에만** 가동한다.
   - 가동 조건: `age_limit > 0` (연령 제한) 또는 `availability` in ('needs_auth', 'premium_only', 'subscriber_only', 'private')
   - 일반 공개 영상은 PO 서버 없이 다운로드 → 리소스 절약
   - 분석(`AnalyzeWorker`) 완료 후 판단, 필요 시 `[POT] RUN — starting...` 로그 출력
@@ -125,58 +125,73 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
 
 ## 3. 아키텍처 (역방향 참조 0 · 순환 import 0 — 실측 검증됨)
 
+### 레이어별 구조 (4계층 + L0 Leaf)
+
 ```
-[View]      main(1042) · dialogs(834) · theme(306) · log_console(734)*
-[Control]   controller(210)
-[Worker]    downloader(451) ─ target_downloader(292) · live_recorder(211)
-                              progress_emitter(193) · finalizer(52) · speed_window(47)
-                              client_opts(107) · dl_platform(100) · playlist(37)
-[Domain]    media(334) · chzzk_api(207) · cookies(80) · config(70) · utils(68) · updater(105)
-[Infra]     pot_provider(935) · components(522) · log_history(95)
+LAYER 3: View (Qt Widgets)
+  main.py · dialogs.py · theme.py · log_console.py
+LAYER 2: Orchestrators
+  startup_coordinator.py · controller.py
+LAYER 1: Worker Threads (QThread)
+  downloader.py · analyze_worker.py · update_worker.py · pot_provider.py
+LAYER 0.5: Pipeline Functions (ctx 기반, 비스레드)
+  target_downloader.py · progress_emitter.py · live_recorder.py · finalizer.py · dl_context.py
+LAYER 0: Domain / Helpers / Infra (Leaf)
+  media.py · chzzk_api.py · cookies.py · config.py · updater.py · utils.py
+  worker_context.py · yt_logger_bridge.py · dl_platform.py · speed_window.py · playlist.py
+  po_client.py(L0) · node_provider.py(L0) · pot_server.py(L1) ·
+  components.py · log_history.py · smoke_test.py · sync_mirrors.py
 ```
-※ `log_console`은 View 렌더와 Worker 포맷 양쪽에서 호출되는 공용 로그 파이프라인(테마/이벤트 포맷 참조). 아래부터는 시그널 emit **위치 인자 계약**(§5-8) 준수 필수.
 
-| 모듈 | 책임 |
-|------|------|
-| `main` | 진입점 + MainWindow(UI 조립·로그 출력·종료 처리). 분석 완료 요약(`_format_analysis_summary`) 포함 |
-| `controller` | MediaController — 다운로드/분석 세션 state 머신, 타겟 파싱, 워커 생명주기(좀비 유기) |
-| `downloader` | AnalyzeWorker / DownloadWorker(QThread) + YtLoggerBridge. **경량 분석**(youtube:skip) 분기 |
-| `dialogs` | ExitConfirm·Settings·CookieSelect·CookieViewer·ActionCountdown·VerboseLogWindow 6종 + CustomComboBox + UpdateWorker |
-| `theme` | 색상 토큰 + QSS 상수 20종 (**QSS 단일 출처**) |
-| `log_console` | ConciseLogConsole — 간결 로그 덮어쓰기 파이프라인 + 컬럼 포맷 규격(`format_log_line`/`emit_event`) |
-| `media` | map_res, format_bytes, codec rank, format_title, cleanup_temp_files, remux_live_to_container |
-| `chzzk_api` | 치지직 클립/VOD 공개 API 분석 (yt-dlp 우회 경로) |
-| `cookies` | Firefox/Chromium 쿠키 DB 추출 |
-| `config` | 경로(frozen/dev), 기본값, 로드/저장 — 제로 의존 leaf |
-| `utils` | clean_ansi, get_filename_template, _open_windows_explorer, parse_sec |
-| `updater` | 구성요소(yt-dlp/streamlink) 버전 확인(PyPI) 및 pip 업그레이드 |
+### 시그널 방향 트리
 
-### 하위 모듈 (Worker 계층 분할)
+```
+StartupCoordinator._on_update_check_done → upgrade → _on_auto_upgrade_done → report_upgrade → report_ready(1회)
+POTProviderWorker.finished → coordinator.report_pot
+UpdateWorker.check_done → DEPS 5줄 출력 + upgrade 기동 + report_deps 플래그
+MediaController: analyze_result_ready → View 포워딩 (Signal-to-Signal)
+DownloadWorker: log_concise → append_concise_log (is_status=True 틱)
+```
 
-| 모듈 | 책임 |
-|------|------|
-| `progress_emitter` | 로그 이벤트 포맷팅 (DL/LIVE 헤더·틱·완료) |
-| `live_recorder` | 라이브 녹화 파이프라인 (ffmpeg/streamlink, 취소·릴레이 계측) |
-| `target_downloader` | 개별 URL 다운로드 분기 (VOD/라이브/치지직/Streamlink) + 대상 평탄화 |
-| `finalizer` | 다운로드 완료 요약 로그 (ABORT/개별 실패/배치 결론) |
-| `client_opts` | yt-dlp 옵션 주입 (쿠키·클라이언트·PO Token·FFmpeg·경량 분석 `skip`) |
-| `speed_window` | 속도 측정 슬라이딩 윈도우 |
-| `dl_platform` | URL → 플랫폼/콘텐츠 타입 감별 |
-| `playlist` | YouTube 채널 URL 정규화 |
+### 모듈 목록 (34개)
 
-### 인프라 모듈 (부트/유지보수)
-
-| 모듈 | 책임 |
-|------|------|
-| `pot_provider` | PO Token bgutil Node 서버 기동/감시 + `fetch_po_token`(직접 HTTP POST `/get_pot`) |
-| `components` | ffmpeg 런타임 수급 퍼사드 (Windows/macOS/Linux 전략) |
-| `log_history` | 날짜별 원본 로그 히스토리 (thread-safe, 30일 보존, session_begin/end) |
-| `smoke_test` | offscreen 기동 검증 하네스 (리다이렉트 인코딩 강제) |
-| `sync_mirrors` | `.py` docstring → 동일 이름 `.md` 미러 자동 동기화 도구 |
+| 분류 | 모듈 | 핵심 책임 |
+|------|------|----------|
+| View | main | 진입점 + MainWindow |
+| View | dialogs | 6종 Dialog + ComboBox + UpdateWorker(이전) |
+| View | theme | QSS/컬러 토큰 |
+| View | log_console | 컬럼 포맷 규격(format_log_line/emit_dl/emit_err) |
+| Control | controller | MediaController(state 머신 + 워커 생명주기) |
+| Control | startup_coordinator | 시작 시퀀스 게이트(READY 1회 발산) |
+| Worker | downloader | DownloadWorker + YtLoggerBridge |
+| Worker | analyze_worker | AnalyzeWorker(QThread) — 경량 분석 |
+| Worker | update_worker | UpdateWorker(QThread) — DEPS/업그레이드 |
+| Worker | pot_provider | POTProviderWorker + 3개 모듈 재수출 facade |
+| Pipeline | target_downloader | VOD/라이브/치지직/Streamlink 분기 |
+| Pipeline | progress_emitter | emit_dl/emit_err — 진행 틱/헤더/완료 |
+| Pipeline | live_recorder | ffmpeg/streamlink 라이브 녹화 |
+| Pipeline | finalizer | 배치 마감 요약 |
+| Pipeline | dl_context | DownloadContext dataclass (파이프라인 계약) |
+| Shared | yt_logger_bridge | 공용 로거 어댑터 |
+| Infra | po_client | L0 leaf — PO Token HTTP 클라이언트 |
+| Infra | node_provider | L0 leaf — Node.js 런타임 수급 |
+| Infra | pot_server | L1 — bgutil 서버 빌드/기동 |
+| Domain | media | map_res, format_bytes, codec rank |
+| Domain | chzzk_api | 치지직 클립/VOD API 분석 |
+| Domain | cookies | 브라우저 쿠키 DB 추출 |
+| Domain | config | 경로/기본값/로드/저장 |
+| Domain | updater | 구성요소 버전 확인/PyPI 업그레이드 |
+| Domain | utils | 문자열/윈도우 헬퍼 |
+| Domain | dl_platform | URL → 플랫폼/콘텐츠 타입 |
+| Domain | speed_window | 속도 측정 슬라이딩 윈도우 |
+| Domain | playlist | YouTube 채널 URL 정규화 |
+| Infra | components | ffmpeg 런타임 수급 퍼사드 |
+| Infra | log_history | thread-safe 히스토리(30일 보존) |
+| Infra | worker_context | Worker 컨텍스트 헬퍼 |
+| Infra | smoke_test | offscreen 기동 검증 하네스 |
+| Infra | sync_mirrors | docstring → .md 미러 동기화 |
 
 ## 4. 핵심 데이터 구조
-
-### dl_state (MediaController.state — 워커와 공유)
 ```python
 {"running": bool, "canceled": bool, "skip": bool, "analyzing": bool}
 ```
@@ -324,6 +339,33 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **문서 미러** | `.py` docstrings가 원본, `.md` 미러는 자동 생성. 손수정 금지 |
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-09 — pot_provider SRP 3-웨이 분리 + dataclass 컨텍스트 추출 + 통합 테스트 + CI
+
+| 모듈 | 변경 |
+|------|------|
+| `po_client.py` | **신규 L0 leaf** — PO Token HTTP 클라이언트 (`fetch_po_token`/`extract_video_id`/`probe_server`) |
+| `node_provider.py` | **신규 L0 leaf** — Node.js 런타임 수급 (`ensure_node_runtime`/`node_exe`/`npm_exe`) |
+| `pot_server.py` | **신규** — bgutil 서버 빌드/기동 (`ensure_node_server`/`built_server_js`/`_spawn_node_server`) |
+| `pot_provider.py` | **facade** — 3개 모듈 재수출 + `POTProviderWorker(QThread)` 유지 (935→230라인) |
+| `dl_context.py` | **신규** — `DownloadContext` dataclass로 파이프라인 계약 명시화 |
+| `analyze_worker.py` | **신규** — AnalyzeWorker(QThread) 분리 (path 분리) |
+| `update_worker.py` | **신규** — UpdateWorker + `_RAW_VERSION_CMDS` 분리 |
+| `yt_logger_bridge.py` | **신규** — 공용 YtLoggerBridge 어댑터 분리 |
+| `downloader.py` | DownloadWorker만 유지, 미사용 임포트 제거 |
+| `dialogs.py` | UpdateWorker 블록 제거 (846→686줄) |
+| `target_downloader.py` | 오류 사유 영문 1-3단어 태그화 |
+| `progress_emitter.py` | emit_dl/emit_err 재수출 단일화 |
+| `log_console.py` | emit_dl/emit_err 단일 출처 추가 |
+| `HANDOVER.md` | §3 아키텍처 34개 모듈 실측 최신화, §5 시그널 계약 갱신, §3.5 포맷 표준 추가 |
+| `tests/test_download_pipeline.py` | **신규 12개 테스트** — ctx 흐름/포맷/facade 검증 |
+| `.github/workflows/ci.yml` | **신규 CI** — push/PR 시 pytest 자동 실행 |
+
+#### 검증
+- ✅ py_compile 34개 모듈 OK
+- ✅ pytest 68 passed (56 기존 + 12 신규)
+- ✅ 런타임 READY 1건 유지 (3회 연속)
+- ✅ 계층 역전 0: client_opts/updater → po_client 직접 참조
 
 ### 2026-09-07 — DEPS 로그 2분기 원문화 + 실행체 통일 + Nightly 채널 활성화
 
