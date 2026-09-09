@@ -754,6 +754,14 @@ def emit_event(stage, status, platform="-", msg=""):
     )
 
 
+def emit_err(msg):
+    """에러 1줄 — FAIL 상태, 플랫폼 '-'. 내부적으로 format_log_line 호출."""
+    return format_log_line(
+        stage="DL", status="FAIL", platform="-", spec="-", speed="-",
+        pct=None, bar_frac=None, msg=msg,
+    )
+
+
 def emit_progress(stage, status, platform="-", spec="-", speed="-", pct=None, bar_frac=None, msg=""):
     """진행률 표시 라인 — ANAL/DL/LIVE 단계."""
     return format_log_line(

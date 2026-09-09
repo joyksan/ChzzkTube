@@ -60,6 +60,30 @@ class DownloadWorker(QThread):
         self.current_idx = 1
         self.current_url = None
 
+    def extract(self):
+        """파이프라인 모듈에 넘길 DownloadContext를 생성한다 (D: 명시적 계약)."""
+        from dl_context import DownloadContext
+
+        return DownloadContext(
+            cfg=self.cfg,
+            v_sel=self.v_sel,
+            a_sel=self.a_sel,
+            v_spec=self.v_spec,
+            audio_desc=self.audio_desc,
+            logger=self.logger,
+            current_url=self.current_url or "",
+            current_file=self.current_file,
+            state=self.state,
+            speed_win=self._speed_win,
+            total_count=self.total_count,
+            current_idx=self.current_idx,
+            is_live_hint=self.is_live_hint,
+            live_partially_saved=self.live_partially_saved,
+            yt_client=self.yt_client,
+            targets=self.targets,
+            finished_all=self.finished_all,
+        )
+
     def _reset_loop_state(self):
         """매 타겟마다 필요한 상태 변수들을 한 번에 초기화."""
         self.current_file = None
@@ -76,7 +100,9 @@ class DownloadWorker(QThread):
 
     def run(self):
         """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
-        self.targets = _td.expand_targets(self)
+        ctx = self.extract()
+        ctx.targets = _td.expand_targets(ctx)
+        self.targets = ctx.targets  # 동기화 (current_file 등 내부 상태 유지)
         self.total_count = len(self.targets)
         failed_targets = []
         success_count = 0
@@ -85,11 +111,14 @@ class DownloadWorker(QThread):
             for idx, url in enumerate(self.targets, 1):
                 self.current_idx = idx
                 self.current_url = url
+                ctx.current_idx = idx
+                ctx.current_url = url
                 if self.state["canceled"]:
                     break
                 if self.state["skip"]:
                     self.state["skip"] = False
                     self._reset_loop_state()
+                    ctx._meta_logged = False
                     self.log_concise.emit(
                         _pe.emit_dl("SKIP", "-", spec="-", speed="-", pct=None, bar_frac=None,
                                     msg=f"skipped ({idx}/{self.total_count})"),
@@ -97,11 +126,13 @@ class DownloadWorker(QThread):
                     )
                     continue
                 self._reset_loop_state()
+                ctx._meta_logged = False
+                ctx.current_file = None
 
-                if _td.download_target(self, url, failed_targets):
+                if _td.download_target(ctx, url, failed_targets):
                     success_count += 1
 
-            _fin.finalize(self, self.total_count, failed_targets, success_count)
+            _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 
         except Exception as ex:
             if "CANCELED_BY_USER" in str(ex) or "중지되었습니다" in str(ex) or self.state["canceled"]:
@@ -111,5 +142,5 @@ class DownloadWorker(QThread):
                     _pe.emit_err(str(ex)), False, True
                 )
 
-            _fin.finalize(self, self.total_count, failed_targets, success_count)
+            _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 

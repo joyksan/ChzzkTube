@@ -41,24 +41,24 @@ from client_opts import (
     _apply_light_analysis_opts,
     _apply_pot_opts,
 )
-from progress_emitter import emit_err
+from log_console import emit_err as _emit_err
 import progress_emitter as _pe
 import live_recorder as _lr
 
 
-def _make_ytdl_opts(worker, fmt, url):
+def _make_ytdl_opts(ctx, fmt, url):
     """yt-dlp 다운로드 옵션 — outtmpl/훅/병합/쿠키/player_client 주입."""
     opts = {
-        "logger": worker.logger,
+        "logger": ctx.logger,
         "noplaylist": True,
-        # [Thin Wrapper 제거 후속] progress hook은 모듈 함수(worker 선결 바인딩)
-        "progress_hooks": [functools.partial(_pe.hook, worker)],
+        # [Thin Wrapper 제거 후속] progress hook은 모듈 함수(ctx 선결 바인딩)
+        "progress_hooks": [functools.partial(_pe.hook, ctx)],
         "outtmpl": os.path.join(
-            worker.cfg.get("download_path") or ".",
-            get_filename_template(worker.cfg),
+            ctx.cfg.get("download_path") or ".",
+            get_filename_template(ctx.cfg),
         ),
         "format": fmt,
-        "merge_output_format": worker.cfg.get("container", "mp4"),
+        "merge_output_format": ctx.cfg.get("container", "mp4"),
         "retries": 3,
         "socket_timeout": 30,
         # [0% 스톨 픽스] PO 토큰 불일치 시 googlevideo가 "묵살 스로틀"
@@ -67,13 +67,13 @@ def _make_ytdl_opts(worker, fmt, url):
         # [주의] dest가 throttledratelimit (camelCase 아님, yt-dlp 옵션 표준)
         "throttledratelimit": 100_000,
     }
-    if worker.cfg.get("fast_download"):
+    if ctx.cfg.get("fast_download"):
         opts["concurrent_fragment_downloads"] = 4
-    _apply_cookie_opts(opts, worker.cfg)
-    _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+    _apply_cookie_opts(opts, ctx.cfg)
+    _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
     _apply_ejs_opts(opts)
     _apply_pot_opts(opts, _extract_yt_id(url),
-                    client=(worker.yt_client if worker.yt_client != "auto" else "web_embedded"))
+                    client=(ctx.yt_client if ctx.yt_client != "auto" else "web_embedded"))
     _apply_ffmpeg_opts(opts)
     return opts
 
@@ -84,31 +84,31 @@ def _extract_yt_id(url):
     return extract_video_id(url)
 
 
-def _format_selector(worker):
+def _format_selector(ctx):
     """yt-dlp format 선택 문자열 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 대응."""
-    if worker.cfg.get("audio_only"):
+    if ctx.cfg.get("audio_only"):
         return "bestaudio/best"
 
     # [포맷 직접 고르기] 분석 목록에서 사용자가 선택한 format_id 우선
-    v_id = str(worker.v_sel or "").strip()
-    a_id = str(worker.a_sel or "").strip()
+    v_id = str(ctx.v_sel or "").strip()
+    a_id = str(ctx.a_sel or "").strip()
     if v_id and v_id != "auto":
         if a_id and a_id != "auto":
             return f"{v_id}+{a_id}"
         return f"{v_id}+bestaudio"
 
     # [자동 경로] 해상도 제한 내 최고 품질
-    res = str(worker.cfg.get("max_video_res") or "none").strip()
+    res = str(ctx.cfg.get("max_video_res") or "none").strip()
     if res.isdigit():
         return f"bv*[height<={res}]+ba/b"
     return "bv*+ba/b"  # 기본 최고 품질 (명시/통합 동일)
 
 
-def _http_download(worker, url, out_path):
+def _http_download(ctx, url, out_path):
     """치지직 progressive MP4 직접 스트림 다운로드 + 진행률 틱."""
     import urllib.request
 
-    worker._speed_win.reset()
+    ctx.speed_win.reset()
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req) as resp, open(out_path, "wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
@@ -119,11 +119,11 @@ def _http_download(worker, url, out_path):
                 break
             f.write(chunk)
             done += len(chunk)
-            worker._speed_win.add(done)
+            ctx.speed_win.add(done)
     return out_path
 
 
-def _download_chzzk(worker, url, content_type):
+def _download_chzzk(ctx, url, content_type):
     """치지직 클립/VOD — API 포맷의 progressive MP4 직접 스트림 다운로드."""
     ch_info = (
         analyze_chzzk_clip_api(url)
@@ -138,67 +138,67 @@ def _download_chzzk(worker, url, content_type):
     if not stream_url:
         raise RuntimeError("chzzk URL missing")
 
-    if not worker._meta_logged:
-        worker._emit_chzzk_header(ch_info, fmt)
+    if not ctx._meta_logged:
+        ctx._emit_chzzk_header(ch_info, fmt)
 
     out_path = os.path.join(
-        worker.cfg["download_path"], _chzzk_filename(ch_info, fmt, worker.cfg)
+        ctx.cfg["download_path"], _chzzk_filename(ch_info, fmt, ctx.cfg)
     )
-    real = _http_download(worker, stream_url, out_path)
-    worker.log_success_info(real)
-    worker._speed_win.reset()
+    real = _http_download(ctx, stream_url, out_path)
+    ctx.log_success_info(real)
+    ctx.speed_win.reset()
     return True
 
 
-def _download_youtube_live(worker, url):
+def _download_youtube_live(ctx, url):
     """유튜브 라이브 — ffmpeg 녹화 파이프라인 (live_recorder)."""
-    return _lr.download_youtube_live(worker, url)
+    return _lr.download_youtube_live(ctx, url)
 
 
-def _download_streamlink(worker, url):
+def _download_streamlink(ctx, url):
     """streamlink 대상 — 자식 프로세스 녹화 파이프라인."""
     out_file = os.path.join(
-        worker.cfg["download_path"], "streamlink_live.mp4"
+        ctx.cfg["download_path"], "streamlink_live.mp4"
     )
-    temp_ts, thumb, _ = _lr.prepare_live_paths(worker, out_file, None)
+    temp_ts, thumb, _ = _lr.prepare_live_paths(ctx, out_file, None)
     cmd = ["streamlink", url, "best", "-O"]
-    return _lr.record_live_stream(worker, cmd, temp_ts, out_file, thumb)
+    return _lr.record_live_stream(ctx, cmd, temp_ts, out_file, thumb)
 
 
-def _download_vod(worker, url):
+def _download_vod(ctx, url):
     """유튜브 VOD — yt-dlp 다운로드 (progress_hook → hook/틱)."""
-    fmt = _format_selector(worker)
-    opts = _make_ytdl_opts(worker, fmt, url)
+    fmt = _format_selector(ctx)
+    opts = _make_ytdl_opts(ctx, fmt, url)
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     if not info:
         raise RuntimeError("info extract fail")
 
-    if not worker._meta_logged:
-        _pe.emit_download_header(worker, info)
+    if not ctx._meta_logged:
+        _pe.emit_download_header(ctx, info)
 
     # 병합(chzzk 무관) 후 실제 산출 파일 완료 로그
     for dl in info.get("requested_downloads") or []:
         _pe.log_success_info(
-            worker,
+            ctx,
             dl.get("filepath") or dl.get("_filename") or ""
         )
         
-    worker._speed_win.reset()
+    ctx.speed_win.reset()
     return True
 
 
-def _emit_error_log(worker, url, reason, failed_targets):
+def _emit_error_log(ctx, url, reason, failed_targets):
     """에러 로그 출력 및 실패 목록에 추가."""
-    worker.log_concise.emit(
-        emit_err(f"{format_target_url(url, 40)} — {reason}"),
+    ctx.log_concise.emit(
+        _emit_err(f"{format_target_url(url, 40)} — {reason}"),
         False,
         True,
     )
     failed_targets.append((url, reason))
 
 
-def _is_youtube_live_url(worker, url):
+def _is_youtube_live_url(ctx, url):
     """유튜브 URL이 라이브인지 경량 프리체크 (yt-dlp extract_info 사용).
 
     배치(txt) 입력 시 is_live_hint가 없어 VOD 경로로 가는 문제를 해결하기 위해
@@ -206,13 +206,13 @@ def _is_youtube_live_url(worker, url):
     """
     try:
         opts = {
-            "logger": worker.logger,
+            "logger": ctx.logger,
             "noplaylist": True,
             "skip_download": True,
             "extract_flat": False,
         }
-        _apply_cookie_opts(opts, worker.cfg)
-        _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+        _apply_cookie_opts(opts, ctx.cfg)
+        _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
         _apply_light_analysis_opts(opts)
         _apply_ejs_opts(opts)
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -222,20 +222,20 @@ def _is_youtube_live_url(worker, url):
         return False
 
 
-def download_target(worker, url, failed_targets):
+def download_target(ctx, url, failed_targets):
     """개별 URL 다운로드 — 콘텐츠 타입 분기 및 정밀한 예외 식별."""
     try:
         ct = detect_content_type(url)
         if ct in ("clip", "vod"):
-            return _download_chzzk(worker, url, ct)
+            return _download_chzzk(ctx, url, ct)
         if ct == "live":
-            return _download_youtube_live(worker, url)
+            return _download_youtube_live(ctx, url)
         if ct == "stream":
-            return _download_streamlink(worker, url)
+            return _download_streamlink(ctx, url)
         # youtube video — 라이브 힌트가 있거나 경량 프리체크로 라이브 확인 시 라이브 분기로
-        if getattr(worker, "is_live_hint", False) or _is_youtube_live_url(worker, url):
-            return _download_youtube_live(worker, url)
-        return _download_vod(worker, url)
+        if ctx.is_live_hint or _is_youtube_live_url(ctx, url):
+            return _download_youtube_live(ctx, url)
+        return _download_vod(ctx, url)
 
     except yt_dlp.utils.DownloadError as de:
         # [MSG 태그 규격 §1.1-4] 오류 사유는 1~3단어 소문자 영문 CLI 태그.
@@ -251,40 +251,40 @@ def download_target(worker, url, failed_targets):
             reason = "video private"
         else:
             reason = f"download blocked ({str(de)[:60]})"
-        _emit_error_log(worker, url, reason, failed_targets)
+        _emit_error_log(ctx, url, reason, failed_targets)
         return False
 
     except KeyError as ke:
         # 치지직 JSON 구조 변경 등 데이터 파싱 오류
         reason = f"parse error ({ke})"
-        _emit_error_log(worker, url, reason, failed_targets)
+        _emit_error_log(ctx, url, reason, failed_targets)
         return False
 
     except (ConnectionError, TimeoutError, OSError) as net_ex:
         # 네트워크 계열 오류 세분화
         reason = f"network error ({type(net_ex).__name__})"
-        _emit_error_log(worker, url, reason, failed_targets)
+        _emit_error_log(ctx, url, reason, failed_targets)
         return False
 
     except Exception as ex:
         # 최후의 범용 에러 캐치
         reason = f"unknown error ({type(ex).__name__}: {str(ex)[:50]})"
-        _emit_error_log(worker, url, reason, failed_targets)
+        _emit_error_log(ctx, url, reason, failed_targets)
         return False
 
 
 # ── 대상 평탄화 ────────────────────────────────────────────────────────────
 
 
-def _flatten(worker, url):
+def _flatten(ctx, url):
     """yt-dlp extract_flat 으로 재생목록/채널 항목 URL 집합."""
     opts = {
-        "logger": worker.logger,
+        "logger": ctx.logger,
         "extract_flat": True,
         "skip_download": True,
     }
-    _apply_cookie_opts(opts, worker.cfg)
-    _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+    _apply_cookie_opts(opts, ctx.cfg)
+    _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
     _apply_light_analysis_opts(opts)
     _apply_ejs_opts(opts)
     with yt_dlp.YoutubeDL(opts) as ydl:
@@ -300,25 +300,25 @@ def _flatten(worker, url):
     return urls
 
 
-def expand_targets(worker):
+def expand_targets(ctx):
     """재생목록/채널 URL 을 개별 동영상 URL 로 펼친다."""
     expanded = []
-    for url in worker.targets:
+    for url in ctx.targets:
         try:
             urls = None
             if detect_content_type(url) == "playlist":
-                urls = _flatten(worker, url)
+                urls = _flatten(ctx, url)
             else:
                 u = url.lower()
                 if "/@" in u or "/channel/" in u or "/c/" in u:
                     from playlist import normalize_youtube_channel_url
 
-                    urls = _flatten(worker, normalize_youtube_channel_url(url))
+                    urls = _flatten(ctx, normalize_youtube_channel_url(url))
             expanded.extend(urls or [url])
         except Exception as ex:
-            worker.log_concise.emit(
+            ctx.log_concise.emit(
                 emit_err(f"{format_target_url(url, 40)} — {str(ex)}"),
                 False,
                 True,
             )
-    return expanded or worker.targets
+    return expanded or ctx.targets
