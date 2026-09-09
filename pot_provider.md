@@ -17,6 +17,18 @@ import log_console
 from log_console import emit_component
 from PySide6.QtCore import QThread, Signal
 
+# [계층 정리 po_client] HTTP 클라이언트/URL 파싱은 pot_provider(lifecycle)와
+# 분리된 po_client(L0 leaf)가 소유. 여기선 재수출만 — 내부 호출(probe_server 등)과
+# 외부 역참조(client_opts/updater/target_downloader) 모두 1경로로 유지한다.
+from po_client import (
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    extract_video_id,
+    fetch_po_token,
+    probe_server,
+    server_ping,
+)
+
 _GLOBAL_JOB_HANDLE = None
 
 def assign_to_job_object(proc):
@@ -94,8 +106,6 @@ def read_server_log_tail(n=10):
             pass
     return ""
 
-DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 4416
 _SERVER_FALLBACK_VER = "1.3.2"
 _TAG_ZIP = "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{ver}.zip"
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -320,74 +330,6 @@ def clean_stale_plugin():
             removed = True
     return removed
 
-
-def server_ping(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1):
-    """PO token server alive 확인. HTTP /ping으로 체크. 성공 시 True.
-
-    [v3.1.0 변경] 타임아웃 3초→1초로 단축. DEPS 로그 표시 시간을
-    줄이기 위해. PO 서버는 로컬(127.0.0.1)이므로 1초면 충분.
-    """
-    try:
-        url = f"http://{host}:{port}/ping"
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return resp.status == 200
-    except Exception:
-        return False
-
-
-def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
-    """서버 상태 모니터링 (HTTP /ping 응답 기준)"""
-    url = f"http://{host}:{port}/ping"
-    try:
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            if 200 <= resp.status < 300:
-                return "ok", ""
-            return "conflict", f"HTTP {resp.status}"
-    except urllib.error.HTTPError as e:
-        return "conflict", f"HTTP {e.code}"
-    except urllib.error.URLError as e:
-        if isinstance(getattr(e, "reason", None), ConnectionRefusedError):
-            return "down", ""
-    except Exception:
-        pass
-        
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return "conflict", "ping no response"
-    except OSError:
-        return "down", ""
-
-
-def fetch_po_token(video_id, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5):
-    """bgutil 독립 서버에서 PO 토큰 직접 패칭 (플러그인 우회).
-
-    POST /get_pot {"content_binding": video_id} → {"poToken": "..."}
-    서버 미기동/오류 시 None 반환 — 호출부는 PO 없이 진행.
-    """
-    url = f"http://{host}:{port}/get_pot"
-    try:
-        body = json.dumps({"content_binding": video_id}).encode("utf-8")
-        req = urllib.request.Request(
-            url, data=body, method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        token = data.get("poToken") or ""
-        if token:
-            return token
-    except Exception:
-        pass
-    return None
-
-
-def extract_video_id(url):
-    """YouTube URL에서 11자리 video ID 추출 (실패 시 None)."""
-    m = re.search(
-        r"(?:v=|/shorts/|/embed/|youtu\.be/)([a-zA-Z0-9_-]{11})", str(url or "")
-    )
-    return m.group(1) if m else None
 
 def _wait_port(seconds, log_full_func=None):
     """포트가 열릴 때까지 폴링. log_full_func가 있으면 5초마다 진척 로그 출력."""

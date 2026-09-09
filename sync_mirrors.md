@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent
 # 미러 대상 (확장자 제외). .py → 동일 이름의 .md 로 복사된다.
 # 새 .py 모듈 추가 시 이 목록에도 반드시 추가할 것.
 MIRROR_MODULES = [
+    "analyze_worker",
     "bump_version",
     "chzzk_api",
     "client_opts",
@@ -32,6 +33,7 @@ MIRROR_MODULES = [
     "main",
     "media",
     "playlist",
+    "po_client",
     "pot_provider",
     "progress_emitter",
     "smoke_test",
@@ -40,8 +42,10 @@ MIRROR_MODULES = [
     "sync_mirrors",
     "target_downloader",
     "theme",
+    "update_worker",
     "updater",
     "utils",
+    "yt_logger_bridge",
 ]
 
 

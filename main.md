@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 # [시퀀스 코디네이터] 시작 시퀀스 단일 책임자
-from startup_coordinator import create_startup_coordinator
+from startup_coordinator import StartupCoordinator
 
 ##### 설정 상수/경로/로드·저장은 config 모듈에서 관리
 import config
@@ -43,9 +43,9 @@ import log_history
 import pot_provider
 import theme
 from controller import MediaController
-from dialogs import ExitConfirmDialog, SettingsDialog, UpdateWorker, VerboseLogWindow
+from dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
+from update_worker import UpdateWorker
 from utils import _open_windows_explorer
-from startup_coordinator import StartupCoordinator
 
 # [URL 인식 디바운스] 키 입력(타이핑) 침묵 기준 지연 — "타이핑 끝남"은 미래 입력
 # 부재를 감지해야만 알 수 있어 키 입력 경로에선 구조상 필수다.
@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
         self.ctrl.analyze_log_full.connect(self.append_full_log)
 
         # [시퀀스 코디네이터] 시작 시퀀스 단일 책임자
-        self._startup_coord = create_startup_coordinator(self)
+        self._startup_coord = StartupCoordinator(self)
 
         # 락 가드: 앱 시작 및 PO Token 서버 구성 중에는 드롭다운/입력 차단 및 순서 보정
         self._startup_completed = False

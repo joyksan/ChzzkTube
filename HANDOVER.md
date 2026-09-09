@@ -475,6 +475,35 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 - ✅ 런타임 실측: DEPS 5줄 → `deps ok` 결론 → `SYS │ READY │ SYS │ - │ ready` **정확히 1건**
 - ✅ READY 로그: `[HH:MM:SS] SYS │ READY │ SYS │ - │ ready`
 
+### 2026-09-09 — 구조적 트레이드오프 5건 수술 + 모듈 분리
+
+#### 문제
+- 계층 역전: `client_opts`(L0)·`updater`(L0)가 `pot_provider`(L1 worker)를 역참조
+- 다운로더 팩토리: `downloader.py`가 3개 클래스(YtLoggerBridge/AnalyzeWorker/DownloadWorker)를 500줄에 담음
+- dialogs.py 응집도 낮음: UpdateWorker(QThread) + 대화상자 3종 동거
+- worker grab-bag: 추출 파이프라인 함수들이 `worker` 덩어리 객체를 첫 인자로 받음
+- MSG 규격 위반: target_downloader 오류 사유가 한국어 서술형
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| `po_client.py` | **신규 생성** — PO Token 서버 HTTP 클라이언트 L0 leaf. `server_ping/probe_server/fetch_po_token/extract_video_id/DEFAULT_HOST/POT` 이동. pot_provider는 재수출(내부호환), `client_opts/updater/target_downloader`는 po_client 직접 참조 |
+| `analyze_worker.py` | **신규 생성** — AnalyzeWorker 분리. controller 배선 변경 |
+| `yt_logger_bridge.py` | **신규 생성** — YtLoggerBridge 공용 어댑터 분리 (Analyze/Download 공유) |
+| `downloader.py` | DownloadWorker만 유지, 미사용 임포트(`import live_recorder as _lr`) 제거 |
+| `update_worker.py` | **신규 생성** — UpdateWorker + `_RAW_VERSION_CMDS` 분리. main 배선 변경 |
+| `dialogs.py` | UpdateWorker 블록 제거 (846줄 → 686줄) |
+| `target_downloader.py` | 오류 사유 전건 영문 1-3단어 태그화 (`age/bot restricted`, `format missing` 등) |
+| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 31개) |
+
+#### 검증
+- ✅ py_compile 전체 OK, smoke PASS, 런타임 READY 1건 유지
+- ✅ 계층 역전 해소: client_opts/updater/target_downloader → po_client(L0) 직접 참조
+- ✅ 다운로더 팩토리 분리: 3-way 독립 모듈
+
+#### 남은 트레이드오프
+- **worker grab-bag (D)**: 다음 반복 — 현재 worker 객체는 관용적 패턴으로 충분히 동작. dataclass 컨텍스트 추출은 QThread 상속 + Signal 구조 때문에 오히려 복잡. 계약 문서화로 대체
+
 ### 2026-09-05 — 유튜브 라이브 URL 감지 개선
 
 | 모듈 | 변경 |

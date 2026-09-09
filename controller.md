@@ -4,7 +4,8 @@ import re
 
 from PySide6.QtCore import QObject, Signal
 
-from downloader import DownloadWorker, AnalyzeWorker
+from analyze_worker import AnalyzeWorker
+from downloader import DownloadWorker
 
 
 class MediaController(QObject):
