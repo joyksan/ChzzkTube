@@ -502,18 +502,43 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 - ✅ 다운로더 팩토리 분리: 3-way 독립 모듈
 
 #### 남은 트레이드오프
-- **worker grab-bag (D)**: ✅ 계약 문서화 완료 — `target_downloader.py`, `progress_emitter.py`, `finalizer.py` 상단에 Worker Contract 블록 추가. dataclass 추출은 다음 반복으로 유보
+- **worker grab-bag (D)**: ✅ dataclass 컨텍스트 추출 완료 — `dl_context.py`의 `DownloadContext` dataclass로 파이프라인 계약 명시화. `DownloadWorker.extract()`에서 컨텍스트 생성, 파이프라인 모듈(`target_downloader`, `progress_emitter`, `finalizer`)은 `ctx`만 받음. 타입 힌트로 IDE 지원·정적 검증 가능.
 
-#### 테스트 보강
-- `tests/` 디렉토리 신설 — pytest 기반 단위 테스트 56건 전체 통과
-  - `test_po_client.py` — server_ping/extract_video_id/fetch_po_token
-  - `test_media.py` — format_bytes/short_codec/audio_spec/코덱 랭크
-  - `test_dl_platform.py` — _dl_platform/_short_platform/detect_content_type
-  - `test_log_console.py` — format_log_line 포맷 규격
-  - `test_coordinator.py` — 시퀀스 게이트(READY 1회/중복방지/강제 언락)
-- `pyproject.toml` — `[dependency-groups] dev = ["pytest>=8.0"]` + `[tool.pytest.ini_options]` 추가
+#### pot_provider SRP 분리 (다음 반복)
+- **문제**: `pot_provider.py`가 "PO Token 서버 수급(bgutil)"과 "Node.js 런타임 수급" 두 책임을 동시에 담당 → SRP 위반.
+- **해결**: `pot_server.py`(bgutil 서버 수급/기동 전용) + `node_provider.py`(Node.js 런타임 수급 전용) + `pot_client.py`(HTTP 클라이언트)로 3-웨이 분리.
+- 기존 `pot_provider.py`는 두 하위 모듈을 재수출하는 facade로 유지(하위 호환).
 
-### 2026-09-05 — 유튜브 라이브 URL 감지 개선
+### 2026-09-09 — 구조적 트레이드오프 5건 수술 + 모듈 분리 + dataclass 컨텍스트 추출
+
+#### 문제
+- 계층 역전: `client_opts`(L0)·`updater`(L0)가 `pot_provider`(L1 worker)를 역참조
+- 다운로더 팩토리: `downloader.py`가 3개 클래스(YtLoggerBridge/AnalyzeWorker/DownloadWorker)를 500줄에 담음
+- dialogs.py 응집도 낮음: UpdateWorker(QThread) + 대화상자 3종 동거
+- worker grab-bag: 추출 파이프라인 함수들이 `worker` 덩어리 객체를 첫 인자로 받음
+- MSG 규격 위반: target_downloader 오류 사유가 한국어 서술형
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| `dl_context.py` | **신규 생성** — `DownloadContext` dataclass로 파이프라인 계약 명시화. `DownloadWorker.extract()`에서 컨텍스트 생성, 파이프라인 모듈은 `ctx`만 받음. |
+| `po_client.py` | **신규 생성** — PO Token 서버 HTTP 클라이언트 L0 leaf. `server_ping/probe_server/fetch_po_token/extract_video_id/DEFAULT_HOST/PORT` 이동. pot_provider는 재수출(내부호환), `client_opts/updater/target_downloader`는 po_client 직접 참조 |
+| `analyze_worker.py` | **신규 생성** — AnalyzeWorker 분리. controller 배선 변경 |
+| `yt_logger_bridge.py` | **신규 생성** — YtLoggerBridge 공용 어댑터 분리 (Analyze/Download 공유) |
+| `downloader.py` | DownloadWorker만 유지, 미사용 임포트(`import live_recorder as _lr`) 제거 |
+| `update_worker.py` | **신규 생성** — UpdateWorker + `_RAW_VERSION_CMDS` 분리. main 배선 변경 |
+| `dialogs.py` | UpdateWorker 블록 제거 (846줄 → 686줄) |
+| `target_downloader.py` | 오류 사유 전건 영문 1-3단어 태그화 (`age/bot restricted`, `format missing` 등) |
+| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 31개) |
+
+#### 검증
+- ✅ py_compile 전체 OK, smoke PASS, 런타임 READY 1건 유지
+- ✅ 계층 역전 해소: client_opts/updater/target_downloader → po_client(L0) 직접 참조
+- ✅ 다운로더 팩토리 분리: 3-way 독립 모듈
+- ✅ dataclass 컨텍스트로 파이프라인 계약 명시화
+
+#### 남은 과제
+- **pot_provider SRP 분리** — `pot_server.py` + `node_provider.py` + `pot_client.py` 3-웨이 분리
 
 | 모듈 | 변경 |
 |------|------|

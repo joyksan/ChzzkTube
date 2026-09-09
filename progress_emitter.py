@@ -24,6 +24,8 @@ import time
 
 from log_console import (
     emit_event,
+    emit_dl,
+    emit_err,
     format_log_line,
 )
 from media import cli_format_desc, format_bytes
