@@ -43,7 +43,8 @@ import log_history
 import pot_provider
 import theme
 from controller import MediaController
-from dialogs import ExitConfirmDialog, SettingsDialog, UpdateWorker, VerboseLogWindow
+from dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
+from update_worker import UpdateWorker
 from utils import _open_windows_explorer
 
 # [URL 인식 디바운스] 키 입력(타이핑) 침묵 기준 지연 — "타이핑 끝남"은 미래 입력
