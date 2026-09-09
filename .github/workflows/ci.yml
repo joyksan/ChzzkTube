@@ -9,15 +9,15 @@ jobs:
       QT_QPA_PLATFORM: offscreen  # headless Qt 실행을 위해
 
     steps:
-      - uses: actions/checkout@v4.2.2
+      - uses: actions/checkout@v5.1.0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6.3.0
         with:
           python-version: '3.12'
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
 
@@ -30,4 +30,6 @@ jobs:
   # CI 파이프라인: 푸시/프리퀘스트 시 자동 실행.
   # - macOS 최신 환경에서 Python 3.12 + uv 캐싱
   # - Qt 헤드리스 모드(QT_QPA_PLATFORM=offscreen) 강제
-  # - pytest 68개 테스트(56 기존 + 12 신규 통합) 자동 실행
+  # - pytest 80개 테스트 자동 실행
+  # - 액션: checkout v5(+Node24), setup-python v6(+Node24), setup-uv v10(+Node24,
+  #   민감 이벤트 캐시 자동 비활성) — Node 20 deprecation 경고 해소
