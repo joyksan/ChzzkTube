@@ -665,4 +665,4 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 
 - `CHANGELOG.md` — 버전별 변경 사항
 - `README.md` — 프로젝트 소개
-- `CLAUDE.md` — (폐지: 규약은 `.clinerules`로 통합)
+- `CLAUDE.md` — (폐지: 규약은 `.clinerules`로 통합) 
