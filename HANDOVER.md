@@ -9,7 +9,12 @@
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.1.0` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-08 Qt/PySide6 정리, 로깅 표준화)
+- **버전**: `v3.2.0` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-10 F12 중복 제거·raw 로그 버스·POT stale 감지 + 자동 리프레시 최신화)
+- **버전 정책 (비공개 개발, semver-lite)**:
+  - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
+  - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
+  - `z` patch: 버그 수정·로그/색상/판정 문구·성능 다듬기 등 기능 지평 변화 없는 안정 작업
+  - 비공개 개발이므로 `y` 단위로 릴리즈하고, `z`는 중간 커밋 구분용. 공개/배포 마일스톤에서만 `x`·`1.0.0` 레이블을 의미에 맞게 사용. 버전 변경 사유는 HANDOVER §9 변경 테이블 + CHANGELOG에 동기화.
 - **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PySide6 + yt-dlp + streamlink + FFmpeg(리먹싱) + Node.js 22+(PO Token 서버)
 - **진입점**: `main.py` (`python main.py`)
 - **빌드**: PyInstaller — `ChzzkTube.spec`
@@ -653,3 +658,11 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 #### 남은 과제
 - stale 감지 시 네트워크 3초 — preflight timeout 예산. 실패 시 판정 유지(stale 미확인≠FAIL)는 유지
 - 프리웜 자동 리프레시는 "잠긴 사이 사전 제거 기능"에 대해 게이트/다운로드 시점 실패 처리와 별개 — 프리웜은 최신 빌드 확보 우선 (📖 HANDOVER §1.1)
+
+---
+
+## 10. 참고 문서
+
+- `CHANGELOG.md` — 버전별 변경 사항
+- `README.md` — 프로젝트 소개
+- `CLAUDE.md` — (폐지: 규약은 `.clinerules`로 통합)
