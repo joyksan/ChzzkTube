@@ -86,7 +86,8 @@ class MainWindow(QMainWindow):
         self.ctrl = MediaController(self)
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
-        # StartupCoordinator: DEPS/POT/업데이트 시그널을 중앙에서 수신하고 3대 로그에 전파
+                # StartupCoordinator: DEPS/POT/업데이트 시그널을 중앙에서 수신하고 3대 로그에 전파
+        # 단일 인스턴스 원칙 (HANDOVER §7): 시그널 연결 전 최초 1회만 생성
         self._startup_coord = StartupCoordinator(self)
 
         self.settings_dlg = None
@@ -100,9 +101,6 @@ class MainWindow(QMainWindow):
         self.ctrl.analyze_result_ready.connect(self.on_analyze_success)
         self.ctrl.analyze_error_occurred.connect(self.on_analyze_error)
         self.ctrl.analyze_log_full.connect(self.append_full_log)
-
-        # [시퀀스 코디네이터] 시작 시퀀스 단일 책임자
-        self._startup_coord = StartupCoordinator(self)
 
         # 락 가드: 앱 시작 및 PO Token 서버 구성 중에는 드롭다운/입력 차단 및 순서 보정
         self._startup_completed = False

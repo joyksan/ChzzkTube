@@ -12,6 +12,11 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Checkout repository
         uses: actions/checkout@v4.2.2  # 최신 Node.js 24 호환 버전 명시
 
