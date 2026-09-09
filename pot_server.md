@@ -156,7 +156,11 @@ _TAG_ZIP = (
 
 
 def latest_server_ver(timeout=3):
-    """bgutil 서버 최신 릴리즈 태그 (GitHub API). 실패 시 None — 호출부 폴백."""
+    """bgutil 서버 최신 릴리즈 태그 (GitHub API). 실패 시 None — 호출부 폴백.
+
+    [stale 감지용 경량 호출] timeout을 짧게(3초) 유지 — DEPS/프리웜 경로의
+    블로킹 최소화. 네트워크 실패는 None으로 흡수해 판정 유지.
+    """
     try:
         req = urllib.request.Request(
             "https://api.github.com/repos/Brainicism/bgutil-ytdlp-pot-provider/releases/latest",
@@ -232,6 +236,77 @@ def built_server_js():
         if os.path.isfile(js_path):
             return js_path
     return None
+
+
+def pot_readiness(log_func=None, check_stale=False, want_refresh=False):
+    """POT 서버 기동 가능성 경량 판정 — 파일시스템 스캔만 (L0, 네트워크·Popen 금지).
+
+    [Lazy 2층 분리] DEPS 단계에서는 바이너리+빌드 산출물의 디스크 준비만
+    확인하고 (RAM 0MB·포트 미점유), 실제 Popen은 분석 게이트까지 지연.
+    - ready=True  → 게이트 히트 시 즉시 spawn 가능 (0.1~3초)
+    - ready=False → reason에 부족분 명시 (node missing / no build / stale vX→vY)
+    - stale + want_refresh=True → 자동 리프레시 유도 (reason은 여전히 stale)
+
+    [성능] node_ok()의 subprocess 기동(수백ms)을 피하고 node_exe() 존재만으로
+    판정 — UpdateWorker 스레드 블로킹 및 DEPS 1초 예산 초과 방지.
+    정확한 버전 판별은 _do_upgrade의 ensure_node_runtime이 담당.
+    log_func(msg): 판정 근거를 raw 스택으로 반환 (계층 역전 방지용 콜백).
+    check_stale=True → GitHub 최신 태그와 로컬 .version 비교 (네트워크 3초).
+    실패(None) 시 판정 유지 — stale 미확인을 FAIL로 승격 금지.
+    want_refresh=True → stale 시 ready=True 복귀 + reason에 refresh 표기.
+    "lazy는 언제든지 작동 가능한 데에서 의의가 있다"는 원칙에 따라,
+    stale 빌드도 "준비 완료(staged/refresh pending)"로 간주.
+    """
+    from node_provider import node_exe
+    try:
+        exe = node_exe()
+        if not exe:
+            if log_func:
+                try:
+                    log_func("[pot-readiness] not ready: node missing")
+                except Exception:
+                    pass
+            return False, "node missing"
+    except Exception:
+        return False, "node missing"
+    try:
+        js = built_server_js()
+        if not js:
+            if log_func:
+                try:
+                    log_func("[pot-readiness] not ready: no build")
+                except Exception:
+                    pass
+            return False, "no build"
+    except Exception:
+        return False, "no build"
+    if check_stale:
+        # [stale 감지] 로컬 .version vs GitHub 최신 — 불일치면 리프레시 유도.
+        # 네트워크 실패(None) 시 판정 유지 (stale 미확인 ≠ FAIL).
+        # [auto-refresh] want_refresh=True면 stale이어도 "작동 가능한 준비됨"으로
+        # 간주 — 프리웜이 자동으로 리프레시 진행. "lazy는 언제든 작동 가능해야 함"
+        # 원칙: stale 빌드를 fail로 닫지 않고 staged/refresh pending으로 열어야 한다.
+        try:
+            local = server_installed_ver()
+            remote = latest_server_ver()
+            stale = remote and local and remote != local
+            if stale:
+                if log_func:
+                    try:
+                        log_func(f"[pot-readiness] stale build (local {local} → remote {remote})")
+                    except Exception:
+                        pass
+                if want_refresh:
+                    return True, f"stale {local}→{remote} (refresh pending)"
+                return False, f"stale {local}→{remote}"
+        except Exception:
+            pass
+    if log_func:
+        try:
+            log_func(f"[pot-readiness] standby (node ok, build {js})")
+        except Exception:
+            pass
+    return True, "standby"
 
 
 def _spawn_node_server(log_full_func=None):
@@ -315,6 +390,156 @@ def _download_with_progress(url, dest_path, log_func, desc):
                 os.remove(temp_dest)
             except Exception:
                 pass
+
+
+def _prewarm_lock_path():
+    """프리웜/게이트 npm 빌드 상호배제용 락 파일 경로."""
+    return os.path.join(server_home(), ".prewarm.lock")
+
+
+def _pid_alive(pid):
+    """PID 생존 확인 — Windows OpenProcess / POSIX kill(pid, 0).
+
+    [PID-liveness] mtime 단일 기준의 오판(크래시 후 30분 프리웜 양보)을
+    막기 위해 프로세스 실존 여부를 직접 확인. 판별 실패(권한 등)는
+    보수적으로 살아있음으로 간주 (성급한 회수 금지).
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        import platform as _plat
+        if _plat.system() == "Windows":
+            import ctypes as _ct
+            from ctypes import wintypes as _wt
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            try:
+                _k32 = _ct.WinDLL("kernel32", use_last_error=True)
+                _k32.OpenProcess.argtypes = [_wt.DWORD, _wt.BOOL, _wt.DWORD]
+                _k32.OpenProcess.restype = _wt.HANDLE
+                _k32.CloseHandle.argtypes = [_wt.HANDLE]
+                _k32.CloseHandle.restype = _wt.BOOL
+                h = _k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                if not h:
+                    return False  # 존재하지 않거나 접근 불가 → 죽음으로 간주
+                try:
+                    return True
+                finally:
+                    _k32.CloseHandle(h)
+            except Exception:
+                return True  # 판별 자체 실패 → 보수적 유지
+        else:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return False
+            except PermissionError:
+                return True  # 존재하나 권한 없음 → 살아있음
+            except Exception:
+                return True
+            return True
+    except Exception:
+        return True
+
+
+def _read_lock_info(path):
+    """락 파일에서 (pid:int|None, epoch:float|None) 판독."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            parts = f.read().strip().split()
+        pid = int(parts[0]) if parts else None
+        epoch = float(parts[1]) if len(parts) > 1 else None
+        return pid, epoch
+    except Exception:
+        return None, None
+
+
+def acquire_prewarm_lock(timeout=0, log_func=None):
+    """원자적 락 획득 시도 — O_EXCL 생성으로 상호배제.
+
+    [Zero-Base] msvcrt/filelock 외부 의존 없이 os.open(O_CREAT|O_EXCL)
+    원자 생성으로 프로세스·스레드 경계를 모두 차단 (단일 앱 전제).
+    stale 락 판정: PID 죽음 AND mtime 30분 초과 → 회수. PID 살아있으면
+    mtime 무관하게 대기 (PID 재사용 레이스는 mtime 상한으로 차단).
+    timeout=0 → 즉시 반환 (None이면 획득 실패). timeout>0 → 폴링 대기.
+    반환: fd(int) 또는 None. 해제는 release_prewarm_lock(fd).
+    log_func(msg): 획득/대기/양보/stale 회수 전 분기를 호출자 로그로 반환.
+    """
+    import time as _time
+    path = _prewarm_lock_path()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError:
+        pass
+    deadline = _time.monotonic() + max(0, timeout)
+    waited_note = False
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, f"{os.getpid()} {_time.time()}".encode("utf-8"))
+            except OSError:
+                pass
+            if log_func:
+                try:
+                    log_func("[prewarm-lock] acquired")
+                except Exception:
+                    pass
+            return fd
+        except FileExistsError:
+            pid, _epoch = _read_lock_info(path)
+            alive = _pid_alive(pid) if pid else True
+            try:
+                age = _time.time() - os.path.getmtime(path)
+            except OSError:
+                age = 0
+            if not alive and age > 1800:  # PID 죽음 + 30분 stale → 회수
+                if log_func:
+                    try:
+                        log_func(f"[prewarm-lock] stale reclaimed (pid={pid} dead, age={int(age)}s)")
+                    except Exception:
+                        pass
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                continue
+            if log_func and not waited_note and timeout > 0:
+                waited_note = True
+                try:
+                    log_func(f"[prewarm-lock] waiting (holder pid={pid}, alive={alive})")
+                except Exception:
+                    pass
+        except OSError:
+            return None
+        if _time.monotonic() >= deadline:
+            if log_func:
+                try:
+                    log_func("[prewarm-lock] busy — acquire timeout")
+                except Exception:
+                    pass
+            return None
+        _time.sleep(0.2)
+
+
+def release_prewarm_lock(fd, log_func=None):
+    """락 해제 — fd close + 파일 제거 (best-effort)."""
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        os.remove(_prewarm_lock_path())
+    except OSError:
+        pass
+    if log_func:
+        try:
+            log_func("[prewarm-lock] released")
+        except Exception:
+            pass
 
 
 def download_and_install_source(want_ver, log_func=None):

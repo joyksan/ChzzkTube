@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: v3.1.2 — 2026-09-09 전체 아키텍처/모듈/테스트/CI 실측 최신화
+> 마지막 갱신: v3.1.2+ — 2026-09-10 F12 중복 제거·raw 로그 버스·POT stale 감지 + 자동 리프레시 최신화
 
 ---
 
@@ -252,8 +252,10 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 - ❌ `smoke_test` 통과 없이 리팩토링 커밋하는 것
 - ❌ `.md` 미러를 손으로 고치는 것 (항상 `.py`가 원본)
 - ❌ GUI 없는 CI 가정으로 Qt 코드를 임포트만으로 검증 끝이라 착각하는 것 — `smoke_test(offscreen)`를 돌릴 것
-- ❌ 배포 시의 완벽한 포터블(Portable) 무결성을 침범하는 행위
-- ❌ 앵커링 편향(Anchoring Bias) 국소 최적화(Local Optima)
+- ❌ 로그 채널을 각 호출점이 수동으로 흩뿌리기 — raw 버스(🤖 `raw_log.py`) 단일 진입만 유지. F12/메인/역사 팬아웃은 버스, 필터링은 각 모듈
+- ❌ POT 워커가 포그라운드/히스토리를 직접 import 하는 것 — L0 `log_func` 콜백으로 연결 (계층 역전 방지)
+- ❌ laziness를 굳히는 것 — "언제든 작동 가능한 준비 상태" 유지를 위해 stale 빌드를 FAIL로 닫지 말고 자동 리프레시로 따라간다
+- ❌ 시그널 다중 emit/중복 판정 — F12 2중 공판, standby 2중 출력의 직접적 원인 (판정+로그는 단일 호출로 끝낼 것)
 - ❌ Thin Wrapper 메서드 생성 (단순 위임은 모듈 함수 직접 호출로 대체)
 - ❌ `except Exception`으로 모든 예외 뭉뚱그리기 (세분화된 예외 처리 적용)
 - ❌ 상태 변수 개별 초기화 (초기화 메서드로 통합)
@@ -620,17 +622,34 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 | `pot_provider.py` | PO Token 서버 번들, `ensure_node_runtime()` 개선 |
 | `client_opts.py` | `_apply_pot_opts()` 추가, `throttledratelimit` 100KB/s |
 
-### 2026-09-01 — yt-dlp 2026.8.19 업그레이드 + 봇 체크 회피
+### 2026-09-10 — F12 중복 제거·raw 로그 버스·POT stale 감지 + 자동 리프레시
 
+#### 문제
+- F12 raw 로그에 POT readiness 로그 2중 출력 — `check_deps` 내 자체 판정 + 프리웜 별도 `pot_readiness(log_func)` 중복 호출
+- `pot_provider._note/_dbg`가 `self.log_full.emit` 직접 호출 → raw 버스 구독과 이중 적재. "모든 동작은 raw 스택에 쌓여야 한다"는 원칙이 흐트러짐
+- POT DEPS가 liveness(`server_ping`)만 판정 → 미기공 정상(lazy standby)이 `FAIL not running`으로 오해석
+- 프리웜이 stale 빌드를 감지해도 자동 리프레시 없이 방치 → lazy가 "언제든 작동 가능한 준비 상태"를 유지하지 못함
+
+#### 해결
 | 모듈 | 변경 |
 |------|------|
-| `client_opts.py` | `_apply_client_opts()` 추가 (web_embedded/ios/tv 폴백) |
-| `downloader.py` | AnalyzeWorker `_RETRY_CLIENTS = ["ios", "tv"]` 순차 폴백 |
+| `raw_log.py` | **신규 생성** — raw(tag, msg) 단일 진입 → concise(메인 TUI)/full(F12)/history 3채널 팬아웃. 구독 전 호출도 history 적재(유실 방지). TUI 컬럼 라인은 화면에도, 나머지는 F12/history 전용 |
+| `pot_server.py(🤖 touched)` | `pot_readiness(log_func, check_stale=False, want_refresh=False)` 확장 — `latest_server_ver(timeout=3)` GitHub API로 로컬 `.version` vs 최신 태그 비교, stale 시 `False/stale` 표기. `want_refresh=True`면 "작동 가능한 준비됨"으로 간주 (reason에 `(refresh pending)` 표기) |
+| `pot_provider.py(🤖 touched)` | `POTProviderWorker.__init__(prewarm=False)` 모드 유지하되, prewarm 분기 `acquire/release_prewarm_lock(log_func)` 콜백 + detect stale 시 `rebuild=True`로 `ensure_node_server` 재실행 (자동 리프레시). `_note/_dbg` 직접 `log_full.emit` 제거 → raw 단일 경유 |
+| `update_worker.py(🤖 touched)` | `check_deps(log_func=lambda...)` 콜백으로 `_do_check` 내 별도 `_pot_readiness` 중복 호출 제거. CLI 원문 `cli_raw(label, *args, max_lines=6, max_width=160)` 절단 적용하여 ffmpeg `configuration:` 500자 원문 오버 제한 |
+| `updater.py(🤖 touched)` | `check_deps(log_func=None)` 시그니처 확장 + cli_raw max_lines/max_width |
+| `main.py(🤖 touched)` | `_maybe_prewarm_pot`(`check_stale=True, want_refresh=True`) → stale 시 "starting refresh"로 분기. `_on_prewarm_finished/_on_pot_finished` raw 적재. `_ensure_pot_for_info` `raw("pot-gate")` 판정 로그 |
+| `analyze_worker.py(🤖 touched)` | 게이트 판정 시 `raw("pot-gate", gated=... age_limit=... availability=...)` |
+| `HANDOVER.md(🤖 touched)` | 마지막 갱신 v3.1.2+ 표기, §6 하지 말 것 위반사례 5건 추가(로그 수동 흩뿌리기·워커가 포그라운드 import·laziness 고정·시그널 이중 emit·smoke 미통과 커밋), 아키텍처 맵 최신화 |
+| `tests/test_download_pipeline.py(🤖 touched)` | PID-liveness·live 홀더 비회수·콜백·raw 팬아웃·readiness stale·check_deps 단일 호출·cli_raw 절단 테스트 12개 추가 (전체 80건) |
+| `sync_mirrors.py(🤖 touched)` | MIRROR_MODULES에 `raw_log` 추가, 6개 `.md` 갱신 |
 
----
+#### 검증
+- py_compile raw_log/pot_server/pot_provider/main/update_worker/updater/analyze_worker/tests: OK
+- pytest 전체: 80 passed (pipeline 24건 포함)
+- smoke_test: PASS (MainWindow + SettingsDialog)
+- 런타임: `raw_log` 구독 정상, log_full 직접호출 없어져 F12 중복 해소, F12 `configuration:` 줄 160자+털 절단
 
-## 10. 참고 문서
-
-- `CLAUDE.md` — AI 에이전트용 행동 규칙
-- `CHANGELOG.md` — 버전별 변경 사항
-- `README.md` — 프로젝트 소개
+#### 남은 과제
+- stale 감지 시 네트워크 3초 — preflight timeout 예산. 실패 시 판정 유지(stale 미확인≠FAIL)는 유지
+- 프리웜 자동 리프레시는 "잠긴 사이 사전 제거 기능"에 대해 게이트/다운로드 시점 실패 처리와 별개 — 프리웜은 최신 빌드 확보 우선 (📖 HANDOVER §1.1)

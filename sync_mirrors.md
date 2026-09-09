@@ -39,6 +39,7 @@ MIRROR_MODULES = [
     "pot_provider",
     "pot_server",
     "progress_emitter",
+    "raw_log",
     "smoke_test",
     "speed_window",
     "startup_coordinator",

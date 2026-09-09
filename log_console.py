@@ -736,6 +736,8 @@ def _log_line_segments(line):
         return [(line, theme.LOG_COLOR_WARN)]
     if " │ DONE" in line or " │ OK " in line or " │ END" in line or " │ READY" in line:
         return [(line, theme.LOG_COLOR_SUCCESS)]
+    if " │ SKIP" in line:
+        return [(line, theme.LOG_COLOR_DIM)]
     if " │ RUN" in line:
         return [(line, theme.LOG_COLOR_ACCENT)]
     return [(line, theme.LOG_COLOR_INFO)]

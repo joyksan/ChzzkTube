@@ -86,7 +86,8 @@ class MainWindow(QMainWindow):
         self.ctrl = MediaController(self)
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
-        # StartupCoordinator: DEPS/POT/업데이트 시그널을 중앙에서 수신하고 3대 로그에 전파
+                # StartupCoordinator: DEPS/POT/업데이트 시그널을 중앙에서 수신하고 3대 로그에 전파
+        # 단일 인스턴스 원칙 (HANDOVER §7): 시그널 연결 전 최초 1회만 생성
         self._startup_coord = StartupCoordinator(self)
 
         self.settings_dlg = None
@@ -101,11 +102,14 @@ class MainWindow(QMainWindow):
         self.ctrl.analyze_error_occurred.connect(self.on_analyze_error)
         self.ctrl.analyze_log_full.connect(self.append_full_log)
 
-        # [시퀀스 코디네이터] 시작 시퀀스 단일 책임자
-        self._startup_coord = StartupCoordinator(self)
-
         # 락 가드: 앱 시작 및 PO Token 서버 구성 중에는 드롭다운/입력 차단 및 순서 보정
         self._startup_completed = False
+        # [가드 초기화] _try_emit_ready의 pot_needed 판별용 — 미정의 시
+        # hasattr() False → pot 무시 → POT 진행 중 READY 선행 발산 결함.
+        self._pot_provider_started = False
+        # [프리웜 가드] READY 후 유휴 스테이징 단일 발화용.
+        self._prewarm_started = False
+        self._prewarm_worker = None
 
         self.init_ui()
 
@@ -413,6 +417,14 @@ class MainWindow(QMainWindow):
 
         # ── 보조 상태 초기화 ──
         self._full_log_buf: list[str] = []
+        # [raw 스택 버스] 모든 동작 로그의 단일 진실 공급원 구독.
+        # Qt 시그널 경유이므로 워커 스레드에서 raw() 호출 안전.
+        import raw_log
+        raw_log.subscribe_concise(
+            lambda msg, is_status=False, is_error=False:
+                self.append_concise_log(msg, is_status=is_status, is_error=is_error)
+        )
+        raw_log.subscribe_full(self.append_full_log)
         self.update_ui_state()
 
     def _on_url_drop(self, mime_data):
@@ -579,14 +591,35 @@ class MainWindow(QMainWindow):
             self._pot_worker = pot_provider.POTProviderWorker(self)
             self._pot_worker.line.connect(self._component_line)
             self._pot_worker.log_full.connect(self.append_full_log)
-            self._pot_worker.finished.connect(self._startup_coord.report_pot)
+            # [시그널 계약] QThread.finished는 인자 0개 — report_pot(ok, msg)는
+            # 직접 연결 시 TypeError → _on_pot_finished 어댑터 경유 필수.
+            self._pot_worker.finished.connect(self._on_pot_finished)
             self._pot_worker.start()
             self._pot_provider_started = True
         except Exception:
             pass
 
+    def _on_pot_finished(self):
+        """POT 워커 종료 어댑터 — outcome을 풀어 Coordinator에 보고 + raw 적재."""
+        import raw_log
+        outcome = ("err", "")
+        try:
+            w = getattr(self, "_pot_worker", None)
+            if w is not None:
+                outcome = w.outcome
+        except Exception:
+            pass
+        ok = outcome[0] == "ok"
+        msg = outcome[1] if len(outcome) > 1 else ""
+        raw_log.raw("pot", f"gate finished ok={ok} outcome={outcome[0]}")
+        self._startup_coord.report_pot(ok, msg)
+
     def _ensure_pot_for_info(self, info):
         """PO 필요 여부 판단 후 필요 시에만 서버 가동.
+
+        [Lazy 2층 분리] 게이트 책임은 View(main)가 유지 — AnalyzeWorker는
+        순수 추출만 담당. spawn(Popen)만 이 지점까지 지연되며, DEPS 단계의
+        pot_readiness(디스크 준비)가 선행 보장되므로 즉시 기동 가능.
 
         PO가 필요한 경우:
         - age_limit > 0 (연령 제한)
@@ -609,7 +642,19 @@ class MainWindow(QMainWindow):
             ):
                 needs_pot = True
 
+        import raw_log as _rl
+        _rl.raw(
+            "pot-gate",
+            f"gated={needs_pot} age_limit={age_limit if info else '-'} "
+            f"availability={((info or {}).get('availability') or '-')}",
+        )
+
         if needs_pot:
+            # [프리웜 경합] 유휴 스테이징 진행 중이면 게이트 spawn과 npm 락이
+            # 충돌 — 프리웜 종료를 기다리지 않고 게이트 워커가 이어받도록
+            # 프리웜 워커는 그대로 두고(단일 스폰 가드) 게이트만 진행.
+            # ensure_node_server의 npm ci는 디스크 산출물 기준 멱등이므로
+            # 중복 실행돼도 산출물만 덮어쓴다.
             self.append_concise_log(
                 log_console.emit_event("POT", "RUN", "pot", "starting..."),
                 is_status=True,
@@ -780,6 +825,63 @@ class MainWindow(QMainWindow):
         # [Coordinator 보고] deps 체크 단계 완료 — READY 게이트용 플래그.
         # 결론 라인은 위에서 이미 출력했으므로 Coordinator는 플래그만 세팅한다.
         self._startup_coord.report_deps(not bool(stale), "deps ok" if not stale else "update")
+        # [유휴 프리웜] READY 후 빌드 스테이징 — 첫 게이트 히트 0.1~3초 보장.
+        # Popen 없이 디스크 산출물만 준비 (RAM 0MB·포트 미점유). READY 게이트
+        # 미포함 — 실패해도 기동 블록 없음. 중복 스폰은 _maybe_prewarm_pot 가드.
+        QTimer.singleShot(3000, self._maybe_prewarm_pot)
+
+    def _maybe_prewarm_pot(self):
+        """READY 후 유휴 POT 빌드 스테이징 — 단일 발화 가드 (전 경로 raw 적재)."""
+        import raw_log
+        try:
+            from pot_server import pot_readiness
+            from po_client import server_ping
+            if server_ping():
+                raw_log.raw("prewarm", "skip — server already running")
+                return  # 이미 기동 — 스테이징 불필요
+            ready, reason = pot_readiness(
+                log_func=lambda m: raw_log.raw("pot-readiness", m),
+                check_stale=True,
+                want_refresh=True,
+            )
+            if ready:
+                if "refresh" in reason:
+                    raw_log.raw("prewarm", f"starting refresh (reason={reason})")
+                else:
+                    raw_log.raw("prewarm", "skip — artifacts ready")
+                    return  # 산출물 완비 — 스테이징 불필요
+            if getattr(self, "_pot_provider_started", False):
+                raw_log.raw("prewarm", "skip — gate already started")
+                return  # 게이트/프리웜 이미 진행 중 — 중복 스폰 금지
+            if getattr(self, "_prewarm_started", False):
+                raw_log.raw("prewarm", "skip — already in flight")
+                return
+            raw_log.raw("prewarm", f"starting staging (reason={reason})")
+            self._prewarm_started = True
+            self._prewarm_worker = pot_provider.POTProviderWorker(self, prewarm=True)
+            self._prewarm_worker.line.connect(self._component_line)
+            self._prewarm_worker.log_full.connect(self.append_full_log)
+            self._prewarm_worker.finished.connect(self._on_prewarm_finished)
+            self._prewarm_worker.start(QThread.Priority.LowPriority)
+        except Exception as e:
+            raw_log.raw("prewarm", f"spawn failed: {type(e).__name__}: {e}")
+
+    def _on_prewarm_finished(self):
+        """프리웜 워커 종료 — 플래그 정리 + 산출물 판별 로그 (게이트 READY 무관)."""
+        import raw_log
+        try:
+            self._prewarm_started = False
+            w = getattr(self, "_prewarm_worker", None)
+            outcome = w.outcome if w is not None else ("err", "")
+            raw_log.raw("prewarm", f"finished outcome={outcome[0]}")
+            if outcome[0] == "ok":
+                self.append_concise_log(
+                    log_console.emit_event("POT", "OK", "POT", "prewarm staged"),
+                    is_status=False,
+                    is_error=False,
+                )
+        except Exception:
+            pass
 
     def _is_stale_analyze_signal(self):
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단.

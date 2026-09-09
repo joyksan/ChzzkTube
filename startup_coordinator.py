@@ -107,8 +107,10 @@ class StartupCoordinator(QObject):
             self._emit_log("SYS", "READY" if ok else "WARN", "SYS", "-", msg,
                            is_status=False, is_error=False)
             self._view.add_concise_task_separator()
-            self._view.update_ui_state()
+            # [순서 고정] 플래그를 먼저 세워야 update_ui_state()가
+            # url_input.setEnabled(True)로 판단한다 (역순이면 영구 lock).
             self._view._startup_completed = True
+            self._view.update_ui_state()
 
     def _on_force_unlock(self):
         """15초 폴백 타이머 타임아웃 — 강제 READY."""
@@ -142,12 +144,13 @@ class StartupCoordinator(QObject):
                 # 모든 단계 완료 - READY 출력
                 self._ready_emitted = True
                 self._emit_log("SYS", "READY", "SYS", "-", "ready", is_status=False, is_error=False)
-                
+
                 # 작업 로그와 구분하기 위한 separator
                 self._view.add_concise_task_separator()
-                
+
+                # [순서 고정] 플래그를 먼저 세워야 update_ui_state()가
+                # url_input.setEnabled(True)로 판단한다 (역순이면 영구 lock).
+                self._view._startup_completed = True
+
                 # UI 상태 업데이트 (입력 잠금 해제 등)
                 self._view.update_ui_state()
-                
-                # 기동 완료 플래그
-                self._view._startup_completed = True

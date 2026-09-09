@@ -107,10 +107,11 @@ def outdated_packages(channel="stable"):
     return stale
 
 
-def check_deps():
+def check_deps(log_func=None):
     """모든 의존성 체크 결과 리스트 반환.
     각 요소: (label, status, version_or_path)
     status: 표준 status (OK / FAIL 등) — `format_log_line`의 표준 사용.
+    log_func(msg): POT readiness 판정 근거를 raw 스택으로 반환 (단일 호출).
     """
     import os
     import shutil
@@ -153,15 +154,25 @@ def check_deps():
             # [v3.1.0 정책] 표준 status 사용. msg는 명시적 문자열.
             results.append((label, "FAIL", "not found"))
 
-    # 3. PO token 서버
+    # 3. PO token 서버 — [Lazy 2층 분리] liveness가 아니라 readiness.
+    # 바이너리+빌드 산출물의 디스크 준비만 판정 (RAM 0MB·포트 미점유).
+    # Popen은 분석 게이트(_ensure_pot_for_info)까지 지연. FAIL 오경보 금지:
+    # 미기동 정상 상태는 SKIP standby, 산출물 미비는 SKIP + 사유.
+    # [단일 호출] log_func 콜백을 내부 pot_readiness에 직접 전달 — 판정+로그
+    # 1회로 해결 (별도 _pot_readiness 호출 시 standby 2중 출력 결함).
     try:
         from po_client import server_ping
+        from pot_server import pot_readiness
         if server_ping():
             results.append(("pot", "OK", "running"))
         else:
-            results.append(("pot", "FAIL", "not running"))
+            ready, reason = pot_readiness(log_func=log_func)
+            if ready:
+                results.append(("pot", "SKIP", "standby"))
+            else:
+                results.append(("pot", "SKIP", reason))
     except Exception:
-        results.append(("pot", "FAIL", "unknown"))
+        results.append(("pot", "SKIP", "unknown"))
 
     return results
 
@@ -231,12 +242,14 @@ def _cli_env(label):
     return env
 
 
-def cli_raw(label, *args, timeout=15):
+def cli_raw(label, *args, timeout=15, max_lines=0, max_width=160):
     """실제 CLI를 실행해 '터미널에서 친 것과 동일한 원문 출력'을 반환.
 
     반환: (cmdline, output) — 도구 없으면 (None, None), 실행 예외면
     (cmdline, "[Type] msg"). 출력은 stdout+stderr 합본 원문.
     호출부(F12 상세 로그)가 '$ <cmd>' + 원문 라인을 그대로 적재한다.
+    max_lines>0 → 앞 N줄만 + '… (M lines truncated)' 꼬리.
+    over-long 단일 줄은 max_width로 절단 (ffmpeg configuration: 대책).
     """
     cmd = _cli_base(label)
     if not cmd:
@@ -257,7 +270,17 @@ def cli_raw(label, *args, timeout=15):
     except Exception as e:
         return " ".join(full_cmd), f"[{type(e).__name__}] {e}"
     out = ((proc.stdout or "") + (proc.stderr or "")).strip()
-    return " ".join(full_cmd), out or None
+    if not out:
+        return " ".join(full_cmd), None
+    lines = out.splitlines()
+    # [F12 가독성] 장문 단일 줄 절단 (ffmpeg 'configuration:' 500자 대책)
+    if max_width and max_width > 0:
+        lines = [l if len(l) <= max_width else l[:max_width] + "…" for l in lines]
+    if max_lines and max_lines > 0 and len(lines) > max_lines:
+        kept = lines[:max_lines]
+        kept.append(f"… ({len(lines) - max_lines} lines truncated)")
+        return " ".join(full_cmd), "\n".join(kept)
+    return " ".join(full_cmd), "\n".join(lines)
 
 
 def _ffmpeg_version(path, timeout=3):
