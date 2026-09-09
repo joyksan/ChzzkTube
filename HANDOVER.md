@@ -494,7 +494,7 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 | `update_worker.py` | **신규 생성** — UpdateWorker + `_RAW_VERSION_CMDS` 분리. main 배선 변경 |
 | `dialogs.py` | UpdateWorker 블록 제거 (846줄 → 686줄) |
 | `target_downloader.py` | 오류 사유 전건 영문 1-3단어 태그화 (`age/bot restricted`, `format missing` 등) |
-| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 31개) |
+| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 34개) |
 
 #### 검증
 - ✅ py_compile 전체 OK, smoke PASS, 런타임 READY 1건 유지
@@ -504,10 +504,18 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 #### 남은 트레이드오프
 - **worker grab-bag (D)**: ✅ dataclass 컨텍스트 추출 완료 — `dl_context.py`의 `DownloadContext` dataclass로 파이프라인 계약 명시화. `DownloadWorker.extract()`에서 컨텍스트 생성, 파이프라인 모듈(`target_downloader`, `progress_emitter`, `finalizer`)은 `ctx`만 받음. 타입 힌트로 IDE 지원·정적 검증 가능.
 
-#### pot_provider SRP 분리 (다음 반복)
-- **문제**: `pot_provider.py`가 "PO Token 서버 수급(bgutil)"과 "Node.js 런타임 수급" 두 책임을 동시에 담당 → SRP 위반.
-- **해결**: `pot_server.py`(bgutil 서버 수급/기동 전용) + `node_provider.py`(Node.js 런타임 수급 전용) + `pot_client.py`(HTTP 클라이언트)로 3-웨이 분리.
-- 기존 `pot_provider.py`는 두 하위 모듈을 재수출하는 facade로 유지(하위 호환).
+- **pot_provider SRP 분리**: ✅ 3-웨이 분리 완료
+  - `node_provider.py` (Node.js 런타임 수급 — node_exe/npm_exe/node_ok/ensure_node_runtime)
+  - `pot_server.py` (bgutil 서버 빌드/기동 — ensure_node_server/_spawn_existing/built_server_js)
+  - `po_client.py` (PO Token HTTP 클라이언트 — L0 leaf, 이미 분리 완료)
+  - `pot_provider.py`는 3개 모듈을 재수출하는 facade + `POTProviderWorker(QThread)` 유지
+  - `ensure_node_runtime`이 `pot_server._download_with_progress`에 순환 참조 없이 접근하도록 함수 레벨 import 사용
+
+- **통합 테스트 추가**: ✅ `tests/test_download_pipeline.py` 신규 (12개 테스트)
+  - `TestDownloadContext`: dataclass 기본 속성·오류 수집 검증
+  - `TestEmitDl`/`emit_err`: 포맷 규격 검증
+  - `TestPotProviderFacade`: 재수출 검증 (node_provider/pot_server/po_client)
+  - `TestContextPipelineFlow`: ctx가 파이프라인 함수에 흐르는 흐름 검증
 
 ### 2026-09-09 — 구조적 트레이드오프 5건 수술 + 모듈 분리 + dataclass 컨텍스트 추출
 
@@ -529,16 +537,17 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 | `update_worker.py` | **신규 생성** — UpdateWorker + `_RAW_VERSION_CMDS` 분리. main 배선 변경 |
 | `dialogs.py` | UpdateWorker 블록 제거 (846줄 → 686줄) |
 | `target_downloader.py` | 오류 사유 전건 영문 1-3단어 태그화 (`age/bot restricted`, `format missing` 등) |
-| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 31개) |
+| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 34개) |
 
 #### 검증
-- ✅ py_compile 전체 OK, smoke PASS, 런타임 READY 1건 유지
+- ✅ py_compile 34개 모듈 OK, smoke PASS, 런타임 READY 1건 유지
 - ✅ 계층 역전 해소: client_opts/updater/target_downloader → po_client(L0) 직접 참조
 - ✅ 다운로더 팩토리 분리: 3-way 독립 모듈
 - ✅ dataclass 컨텍스트로 파이프라인 계약 명시화
+- ✅ pot_provider SRP 3-웨이 분리 + facade 재수출 검증
+- ✅ pytest 68 passed (56 existing + 12 new integration tests)
 
 #### 남은 과제
-- **pot_provider SRP 분리** — `pot_server.py` + `node_provider.py` + `pot_client.py` 3-웨이 분리
 
 | 모듈 | 변경 |
 |------|------|
