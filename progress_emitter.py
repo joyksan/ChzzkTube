@@ -31,82 +31,57 @@ from dl_platform import _dl_platform
 from client_opts import _apply_client_opts, _apply_cookie_opts
 
 
-def _dl_spec(worker):
-    """다운로더 워커에서 사양 문자열 추출 (해상도·fps, 오디오 폴백)."""
-    v = getattr(worker, "v_spec", None) or {}
+def _dl_spec(ctx):
+    """컨텍스트에서 사양 문자열 추출 (해상도·fps, 오디오 폴백)."""
+    v = ctx.v_spec or {}
     h = v.get("height") or 0
     fps = v.get("fps") or 0
     if h:
         return f"{h}p{fps}" if fps else f"{h}p"
-    a_desc = getattr(worker, "audio_desc", "") or ""
+    a_desc = ctx.audio_desc or ""
     if a_desc and ("(" in a_desc or "AAC" in a_desc or "OPUS" in a_desc):
         return a_desc
     return ""
 
 
-def emit_dl(status, platform, spec="", speed="", pct=None, bar_frac=None, msg="", stage="DL"):
-    """DL/LIVE 스테이지 컬럼 라인 — SPEC(스트림 속성)과 SPEED(네트워크) 분리.
-
-    예: [12:00:01] DL │ RUN │ YT  │ 1080p30 │ 12.4M/s │ 65.0% │ [█⋯░] │ 제목
-    """
-    return format_log_line(
-        stage=stage,
-        status=status,
-        platform=platform,
-        spec=spec,
-        speed=speed,
-        pct=pct,
-        bar_frac=bar_frac,
-        msg=msg,
-    )
-
-
-def emit_err(msg):
-    """DL 실패 컬럼 라인."""
-    return format_log_line(
-        stage="DL", status="FAIL", platform="-", spec="-", speed="-",
-        pct=None, bar_frac=None, msg=msg,
-    )
-
-
-def hook(worker, d):
+def hook(ctx, d):
     """yt-dlp progress_hook 콜백 — downloading→틱, finished→완료 메타."""
     status = d.get("status")
     if status == "downloading":
-        return emit_progress_tick(worker, d)
+        return emit_progress_tick(ctx, d)
     if status == "finished":
-        fpath = d.get("filename") or getattr(worker, "current_file", "") or ""
-        return log_success_info(worker, fpath)
+        fpath = d.get("filename") or ctx.current_file or ""
+        return log_success_info(ctx, fpath)
     return None
 
 
 _TICK_INTERVAL = 0.5  # VOD 틱 0.5초 스로틀
 
 
-def emit_progress_tick(worker, d):
+def emit_progress_tick(ctx, d):
     """VOD 진행 틱 — 0.5초 스로틀, SpeedWindow 평균 속도, 컬럼 라인."""
     now = time.monotonic()
-    last = getattr(worker, "_last_tick_t", 0) or 0
+    last = ctx._last_tick_t or 0
     if last and now - last < _TICK_INTERVAL:
         return
-    worker._last_tick_t = now
+    ctx._last_tick_t = now
 
     done = float(d.get("downloaded_bytes") or 0)
     total = float(d.get("total_bytes") or d.get("total_bytes_estimate") or 0)
 
-    worker._speed_win.add(done)
-    rate = worker._speed_win.speed()
+    ctx.speed_win.add(done)
+    rate = ctx.speed_win.speed()
     speed_s = f"{format_bytes(rate)}/s" if rate else "-"
 
     pct = (done / total * 100.0) if total else 0.0
     # 제목은 이미 ANAL 단계에서 표시되었으므로 제외 (중복 방지)
     title = ""
 
-    worker.log_concise.emit(
+    ctx.logger.log_concise.emit(
         emit_dl(
             status="RUN",
-            platform=_dl_platform(getattr(worker, "current_url", "") or ""),
-            spec=_dl_spec(worker),
+            platform=_dl_platform(ctx.current_url or ""),
+            spec=_dl_spec(ctx),
             speed=speed_s,
             pct=pct,
             bar_frac=min(pct / 100.0, 1.0),
@@ -117,16 +92,16 @@ def emit_progress_tick(worker, d):
     )
 
 
-def log_success_info(worker, file_path):
+def log_success_info(ctx, file_path):
     """개별 파일 완료 — 용량 포함 한 줄."""
     size = 0
     if file_path and os.path.exists(file_path):
         size = os.path.getsize(file_path)
     # [채널명 포함] DL 완료 Msg에 채널명 추가
-    channel = _dl_platform(getattr(worker, "current_url", "") or "")
+    channel = _dl_platform(ctx.current_url or "")
     fname = os.path.basename(file_path) if file_path else "done"
     msg = f"{fname} ({format_bytes(size)})" if file_path else "done"
-    worker.log_concise.emit(
+    ctx.logger.log_concise.emit(
         emit_event("DL", "OK", channel, msg),
         False,
         False,
@@ -140,7 +115,7 @@ def _title_of(info):
     return str(info.get("title") or info.get("videoTitle") or "video")
 
 
-def emit_download_header(worker, info):
+def emit_download_header(ctx, info):
     """VOD 다운로드 시작 헤더 — 컬럼 포맷 통일."""
     title = _title_of(info)
     fmt = info.get("format") or {}
@@ -148,52 +123,52 @@ def emit_download_header(worker, info):
     msg = f"{title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
-    worker.log_concise.emit(
-        emit_event("DL", "RUN", _dl_platform(getattr(worker, "current_url", "") or ""), msg),
+    ctx.logger.log_concise.emit(
+        emit_event("DL", "RUN", _dl_platform(ctx.current_url or ""), msg),
         False,
         False,
     )
-    worker._meta_logged = True
+    ctx._meta_logged = True
 
 
-def emit_live_header(worker, info, res_label=""):
+def emit_live_header(ctx, info, res_label=""):
     """라이브 녹화 시작 헤더 — LIVE 스테이지, 해상도는 SPEC 분리."""
     title = _title_of(info)
     if res_label:
-        worker.log_concise.emit(
-            emit_dl("RUN", _dl_platform(getattr(worker, "current_url", "") or ""),
+        ctx.logger.log_concise.emit(
+            emit_dl("RUN", _dl_platform(ctx.current_url or ""),
                     spec=res_label, stage="LIVE", msg=title),
             False, False,
         )
     else:
-        worker.log_concise.emit(
-            emit_dl("RUN", _dl_platform(getattr(worker, "current_url", "") or ""),
+        ctx.logger.log_concise.emit(
+            emit_dl("RUN", _dl_platform(ctx.current_url or ""),
                     stage="LIVE", msg=title),
             False, False,
         )
-    worker._meta_logged = True
+    ctx._meta_logged = True
 
 
-def emit_chzzk_header(worker, ch_info, fmt):
+def emit_chzzk_header(ctx, ch_info, fmt):
     """치지직(클립/VOD) 헤더 — 컬럼 포맷 통일."""
     title = ch_info.get("videoTitle") or ch_info.get("title") or "untitled"
     fmt_desc = cli_format_desc(fmt) if fmt else ""
     msg = f"chzzk — {title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
-    worker.log_concise.emit(
+    ctx.logger.log_concise.emit(
         emit_event("DL", "RUN", "chzzk", msg),
         False,
         False,
     )
-    worker._meta_logged = True
+    ctx._meta_logged = True
 
 
-def emit_live_final_stats(worker, total_bytes, start_time):
+def emit_live_final_stats(ctx, total_bytes, start_time):
     """라이브 종료 통계 — LIVE 스테이지, 용량은 MSG·평균 속도는 SPEED."""
     dur = (time.monotonic() - start_time) if start_time else 0.0
     rate = (total_bytes / dur) if dur > 0 else 0.0
-    worker.log_concise.emit(
+    ctx.logger.log_concise.emit(
         emit_dl(
             status="DONE",
             platform="-",
@@ -207,4 +182,4 @@ def emit_live_final_stats(worker, total_bytes, start_time):
         False,
         False,
     )
-    worker.live_partially_saved = False
+    ctx.live_partially_saved = False
