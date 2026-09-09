@@ -9,12 +9,12 @@ jobs:
       QT_QPA_PLATFORM: offscreen  # headless Qt 실행을 위해
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version-file: '.python-version'  # v3.12
+          python-version: '3.12'
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v3
