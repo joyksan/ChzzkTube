@@ -22,7 +22,8 @@ def patch_cli_raw_output(fake_out):
     fake_proc = Mock()
     fake_proc.stdout = fake_out
     fake_proc.stderr = ""
-    with patch.object(subprocess, "run", return_value=fake_proc):
+    with patch.object(subprocess, "run", return_value=fake_proc), \
+         patch.object(updater, "_cli_base", return_value=["ffmpeg"]):
         yield
 
 
