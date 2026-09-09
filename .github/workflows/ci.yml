@@ -1,0 +1,33 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: macos-latest
+    env:
+      QT_QPA_PLATFORM: offscreen  # headless Qt 실행을 위해
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: '.python-version'  # v3.12
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Run unit and integration tests
+        run: uv run python -m pytest tests/ -v --tb=short
+
+  # CI 파이프라인: 푸시/프리퀘스트 시 자동 실행.
+  # - macOS 최신 환경에서 Python 3.12 + uv 캐싱
+  # - Qt 헤드리스 모드(QT_QPA_PLATFORM=offscreen) 강제
+  # - pytest 68개 테스트(56 기존 + 12 신규 통합) 자동 실행
