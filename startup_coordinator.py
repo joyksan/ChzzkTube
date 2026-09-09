@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import threading
-from PySide6.QtCore import QObject, Signal
-import log_history
+from PySide6.QtCore import QObject
 from log_console import format_log_line
 
 
@@ -18,12 +17,6 @@ class StartupCoordinator(QObject):
     3. READY 로그를 정확히 한 번만 출력 (콘솔 + F12 + 히스토리)
     4. 3대 로그 시스템에 동시 전파
     """
-    
-    # Worker 스레드에서 오는 시그널들
-    deps_result = Signal(bool, str)  # ok, message
-    upgrade_result = Signal(bool, str)  # ok, summary
-    pot_result = Signal(bool, str)  # ok, message
-    force_unlock = Signal()  # 15초 폴백 타이머
     
     def __init__(self, main_window):
         super().__init__()
@@ -44,12 +37,6 @@ class StartupCoordinator(QObject):
             "pot": "",
             "fallback": ""
         }
-        
-        # 시그널 연결 (Worker → Coordinator 내부 슬롯)
-        self.deps_result.connect(self.report_deps)
-        self.upgrade_result.connect(self.report_upgrade)
-        self.pot_result.connect(self.report_pot)
-        self.force_unlock.connect(self._on_force_unlock)
     
     def _emit_log(self, stage: str, status: str, platform: str, spec: str, msg: str, 
                   is_status: bool = False, is_error: bool = False):
@@ -65,8 +52,6 @@ class StartupCoordinator(QObject):
             is_status: 진행 상태 표시 (덮어쓰기 모드)
             is_error: 오류 상태
         """
-        from log_console import format_log_line
-        
         # 로그 라인 생성
         line = format_log_line(
             stage=stage,
@@ -166,8 +151,3 @@ class StartupCoordinator(QObject):
                 
                 # 기동 완료 플래그
                 self._view._startup_completed = True
-
-
-def create_startup_coordinator(main_window) -> StartupCoordinator:
-    """StartupCoordinator 팩토리 함수"""
-    return StartupCoordinator(main_window)

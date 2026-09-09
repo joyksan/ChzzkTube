@@ -105,8 +105,8 @@ def _apply_pot_opts(opts, video_id, client="web_embedded"):
     """
     if not video_id:
         return opts
-    import pot_provider
-    token = pot_provider.fetch_po_token(video_id)
+    from po_client import fetch_po_token
+    token = fetch_po_token(video_id)
     if not token:
         return opts
     ea = opts.setdefault("extractor_args", {}).setdefault("youtube", {})

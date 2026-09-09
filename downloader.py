@@ -48,7 +48,6 @@ from client_opts import (
     _dedupe_by_label,
 )
 import progress_emitter as _pe
-import live_recorder as _lr
 import target_downloader as _td
 import finalizer as _fin
 

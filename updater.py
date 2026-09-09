@@ -155,7 +155,7 @@ def check_deps():
 
     # 3. PO token 서버
     try:
-        from pot_provider import server_ping
+        from po_client import server_ping
         if server_ping():
             results.append(("pot", "OK", "running"))
         else:

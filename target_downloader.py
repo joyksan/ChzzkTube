@@ -63,8 +63,8 @@ def _make_ytdl_opts(worker, fmt, url):
 
 def _extract_yt_id(url):
     """YouTube URL에서 video ID 추출 (PO 토큰 content_binding용)."""
-    import pot_provider
-    return pot_provider.extract_video_id(url)
+    from po_client import extract_video_id
+    return extract_video_id(url)
 
 
 def _format_selector(worker):
@@ -221,36 +221,37 @@ def download_target(worker, url, failed_targets):
         return _download_vod(worker, url)
 
     except yt_dlp.utils.DownloadError as de:
-        # YouTube 봇 체크/챌린지 실패 정밀 추적
+        # [MSG 태그 규격 §1.1-4] 오류 사유는 1~3단어 소문자 영문 CLI 태그.
+        # 원문 detail은 _emit_error_log가 상세(F12)로 남긴다.
         err_str = str(de).lower()
         if "challenge solving failed" in err_str or "sign in" in err_str or "the page needs to be reloaded" in err_str:
-            reason = "age/bot-check restricted (우회 실패)"
+            reason = "age/bot restricted"
         elif "requested format not available" in err_str:
-            reason = "포맷 부재 (해상도/코덱 미지원)"
+            reason = "format missing"
         elif "video unavailable" in err_str or "this video is not available" in err_str:
-            reason = "영상 삭제/비공개 상태"
+            reason = "video unavailable"
         elif "private video" in err_str:
-            reason = "비공개 영상"
+            reason = "video private"
         else:
-            reason = f"다운로드 차단: {str(de)[:60]}"
+            reason = f"download blocked ({str(de)[:60]})"
         _emit_error_log(worker, url, reason, failed_targets)
         return False
 
     except KeyError as ke:
         # 치지직 JSON 구조 변경 등 데이터 파싱 오류
-        reason = f"데이터 파싱 오류 (API 변경 의심): {ke}"
+        reason = f"parse error ({ke})"
         _emit_error_log(worker, url, reason, failed_targets)
         return False
 
     except (ConnectionError, TimeoutError, OSError) as net_ex:
         # 네트워크 계열 오류 세분화
-        reason = f"네트워크 오류: {type(net_ex).__name__}"
+        reason = f"network error ({type(net_ex).__name__})"
         _emit_error_log(worker, url, reason, failed_targets)
         return False
 
     except Exception as ex:
         # 최후의 범용 에러 캐치
-        reason = f"알 수 없는 오류: {type(ex).__name__}: {str(ex)[:50]}"
+        reason = f"unknown error ({type(ex).__name__}: {str(ex)[:50]})"
         _emit_error_log(worker, url, reason, failed_targets)
         return False
 
