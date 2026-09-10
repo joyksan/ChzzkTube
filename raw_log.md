@@ -13,6 +13,7 @@
 호출 테스트에서는 DirectConnection 정책이라 즉시 실행된다.)
 구독 전 호출은 history에만 적재 (유실 방지).
 """
+import sys
 import threading
 
 from PySide6.QtCore import QObject, Signal
@@ -25,7 +26,7 @@ class _RawHub(QObject):
     기존 문자열(str)과 신규 LogEvent를 모두 수용.
     """
     concise = Signal(object, bool, bool)  # (str|LogEvent, is_status, is_error)
-    full = Signal(object, str)            # (str|LogEvent, tag)
+    full = Signal(object)                 # (str|LogEvent)
 
 
 _hub = _RawHub()
@@ -80,7 +81,7 @@ def raw(tag, msg, is_status=False, is_error=False, full_only=False, channel=None
             _hub.concise.emit(text, bool(is_status), bool(is_error))
         else:
             tagged = f"[{tag}] {text}" if not text.startswith(f"[{tag}]") else text
-            _hub.full.emit(tagged, tag)
+            _hub.full.emit(tagged)
         return
 
     if full_only:
@@ -103,13 +104,15 @@ def _emit_event(tag, event, channel):
         # history: 항상 기록
         import log_history
         log_history.log(f"[{tag}] {event.msg}", is_status=event.is_status, is_error=event.is_error)
-
-        # 채널별 emit (정규식 검사 0회)
-        if channel is None:
-            channel = Channel.BOTH
-        if channel & Channel.CONCISE:
-            _hub.concise.emit(event, event.is_status, event.is_error)
-        if channel & Channel.FULL:
-            _hub.full.emit(event, tag)
     except Exception:
         pass
+
+    # 채널별 emit (정규식 검사 0회)
+    if channel is None:
+        channel = Channel.BOTH
+    if channel & Channel.CONCISE:
+        _hub.concise.emit(event, event.is_status, event.is_error)
+    if channel & Channel.FULL:
+        # F12에는 태그된 문자열로 전달 (기존 문자열 경로와 동일)
+        tagged = f"[{tag}] {event.msg}" if not str(event.msg).startswith(f"[{tag}]") else str(event.msg)
+        _hub.full.emit(tagged)

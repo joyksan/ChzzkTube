@@ -265,7 +265,7 @@ class TestPotProviderFacade:
         import raw_log
         concise_got, full_got = [], []
         raw_log.subscribe_concise(lambda m, is_status=False, is_error=False: concise_got.append(m))
-        raw_log.subscribe_full(lambda m: full_got.append(m))
+        raw_log.subscribe_full(lambda m, t=None: full_got.append(m))
         line = "[00:00:00] POT      │ OK       │ POT      │ - │ - │ staged"
         raw_log.raw("pot-test", line)
         # TUI 라인 → 메인(concise) 전용, F12(full)엔 실지 않는다.

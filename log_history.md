@@ -23,7 +23,7 @@ def _log_path(now):
     import config
     return os.path.join(config.LOG_DIR, f"chzzktube_{now:%Y-%m-%d}.log")
 
-def log(msg, level="INFO"):
+def log(msg, level="INFO", **kwargs):
     """한 건(다중 줄 허용)을 오늘 히스토리 파일에 타임스탬프로 기록."""
     try:
         now = _now()
