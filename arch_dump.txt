@@ -1,0 +1,174 @@
+C:\dev\ChzzkTube\아키텍처구조.md
+================================================================================
+## 🏗️ 현재 아키텍처 구조 보고서 (2026-09-09 실측)
+
+### 34개 모듈 전체 매핑
+
+분류	모듈	라인수	핵심 책임
+View (4)	main.py	49525	진입점 + MainWindow(UI 조립·로그 출력·종료 처리)
+dialogs.py	32812	ExitConfirm·Settings·CookieSelect·CookieViewer·ActionCountdown·VerboseLogWindow 6종 + CustomComboBox
+theme.py	12098	색상 토큰 + QSS 상수 20종 (QSS 단일 출처)
+log_console.py	37108	ConciseLogConsole — 간결 로그 덮어쓰기 파이프라인 + 컬럼 포맷 규격(format_log_line/emit_event)
+Control (1)	controller.py	8971	MediaController(QObject) — 다운로드/분석 세션 state 머신, 타겟 파싱, 워커 생명주기(좀비 유기)
+Worker (2)	downloader.py	5416	DownloadWorker(QThread) + YtLoggerBridge. 경량 분석(youtube:skip) 분기
+update_worker.py	8378	UpdateWorker(QThread) + _RAW_VERSION_CMDS — DEPS 체크/자동 업그레이드
+Pipeline (6)	target_downloader.py	12654	개별 URL 다운로드 분기 (VOD/라이브/치지직/Streamlink) + 대상 평탄화
+progress_emitter.py	7055	로그 이벤트 포맷팅 (DL/LIVE 헤더·틱·완료) — emit_dl/emit_err 단일 출처
+live_recorder.py	7553	라이브 녹화 파이프라인 (ffmpeg/streamlink, 취소·릴레이 계측)
+finalizer.py	2508	다운로드 완료 요약 로그 (ABORT/개별 실패/배치 결론)
+dl_context.py	2883	신규 DownloadContext dataclass — 파이프라인 계약 명시화
+yt_logger_bridge.py	2128	신규 YtLoggerBridge 공용 어댑터 (Analyze/Download 공유)
+Domain (7)	media.py	11038	map_res, format_bytes, codec rank, format_title, cleanup_temp_files, remux_live_to_container
+chzzk_api.py	12880	치지직 클립/VOD 공개 API 분석 (yt-dlp 우회 경로)
+cookies.py	3537	Firefox/Chromium 쿠키 DB 추출
+config.py	2491	경로(frozen/dev), 기본값, 로드/저장 — 제로 의존 leaf
+utils.py	2222	clean_ansi, get_filename_template, _open_windows_explorer, parse_sec
+updater.py	15484	구성요소(yt-dlp/streamlink/ffmpeg/node/pot) 버전 확인(PyPI) 및 pip 업그레이드
+worker_context.py	1949	Worker 컨텍스트 헬퍼 (사용처 확인 필요)
+Platform/Helpers (4)	client_opts.py	6058	yt-dlp 옵션 주입 (쿠키·클라이언트·PO Token·FFmpeg·경량 분석 skip)
+speed_window.py	1548	속도 측정 슬라이딩 윈도우
+dl_platform.py	3455	URL → 플랫폼/콘텐츠 타입 감별 + 플랫폼 축약기호
+playlist.py	1422	YouTube 채널 URL 정규화
+PO Token (3)	pot_provider.py	9142	Facade — PO Token 3개 모듈 재수출 + POTProviderWorker(QThread) 유지
+node_provider.py	12839	신규 Node.js 런타임 수급 전념 — ensure_node_runtime, node_exe, npm_exe, bundled_npm_ok
+pot_server.py	18398	신규 bgutil 서버 빌드/기동 전념 — ensure_node_server, built_server_js, _spawn_node_server
+PO Token Client (1)	po_client.py	3273	신규 L0 leaf — PO Token HTTP 클라이언트 (server_ping/probe_server/fetch_po_token/extract_video_id)
+Bootstrap/Infra (4)	components.py	20320	ffmpeg 런타임 수급 퍼사드 (Windows/macOS/Linux 전략)
+log_history.py	3524	날짜별 원본 로그 히스토리 (thread-safe, 30일 보존, session_begin/end)
+smoke_test.py	2071	offscreen 기동 검증 하네스 (리다이렉트 인코딩 강제)
+sync_mirrors.py	2920	.py docstring → 동일 이름 .md 미러 자동 동기화 도구
+CI/Tests	.github/workflows/ci.yml	-	신규 GitHub Actions CI — push/PR 시 pytest 자동 실행
+
+### 🔄 시그널 방향 트리 (단방향, 역방향 0)
+
+[View] main.py (단일 진입점, 모든 시그널 최종 수신자)
+    │
+    ├── append_concise_log(line, is_status, is_error)  ← 모든 Worker/Controller 시그널 종착점
+    ├── append_full_log(line, is_status)               ← F12 Raw 로그
+    └── add_concise_task_separator()                   ← 작업 구분선
+
+[Orchestrator] 
+    ├── startup_coordinator.StartupCoordinator
+    │   ├── report_deps(ok:bool, msg:str)              ← UpdateWorker.check_done 결과
+    │   ├── report_upgrade(ok:bool, msg:str)           ← UpdateWorker.upgrade_done 결과
+    │   ├── report_pot(ok:bool, msg:str)               ← POTProviderWorker.finished
+    │   ├── report_ready()                             ← 강제 언락 / 전체 완료 시
+    │   └── READY 1회 발산 + separator + 입력 개방
+    │
+    └── controller.MediaController
+        ├── analyze_result_ready(dict)                 ← AnalyzeWorker → View 포워딩
+        ├── analyze_error_occurred(str)                ← AnalyzeWorker → View 포워딩
+        ├── analyze_log_full(str)                      ← AnalyzeWorker → View 포워딩
+        └── (state dict 단방향 쓰기: canceled/skip/running/analyzing)
+
+[Worker Threads]
+    ├── UpdateWorker (QThread)
+    │   ├── line(str, is_status, is_error)             → main._component_line (DEPS 5줄)
+    │   ├── full(str, is_status)                       → main.append_full_log (F12)
+    │   ├── check_done(list)                           → main._on_update_check_done
+    │   │   ├── 결론 라인 출력 ("deps ok" / "update — ...")
+    │   │   ├── upgrade 워커 기동
+    │   │   └── report_deps(ok)                        → Coordinator 플래그 세팅
+    │   └── upgrade_done(bool, str)                    → Coordinator.report_upgrade
+    │
+    ├── AnalyzeWorker (QThread) — analyze_worker.py
+    │   ├── result_ready(dict)                         → Controller.analyze_result_ready
+    │   ├── error_occurred(str)                        → Controller.analyze_error_occurred
+    │   └── log_full(str)                              → Controller.analyze_log_full
+    │
+    ├── DownloadWorker (QThread) — downloader.py
+    │   ├── log_concise(str, is_status, is_error)      → View.append_concise_log (틱: is_status=True 갱신형)
+    │   ├── log_full(str)                              → View.append_full_log (yt-dlp 원문)
+    │   └── finished_all(int, int)                     → View.on_download_finished
+    │
+    └── POTProviderWorker (QThread) — pot_provider.py
+        ├── line(str, is_status, is_error)             → View._component_line
+        ├── full(str, is_status)                       → View.append_full_log
+        └── finished(QThread)                          → Coordinator.report_pot
+
+[Pipeline Functions (비스레드, ctx 기반)]
+    ├── target_downloader.run_download(ctx, ...)       ← DownloadWorker.run() 내부 호출
+    ├── progress_emitter.emit_dl(ctx, ...)             ← 진행 틱/헤더/완료 (ctx 기반 단일 출처)
+    ├── progress_emitter.emit_err(ctx, ...)            ← 에러 라인
+    ├── live_recorder.run_live_recording(ctx, ...)     ← 라이브 ffmpeg 파이프
+    └── finalizer.finalize_batch(ctx, ...)             ← 배치 마감 요약
+
+[PO Token Stack (L0 → L1 → L2)]
+    po_client (L0 leaf) 
+        → fetch_po_token/extract_video_id/probe_server
+        → client_opts / updater / target_downloader 직접 참조
+    
+    node_provider (L0 leaf)
+        → ensure_node_runtime/node_exe/npm_exe/bundled_npm_ok
+        → pot_server / pot_provider 직접 참조
+    
+    pot_server (L1)
+        → ensure_node_server/built_server_js/_spawn_node_server
+        → pot_provider (facade) 재수출
+    
+    pot_provider (L2 facade)
+        → 3개 모듈 재수출 + POTProviderWorker(QThread) 유지
+
+
+### 📊 레이어별 계층 (순환 0, 의존성 역전 0)
+
+┌─────────────────────────────────────────────────────────────────┐
+│ LAYER 3: View (Qt Widgets)                                      │
+│  main.py, dialogs.py, theme.py, log_console.py                  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (시그널 수신 전용)
+┌─────────────────────────────────────────────────────────────────┐
+│ LAYER 2: Orchestrators                                          │
+│  startup_coordinator.py (기동 시퀀스 게이트)                         │
+│  controller.py (세션 state 머신, 시그널 포워딩)                       │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (QThread 실행)
+┌─────────────────────────────────────────────────────────────────┐
+│ LAYER 1: Worker Threads                                         │
+│  downloader.py (DownloadWorker)                                 │
+│  analyze_worker.py (AnalyzeWorker)                              │
+│  update_worker.py (UpdateWorker)                                │
+│  pot_provider.py (POTProviderWorker)                            │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (함수 호출, ctx 전달)
+┌─────────────────────────────────────────────────────────────────┐
+│ LAYER 0.5: Pipeline Functions (비스레드, 순수 로직)                 │
+│  target_downloader.py, progress_emitter.py,                    │
+│  live_recorder.py, finalizer.py, dl_context.py                 │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ (모듈 임포트)
+┌─────────────────────────────────────────────────────────────────┐
+│ LAYER 0: Domain / Helpers / Infra (Leaf)                        │
+│  media.py, chzzk_api.py, cookies.py, config.py,                │
+│  updater.py, utils.py, worker_context.py,                      │
+│  yt_logger_bridge.py, po_client.py,                            │
+│  node_provider.py, pot_server.py,                              │
+│  components.py, log_history.py,                                │
+│  dl_platform.py, speed_window.py, playlist.py                  │
+└─────────────────────────────────────────────────────────────────┘
+
+### ⚡ 핵심 데이터 구조
+구조체	정의 위치	필드
+dl_state	controller.MediaController.state	running, canceled, skip, analyzing (bool) — 워커와 공유, 단방향 쓰기
+cfg	config.default_config()	15키 (download_path, container, embed_subtitles, audio_only, fast_download, remove_duplicates, auto_open_folder, completion_action, play_sound, max_video_res, filename_prefix, filename_suffix, browser_cookie, cookie_file_path, yt_player_client) — dl_config.json 병합
+DownloadContext	dl_context.py	dataclass: cfg, v_sel/a_sel/v_spec, logger, current_url/current_file, state, _speed_win, total_count/current_idx, _last_tick_t, _meta_logged, errors, live_partially_saved
+AnalyzerResult	analyze_worker.py	dict: info, v_list, a_list, is_chzzk, yt_client
+
+### 🔄 CI 파이프라인 (.github/workflows/ci.yml)
+
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5 (python-version-file: '.python-version')
+      - uses: astral-sh/setup-uv@v3 (enable-cache: true)
+      - run: uv sync
+      - run: uv run python -m pytest tests/ -v --tb=short
