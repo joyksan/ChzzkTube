@@ -30,7 +30,6 @@ import re
 import yt_dlp
 
 from chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
-from log_console import format_target_url
 from utils import get_filename_template
 from dl_platform import detect_content_type
 from client_opts import (
@@ -62,10 +61,11 @@ def _make_ytdl_opts(ctx, fmt, url):
         "retries": 3,
         "socket_timeout": 30,
         # [0% 스톨 픽스] PO 토큰 불일치 시 googlevideo가 "묵살 스로틀"
-        # (연결 수락 + 데이터 거의 안 보냄) → speed < 100KB/s 3초 지속되면
+        # (연결 수락 + 데이터 거의 안 보냄) → speed < 50KB/s 3초 지속되면
         # yt-dlp가 ThrottledDownload raise → 재추출+재시도.
         # [주의] dest가 throttledratelimit (camelCase 아님, yt-dlp 옵션 표준)
-        "throttledratelimit": 100_000,
+        # 100KB/s → 50KB/s로 완화: 초기 버퍼링 구간에서 오탐 방지
+        "throttledratelimit": 50_000,
     }
     if ctx.cfg.get("fast_download"):
         opts["concurrent_fragment_downloads"] = 4
@@ -190,8 +190,9 @@ def _download_vod(ctx, url):
 
 def _emit_error_log(ctx, url, reason, failed_targets):
     """에러 로그 출력 및 실패 목록에 추가."""
+    url_short = url[:40] + ("..." if len(url) > 40 else "")
     ctx.log_concise.emit(
-        _emit_err(f"{format_target_url(url, 40)} — {reason}"),
+        _emit_err(f"{url_short} — {reason}"),
         False,
         True,
     )
@@ -316,8 +317,9 @@ def expand_targets(ctx):
                     urls = _flatten(ctx, normalize_youtube_channel_url(url))
             expanded.extend(urls or [url])
         except Exception as ex:
+            url_short = url[:40] + ("..." if len(url) > 40 else "")
             ctx.log_concise.emit(
-                emit_err(f"{format_target_url(url, 40)} — {str(ex)}"),
+                emit_err(f"{url_short} — {str(ex)}"),
                 False,
                 True,
             )

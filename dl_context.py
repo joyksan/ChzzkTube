@@ -37,6 +37,9 @@ class DownloadContext:
 
     # 로거 (YtLoggerBridge — log_full/log_concise 시그널 포함)
     logger: Any = None
+    
+    # 간결 로그용 콜백 (progress_emitter 연동용)
+    log_concise: Any = None
 
     # 현재 처리 중인 대상
     current_url: str = ""

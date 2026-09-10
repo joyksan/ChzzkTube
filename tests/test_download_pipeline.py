@@ -261,20 +261,27 @@ class TestPotProviderFacade:
         assert any("released" in m for m in notes)
 
     def test_raw_bus_fanout(self):
-        """raw(): history 적재 + concise/full 구독자 팬아웃."""
+        """raw(): 병렬 채널 계약 — TUI는 concise만, non-TUI는 full만, full_only는 full 전용."""
         import raw_log
         concise_got, full_got = [], []
         raw_log.subscribe_concise(lambda m, is_status=False, is_error=False: concise_got.append(m))
         raw_log.subscribe_full(lambda m: full_got.append(m))
         line = "[00:00:00] POT      │ OK       │ POT      │ - │ - │ staged"
         raw_log.raw("pot-test", line)
+        # TUI 라인 → 메인(concise) 전용, F12(full)엔 실지 않는다.
         assert concise_got and concise_got[-1] == line
-        assert full_got and "pot-test" in full_got[-1]
-        # 비트리 메시지는 concise 제외, full/history만
+        assert not any("pot-test" in m for m in full_got), \
+            "TUI 라인은 F12 full에 실려서는 안 된다 (병렬 분리)"
+        # 비트리 메시지는 concise 제외, F12(full)로만
         n0 = len(concise_got)
         raw_log.raw("pot-test", "plain detail message")
         assert len(concise_got) == n0
-        assert len(full_got) > 0
+        assert full_got and "pot-test" in full_got[-1]
+        # full_only=True → F12 전용, 메인에는 절대 안 나간다
+        n1 = len(concise_got)
+        raw_log.raw("pot-test", "full-only raw line", full_only=True)
+        assert len(concise_got) == n1
+        assert full_got and "full-only" in full_got[-1]
 
     def test_reexports_from_po_client(self):
         """facade가 po_client 함수들을 올리바르게 재수출하는지 확인."""

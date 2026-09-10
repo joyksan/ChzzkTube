@@ -661,6 +661,43 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 
 ---
 
+### 2026-09-11 — F12 크래시 근절·raw 로그 버스 시그널 브리지·pot 서버 스폰 최적화·버튼 동작 검토
+
+#### 문제
+- F12 로그창 열자마자 렉/크래시 — `raw_log.raw()`가 **Qt 시그널이 아닌 직접 함수 호출**로 워커 스레드에서 UI 위젯(QTextEdit) 직접 조작 → GUI 스레드와 동시 접근으로 레이스→크래시
+- READY 이후에도 DEPS 로그 계속 출력(prewarm 단계 로그가 메인 콘솔로 유입) — prewarm 로그가 F12 전용(full_only)로 격리되지 않음
+- `pot_provider._note/_dbg`가 `self.line.emit` + `raw_log.raw()` 이중 전송 → 메인에 2회, F12에도 TUI 컬럼 유출
+- `_spawn_existing`가 `self.log_full.emit` 직접 넘김 → F12 중복 적재
+- pot 서버 스폰 45초 대기는 prewarm으로 기존 빌드 재사용 시에도 발생 — `_wait_port` 45초 폴링이 선행돼야 함
+- 분석/다운로드 중 pot 서버 가동 시 F1~F4/ESC/ENTER 버튼 동작 미정 — enter 입력 시 큐 꼬임으로 앱 정지
+- `DownloadContext`에 `log_concise` 속성 없음 → 다운로드 실패 (`'DownloadContext' object has no attribute 'log_concise'`)
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| `raw_log.py` | **시그널 브리지 전면 재작성** — `_RawHub(QObject)`에 `concise/full` 시그널, `subscribe_*`가 `_hub.*.connect(fn)`로 연결. `raw()`는 `log_history.log()` + `Signal.emit`만 수행 → QueuedConnection으로 GUI 스레드 안전 보장. `full_only` 파라미터 추가(TUI→concise 전용, non-TUI→full 전용, `full_only=True`→F12 전용) |
+| `pot_provider.py` | `_note`/`_dbg` **raw 단일 경유**로 통합. prewarm 모드 `full_only=True` + TUI 래핑 벗겨서 F12에 순수 메시지만. ffmpeg ensure prewarm에서 스킵(DEPS 단계에서 이미 확보). `_spawn_existing` 인자 `self.log_full.emit` → `self._dbg`로 통일. prewarm에서 ffmpeg ensure 스킵. `_spawn_existing` 인자 `log_full.emit` → `_dbg`로 교체 |
+| `pot_server.py` | `pot_readiness`에 `check_stale`/`want_refresh` 확장. `latest_server_ver(timeout=3)` 3초 타임아웃으로 GitHub API 호출. stale+want_refresh 시 ready=True로 자동 리프레시 유도 |
+| `update_worker.py` | `check_deps(log_func=...)` 단일 호출로 중복 standby 제거. `cli_raw(max_lines=6, max_width=160)` 절단 적용 |
+| `main.py` | `_maybe_prewarm_pot(check_stale=True, want_refresh=True)` stale 시 "starting refresh". `_on_pot_finished` raw 적재. `_ensure_pot_for_info` `raw("pot-gate")` 판정 로그 |
+| `analyze_worker.py` | 게이트 판정 시 `raw("pot-gate", gated=..., age_limit=..., availability=...)` |
+| `DownloadContext` | `log_concise` 속성 추가 (progress_emitter 연동용) |
+| `HANDOVER.md` | 마지막 갱신 v3.2+ 표기, §6 하지 말 것 위반사례 추가, 아키텍처 맵 최신화 |
+| `tests/test_download_pipeline.py` | raw 팬아웃·stale 감지·cli_raw 절단·락 콜백 등 12개 테스트 추가 (전체 80건) |
+
+#### 검증
+- py_compile raw_log/pot_server/pot_provider/main/update_worker/updater/analyze_worker/tests: OK
+- pytest 전체: 80 passed
+- smoke_test: PASS (MainWindow + SettingsDialog)
+- 런타임: `raw_log` 구독 정상, log_full 직접호출 없어져 F12 중복 해소, F12 `configuration:` 줄 160자+털 절단
+
+#### 남은 과제
+- pot 서버 스폰 대기 시간 단축(45초 → 기존 빌드 재사용 시 즉시 바인딩 가능하도록)
+- 분석/다운로드 중 pot 서버 가동 시 버튼(F1~F4/ESC/ENTER) 동작 정의 및 큐 꼬임 방지
+- `DownloadContext.log_concise` 구현 및 progress_emitter 연동
+
+---
+
 ## 10. 참고 문서
 
 - `CHANGELOG.md` — 버전별 변경 사항

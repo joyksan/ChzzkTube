@@ -348,12 +348,12 @@ def _spawn_node_server(log_full_func=None):
         if log_full_func:
             log_full_func(f"server Popen failed: {e}")
         return None
-    if _wait_port(45, log_full_func):
+    if _wait_port(20, log_full_func):
         return proc
     _kill(proc)
     if log_full_func:
         log_full_func(
-            "server spawn reason: /ping not responding in 45s "
+            "server spawn reason: /ping not responding in 20s "
             "(crash after startup — see bgutil_server.log)"
         )
     return None

@@ -71,6 +71,7 @@ class DownloadWorker(QThread):
             v_spec=self.v_spec,
             audio_desc=self.audio_desc,
             logger=self.logger,
+            log_concise=self.log_concise,
             current_url=self.current_url or "",
             current_file=self.current_file,
             state=self.state,

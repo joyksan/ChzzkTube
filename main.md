@@ -107,6 +107,8 @@ class MainWindow(QMainWindow):
         # [가드 초기화] _try_emit_ready의 pot_needed 판별용 — 미정의 시
         # hasattr() False → pot 무시 → POT 진행 중 READY 선행 발산 결함.
         self._pot_provider_started = False
+        # [POT 기동 상태] POT 서버 기동 중인지 추적 — Enter 등 키 입력 차단/지연용
+        self._pot_starting = False
         # [프리웜 가드] READY 후 유휴 스테이징 단일 발화용.
         self._prewarm_started = False
         self._prewarm_worker = None
@@ -588,6 +590,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_pot_worker") and self._pot_worker.isRunning():
             return  # 중복 기동 방지
         try:
+            self._pot_starting = True
             self._pot_worker = pot_provider.POTProviderWorker(self)
             self._pot_worker.line.connect(self._component_line)
             self._pot_worker.log_full.connect(self.append_full_log)
@@ -597,11 +600,13 @@ class MainWindow(QMainWindow):
             self._pot_worker.start()
             self._pot_provider_started = True
         except Exception:
+            self._pot_starting = False
             pass
 
     def _on_pot_finished(self):
         """POT 워커 종료 어댑터 — outcome을 풀어 Coordinator에 보고 + raw 적재."""
         import raw_log
+        self._pot_starting = False
         outcome = ("err", "")
         try:
             w = getattr(self, "_pot_worker", None)
@@ -1088,6 +1093,12 @@ class MainWindow(QMainWindow):
             self._esc_action()
             event.accept()
             return
+        # [POT 기동 중 Enter 차단] POT 서버 기동 중 Enter 입력이 큐를 꼬이게 함.
+        # 입력 필드에 포커스가 있고 POT 기동 중이면 Enter 무시.
+        if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
+            if self._pot_starting and self.url_input.hasFocus():
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def toggle_download(self):

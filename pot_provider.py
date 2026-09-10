@@ -107,11 +107,26 @@ class POTProviderWorker(QThread):
             )
 
     def _note(self, msg, is_status=False, is_error=False):
-        """간결 로그 + raw 스택 단일 경유 (직접 log_full.emit 금지 — F12 이중 방지)."""
+        """로깅 브리지 — raw 스택 단일 경유 (직접 시그널 emit 금지 — 중복 방지).
+
+        [채널 분기]
+        - prewarm 모드: 전 단계 로그를 F12(full) 전용으로만. 메인 콘솔은
+          _on_prewarm_finished의 준비 완료 1줄만 담당 (READY 후 오염 방지).
+        - 정식(gate) 모드: TUI 라인은 메인(concise)으로, 나머지는 F12로.
+          오류 상세는 [pot-DETAIL] 태그로 F12만.
+        """
         import raw_log
+        if self.prewarm:
+            # [prewarm] 단계별 상세는 F12(full) 전용. TUI 래핑은 벗겨내고
+            # 순수 메시지만 남긴다 — F12에 컬럼 노이즈가 쌓이지 않게.
+            raw_msg = str(msg)
+            if log_console.is_tui_line(raw_msg):
+                raw_msg = raw_msg.split(" │ ")[-1].strip()
+            raw_log.raw("pot", raw_msg, is_status=is_status, is_error=is_error,
+                        full_only=True)
+            return
         # [병기 방지] 이미 TUI 컬럼 포맷이면 그대로 emit — 재래핑 금지
         if log_console.is_tui_line(msg):
-            self.line.emit(str(msg), is_status, is_error)
             raw_log.raw("pot", str(msg), is_status=is_status, is_error=is_error)
             return
         # [오류 요약] 60자 초과 시 핵심만 추출 — 상세 원문은 raw로만
@@ -125,7 +140,6 @@ class POTProviderWorker(QThread):
         stage = "SYS" if is_error else "pot"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
         tui = emit_component(stage, status, "pot", concise_msg)
-        self.line.emit(tui, is_status, is_error)
         raw_log.raw("pot", tui, is_status=is_status, is_error=is_error)
 
     def _dbg(self, msg):
@@ -137,21 +151,27 @@ class POTProviderWorker(QThread):
         self._dbg("POTProviderWorker starting")
 
         # [ffmpeg ensure] — merge/remux용. system 우선, GitHub binary 폴백.
-        try:
-            import components
-            self._dbg("entering ffmpeg ensure phase")
-            ff_err = components.ensure_ffmpeg(self._note)
-            if ff_err:
-                self._note(
-                    f"ffmpeg fetch failed — merge/remux limited: {ff_err}",
-                    False, True,
-                )
-                self._dbg(f"ffmpeg fetch failed: {ff_err}")
-            else:
-                self._dbg("ffmpeg fetch done")
-        except Exception as ff_ex:
-            self._note(f"ffmpeg fetch module exception: {ff_ex}", False, True)
-            self._dbg(f"ffmpeg fetch module exception: {type(ff_ex).__name__}: {ff_ex}")
+        # [prewarm 스킵] DEPS 업그레이드 단계에서 이미 확보됐다. 프리웜 목적은
+        # POT 빌드 스테이징뿐이므로 재확인으로 인한 READY 후 메인 오염·중복을
+        # 차단한다 (게이트/정식 모드에서만 수행).
+        if not self.prewarm:
+            try:
+                import components
+                self._dbg("entering ffmpeg ensure phase")
+                ff_err = components.ensure_ffmpeg(self._note)
+                if ff_err:
+                    self._note(
+                        f"ffmpeg fetch failed — merge/remux limited: {ff_err}",
+                        False, True,
+                    )
+                    self._dbg(f"ffmpeg fetch failed: {ff_err}")
+                else:
+                    self._dbg("ffmpeg fetch done")
+            except Exception as ff_ex:
+                self._note(f"ffmpeg fetch module exception: {ff_ex}", False, True)
+                self._dbg(f"ffmpeg fetch module exception: {type(ff_ex).__name__}: {ff_ex}")
+        else:
+            self._dbg("ffmpeg ensure skipped (prewarm — handled at DEPS upgrade)")
 
         # [전환] Python 플러그인 설치/검사 제거 — 토큰은 다운로드 시점에
         # fetch_po_token()으로 직접 패칭. 구버전 잔재 정리.
@@ -208,7 +228,7 @@ class POTProviderWorker(QThread):
                 # 실패 처리하므로, 프리웜 단계에서는 최신 빌드 확보가 우선.
                 rebuild = have_build or (remote and local and remote != local)
                 _, err = ensure_node_server(
-                    self._note, self.log_full.emit, ver, rebuild=rebuild
+                    self._note, self._dbg, ver, rebuild=rebuild
                 )
                 self._dbg(f"prewarm ensure_node_server done: err={err!r}")
                 if err is None and built_server_js():
@@ -234,7 +254,7 @@ class POTProviderWorker(QThread):
         if built_server_js() and not need_refresh:
             self._dbg("trying to spawn existing build")
             self._note("pot server starting...", True)
-            if _spawn_existing(self.log_full.emit):
+            if _spawn_existing(self._dbg):
                 self.outcome = (
                     "ok",
                     emit_component("pot", "OK", "pot",
@@ -270,7 +290,7 @@ class POTProviderWorker(QThread):
 
             self._dbg(f"server source version target: {ver} (rebuild={have_build})")
             if _gate_fd is not None:
-                _, err = ensure_node_server(self._note, self.log_full.emit, ver, rebuild=have_build)
+                _, err = ensure_node_server(self._note, self._dbg, ver, rebuild=have_build)
             else:
                 _, err = (None, "build busy — spawn fallback")
             self._dbg(f"ensure_node_server done: err={err!r}")
@@ -278,7 +298,7 @@ class POTProviderWorker(QThread):
             if _gate_fd is not None:
                 release_prewarm_lock(_gate_fd, log_func=self._dbg)
 
-        if err is None and _spawn_existing(self.log_full.emit):
+        if err is None and _spawn_existing(self._dbg):
             self.outcome = (
                 "ok",
                 emit_component("pot", "OK", "pot",
@@ -294,7 +314,7 @@ class POTProviderWorker(QThread):
             return
 
         # [폴백] 갱신 실패 — 기존 빌드가 살아있으면 최소한 동작 서버로
-        if built_server_js() and _spawn_existing(self.log_full.emit):
+        if built_server_js() and _spawn_existing(self._dbg):
             self.outcome = (
                 "ok",
                 emit_component("pot", "WARN", "pot", "refresh failed — stale server"),
