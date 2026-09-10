@@ -55,6 +55,7 @@ from pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당
     download_and_install_source,
     _run_and_stream_log,
     ensure_node_server,
+    kill_process_on_port,
 )
 
 __all__ = [
@@ -67,7 +68,7 @@ __all__ = [
     "latest_server_ver", "server_installed_ver", "clean_stale_plugin",
     "built_server_js", "pot_readiness", "acquire_prewarm_lock",
     "release_prewarm_lock", "_spawn_existing", "download_and_install_source",
-    "ensure_node_server", "POTProviderWorker",
+    "ensure_node_server", "kill_process_on_port", "POTProviderWorker",
 ]
 
 import os
@@ -95,6 +96,7 @@ class POTProviderWorker(QThread):
         super().__init__(parent)
         self.prewarm = bool(prewarm)
         self.outcome = ("err", "")
+        self._server_proc = None  # 스폰된 서버 프로세스 핸들 (외부 정리용)
 
     def run(self):
         try:
@@ -110,12 +112,11 @@ class POTProviderWorker(QThread):
         """로깅 브리지 — raw 스택 단일 경유 (직접 시그널 emit 금지 — 중복 방지).
 
         [채널 분기]
-        - prewarm 모드: 전 단계 로그를 F12(full) 전용으로만. 메인 콘솔은
-          _on_prewarm_finished의 준비 완료 1줄만 담당 (READY 후 오염 방지).
-        - 정식(gate) 모드: TUI 라인은 메인(concise)으로, 나머지는 F12로.
-          오류 상세는 [pot-DETAIL] 태그로 F12만.
+        - prewarm 모드: F12(full) 전용 — 유휴 스테이징 로그는 TUI를 오염시키지 않음
+        - 정식(gate) 모드: LogEvent → channel=BOTH → TUI + F12 + history 3채널 기록
         """
         import raw_log
+        from log_event import LogEvent, Channel
         if self.prewarm:
             # [prewarm] 단계별 상세는 F12(full) 전용. TUI 래핑은 벗겨내고
             # 순수 메시지만 남긴다 — F12에 컬럼 노이즈가 쌓이지 않게.
@@ -125,27 +126,42 @@ class POTProviderWorker(QThread):
             raw_log.raw("pot", raw_msg, is_status=is_status, is_error=is_error,
                         full_only=True)
             return
-        # [병기 방지] 이미 TUI 컬럼 포맷이면 그대로 emit — 재래핑 금지
-        if log_console.is_tui_line(msg):
-            raw_log.raw("pot", str(msg), is_status=is_status, is_error=is_error)
-            return
-        # [오류 요약] 60자 초과 시 핵심만 추출 — 상세 원문은 raw로만
+        # [LogEvent 모드] 구조화된 이벤트 전송 — subscriber가 렌더링
+        stage = "SYS" if is_error else "POT"
+        status = "FAIL" if is_error else ("RUN" if is_status else "OK")
+        # 오류 요약: 60자 초과 시 핵심만 추출 — 상세 원문은 raw로만
         concise_msg = msg
         if is_error and len(msg) > 60:
             for sep in [" — ", " —", ": ", ":"]:
                 if sep in msg:
                     concise_msg = msg.split(sep)[0]
                     break
-            raw_log.raw("pot-DETAIL", msg)
-        stage = "SYS" if is_error else "pot"
-        status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        tui = emit_component(stage, status, "pot", concise_msg)
-        raw_log.raw("pot", tui, is_status=is_status, is_error=is_error)
+            raw_log.raw("pot-DETAIL", msg, full_only=True)
+        event = LogEvent(
+            stage=stage, status=status, platform="pot",
+            spec="-", msg=concise_msg[:120],
+            is_status=is_status, is_error=is_error,
+        )
+        raw_log.raw("pot", event, channel=Channel.BOTH)
 
     def _dbg(self, msg):
-        """raw 스택 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지)."""
+        """raw 스택 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지).
+
+        [채널 분기]
+        - prewarm 모드: F12(full) 전용 — 유휴 스테이징 로그는 TUI를 오염시키지 않음
+        - gate 모드: LogEvent → channel=BOTH → TUI + F12 + history 3채널 전부 기록
+        """
         import raw_log
-        raw_log.raw("pot-DEBUG", msg)
+        from log_event import LogEvent, Channel
+        if self.prewarm:
+            raw_log.raw("pot-DEBUG", msg, full_only=True)
+        else:
+            # [LogEvent 모드] 구조화된 이벤트 전송 — subscriber가 렌더링
+            event = LogEvent(
+                stage="POT", status="RUN", platform="pot",
+                spec="-", msg=str(msg)[:120],
+            )
+            raw_log.raw("pot", event, channel=Channel.BOTH)
 
     def _run(self):
         self._dbg("POTProviderWorker starting")
@@ -255,15 +271,17 @@ class POTProviderWorker(QThread):
             self._dbg("trying to spawn existing build")
             self._note("pot server starting...", True)
             if _spawn_existing(self._dbg):
-                self.outcome = (
-                    "ok",
-                    emit_component("pot", "OK", "pot",
-                                   f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
-                )
-                self._dbg("existing build spawn ok")
-                self._note("pot server ready", True)
-                return
-            self._dbg("existing build spawn failed — rebuilding")
+                self._server_proc = _spawn_existing(self._dbg)
+                if self._server_proc is not None:
+                    self.outcome = (
+                        "ok",
+                        emit_component("pot", "OK", "pot",
+                                       f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
+                    )
+                    self._dbg("existing build spawn ok")
+                    self._note("pot server ready", True)
+                    return
+                self._dbg("existing build spawn failed — rebuilding")
 
         self._note("building PO token server...", True)
         ver = remote or local or _SERVER_FALLBACK_VER
@@ -276,8 +294,6 @@ class POTProviderWorker(QThread):
         _gate_fd = acquire_prewarm_lock(timeout=120, log_func=self._dbg)
         if _gate_fd is None:
             self._dbg("gate: prewarm holds build lock — proceeding to spawn fallback")
-            import raw_log as _rl
-            _rl.raw("pot", "[pot] build busy (prewarm) — trying existing build spawn")
         try:
             if remote and (not os.path.isfile(src_pkg) or local != remote):
                 if _gate_fd is not None:
@@ -298,30 +314,34 @@ class POTProviderWorker(QThread):
             if _gate_fd is not None:
                 release_prewarm_lock(_gate_fd, log_func=self._dbg)
 
-        if err is None and _spawn_existing(self._dbg):
-            self.outcome = (
-                "ok",
-                emit_component("pot", "OK", "pot",
-                               f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
-            )
-            self._dbg("fresh build spawn ok")
-            self._note("pot server ready", True)
-            try:
-                with open(os.path.join(server_home(), ".version"), "w", encoding="utf-8") as f:
-                    f.write(str(ver))
-            except OSError:
-                pass
-            return
+        if err is None:
+            self._server_proc = _spawn_existing(self._dbg)
+            if self._server_proc is not None:
+                self.outcome = (
+                    "ok",
+                    emit_component("pot", "OK", "pot",
+                                   f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})"),
+                )
+                self._dbg("fresh build spawn ok")
+                self._note("pot server ready", True)
+                try:
+                    with open(os.path.join(server_home(), ".version"), "w", encoding="utf-8") as f:
+                        f.write(str(ver))
+                except OSError:
+                    pass
+                return
 
         # [폴백] 갱신 실패 — 기존 빌드가 살아있으면 최소한 동작 서버로
         if built_server_js() and _spawn_existing(self._dbg):
-            self.outcome = (
-                "ok",
-                emit_component("pot", "WARN", "pot", "refresh failed — stale server"),
-            )
-            self._dbg("fallback spawn of existing build ok")
-            self._note("pot server ready (stale)", True)
-            return
+            self._server_proc = _spawn_existing(self._dbg)
+            if self._server_proc is not None:
+                self.outcome = (
+                    "ok",
+                    emit_component("pot", "WARN", "pot", "refresh failed — stale server"),
+                )
+                self._dbg("fallback spawn of existing build ok")
+                self._note("pot server ready (stale)", True)
+                return
 
         self.outcome = (
             "err",
@@ -331,6 +351,32 @@ class POTProviderWorker(QThread):
         reasons = [l for l in (err or "").splitlines()[-4:] if l.strip()]
         tail = read_server_log_tail(6)
         reasons.extend(l.strip() for l in tail.splitlines() if l.strip())
-        import raw_log as _rl2
         for l in reasons:
-            _rl2.raw("POT-FAIL", l)
+            event = LogEvent(
+                stage="POT", status="FAIL", platform="pot",
+                spec="-", msg=str(l)[:120],
+            )
+            raw_log.raw("POT-FAIL", event, channel=Channel.FULL)
+
+    def terminate(self):
+        """스레드 강제 종료 시 서버 프로세스도 함께 정리."""
+        if self._server_proc is not None:
+            try:
+                from pot_server import _kill
+                _kill(self._server_proc)
+                self._dbg("server process killed on worker terminate")
+            except Exception:
+                pass
+            self._server_proc = None
+        super().terminate()
+
+    def kill_server_process(self):
+        """외부에서 서버 프로세스만 강제 종료 (워커 스레드는 유지)."""
+        if self._server_proc is not None:
+            try:
+                from pot_server import _kill
+                _kill(self._server_proc)
+                self._dbg("server process killed externally")
+            except Exception:
+                pass
+            self._server_proc = None

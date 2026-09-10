@@ -59,6 +59,7 @@ class DownloadWorker(QThread):
         self.total_count = len(targets)
         self.current_idx = 1
         self.current_url = None
+        self._live_proc = None  # 라이브 녹화 프로세스 핸들 (앱 종료 시 정리용)
 
     def extract(self):
         """파이프라인 모듈에 넘길 DownloadContext를 생성한다 (D: 명시적 계약)."""
@@ -131,4 +132,31 @@ class DownloadWorker(QThread):
                 )
 
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
+
+    def terminate(self):
+        """스레드 강제 종료 시 라이브 녹화 프로세스도 함께 정리."""
+        if self._live_proc is not None:
+            try:
+                self._live_proc.kill()
+                self.log_concise.emit(
+                    _pe.emit_event("DL", "WARN", "FFMP", "killed live recorder on worker terminate"),
+                    False, True,
+                )
+            except Exception:
+                pass
+            self._live_proc = None
+        super().terminate()
+
+    def kill_live_process(self):
+        """외부에서 라이브 녹화 프로세스만 강제 종료 (워커 스레드는 유지)."""
+        if self._live_proc is not None:
+            try:
+                self._live_proc.kill()
+                self.log_concise.emit(
+                    _pe.emit_event("DL", "WARN", "FFMP", "killed live recorder externally"),
+                    False, True,
+                )
+            except Exception:
+                pass
+            self._live_proc = None
 

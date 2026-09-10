@@ -228,6 +228,58 @@ def _kill(proc):
         pass
 
 
+def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
+    """지정된 포트를 점유한 프로세스 강제 종료 (크로스플랫폼).
+
+    좀비 프로세스 정리용 — server_ping이 True인데 PID가 죽은 경우 호출.
+    """
+    import platform as _plat
+    killed = False
+    try:
+        if _plat.system() == "Windows":
+            # Windows: netstat로 PID 찾기 → taskkill
+            import subprocess as _sub
+            try:
+                out = _sub.check_output(
+                    ["netstat", "-ano"], text=True, stderr=_sub.DEVNULL
+                )
+                for line in out.splitlines():
+                    if f":{port} " in line and "LISTENING" in line:
+                        parts = line.split()
+                        if parts:
+                            pid = parts[-1]
+                            if pid.isdigit():
+                                _sub.run(
+                                    ["taskkill", "/F", "/PID", pid],
+                                    stdout=_sub.DEVNULL,
+                                    stderr=_sub.DEVNULL,
+                                )
+                                if log_func:
+                                    log_func(f"[pot:zombie] killed windows pid={pid} on port {port}")
+                                killed = True
+            except Exception:
+                pass
+        else:
+            # macOS/Linux: lsof로 PID 찾기 → kill
+            import subprocess as _sub
+            try:
+                out = _sub.check_output(
+                    ["lsof", "-ti", f":{port}"], text=True, stderr=_sub.DEVNULL
+                )
+                for pid_str in out.strip().split():
+                    if pid_str.isdigit():
+                        pid = int(pid_str)
+                        os.kill(pid, 9)  # SIGKILL
+                        if log_func:
+                            log_func(f"[pot:zombie] killed posix pid={pid} on port {port}")
+                        killed = True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return killed
+
+
 def built_server_js():
     """컴파일된 main.js 경로 반환 (build/ 와 dist/ 모두 지원)."""
     base_dir = os.path.join(server_home(), "server")

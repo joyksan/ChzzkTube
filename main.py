@@ -179,15 +179,30 @@ class MainWindow(QMainWindow):
                             "shutdown: orphaned analyze worker (1.5s) — forcing exit",
                             "WARN",
                         )
-            for name in ("_pot_worker", "update_worker"):
+            for name in ("_pot_worker", "_prewarm_worker", "update_worker"):
                 w = getattr(self, name, None)
                 if w is not None and w.isRunning():
+                    # POT 워커면 서버 프로세스 먼저 정리
+                    if name in ("_pot_worker", "_prewarm_worker") and hasattr(w, "kill_server_process"):
+                        try:
+                            w.kill_server_process()
+                        except Exception:
+                            pass
                     w.wait(1500)
                     if w.isRunning():
                         log_history.log(
                             f"shutdown: startup worker ({name}) not stopped (1.5s) — forcing exit",
                             "WARN",
                         )
+
+            # 다운로드 워커의 라이브 녹화 프로세스 정리
+            if hasattr(self.ctrl, "worker_dl") and self.ctrl.worker_dl is not None:
+                try:
+                    if hasattr(self.ctrl.worker_dl, "kill_live_process"):
+                        self.ctrl.worker_dl.kill_live_process()
+                except Exception:
+                    pass
+
             log_history.session_end()
             event.accept()
 
@@ -591,8 +606,25 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_pot_worker") and self._pot_worker.isRunning():
             return  # 중복 기동 방지
         try:
+            import raw_log
+            from log_event import LogEvent, Channel
             self._pot_starting = True
             self.update_ui_state()
+            event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
+                             msg="starting POT server provider...")
+            raw_log.raw("pot", event, channel=Channel.CONCISE)
+            # 좀비 프로세스 정리 (server_ping이 True인데 PID 죽은 경우)
+            from pot_provider import kill_process_on_port
+            from po_client import server_ping
+            if server_ping():
+                event = LogEvent(stage="POT", status="WARN", platform="pot", spec="-",
+                                 msg="detected existing server — cleaning before spawn")
+                raw_log.raw("pot", event, channel=Channel.CONCISE)
+                kill_process_on_port(log_func=lambda m: raw_log.raw("pot:zombie", m))
+                self.append_concise_log(
+                    log_console.emit_event("pot", "WARN", "pot", "cleaned zombie server"),
+                    False, True,
+                )
             self._pot_worker = pot_provider.POTProviderWorker(self)
             self._pot_worker.line.connect(self._component_line)
             self._pot_worker.log_full.connect(self.append_full_log)
@@ -600,18 +632,24 @@ class MainWindow(QMainWindow):
             # 직접 연결 시 TypeError → _on_pot_finished 어댑터 경유 필수.
             self._pot_worker.finished.connect(self._on_pot_finished)
             self._pot_worker.start()
+            event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
+                             msg="POT server worker started")
+            raw_log.raw("pot", event, channel=Channel.CONCISE)
             self._pot_provider_started = True
-        except Exception:
+        except Exception as e:
             self._pot_starting = False
             self.update_ui_state()
             # 실패 시 큐 비우기
             self._pending_download = None
-            pass
+            event = LogEvent(stage="POT", status="FAIL", platform="pot", spec="-",
+                             msg=f"POT server spawn failed: {type(e).__name__}: {e}")
+            raw_log.raw("pot", event, channel=Channel.CONCISE)
 
     def _on_pot_finished(self):
         """POT 워커 종료 어댑터 — outcome을 풀어 Coordinator에 보고 + raw 적재.
         대기 중인 다운로드가 있으면 실행 (POT 성공 시만)."""
         import raw_log
+        from log_event import LogEvent, Channel
         self._pot_starting = False
         outcome = ("err", "")
         try:
@@ -622,7 +660,13 @@ class MainWindow(QMainWindow):
             pass
         ok = outcome[0] == "ok"
         msg = outcome[1] if len(outcome) > 1 else ""
-        raw_log.raw("pot", f"gate finished ok={ok} outcome={outcome[0]}")
+        event = LogEvent(stage="POT", status="OK" if ok else "FAIL", platform="pot",
+                         spec="-", msg=f"gate finished ok={ok} outcome={outcome[0]}")
+        raw_log.raw("pot", event, channel=Channel.CONCISE)
+        if msg:
+            event = LogEvent(stage="POT", status="OK" if ok else "FAIL", platform="pot",
+                             spec="-", msg=f"msg={msg}")
+            raw_log.raw("pot", event, channel=Channel.CONCISE)
         self._startup_coord.report_pot(ok, msg)
         
         # POT 완료 후 대기 중인 다운로드 실행 (성공 시만)
@@ -668,11 +712,11 @@ class MainWindow(QMainWindow):
                 needs_pot = True
 
         import raw_log as _rl
-        _rl.raw(
-            "pot-gate",
-            f"gated={needs_pot} age_limit={age_limit if info else '-'} "
-            f"availability={((info or {}).get('availability') or '-')}",
-        )
+        from log_event import LogEvent, Channel
+        event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
+                         msg=f"gated={needs_pot} age_limit={age_limit if info else '-'} "
+                             f"availability={((info or {}).get('availability') or '-')}")
+        _rl.raw("pot-gate", event, channel=Channel.CONCISE)
 
         if needs_pot:
             # [프리웜 경합] 유휴 스테이징 진행 중이면 게이트 spawn과 npm 락이
@@ -859,11 +903,35 @@ class MainWindow(QMainWindow):
     def _maybe_prewarm_pot(self):
         """READY 후 유휴 POT 빌드 스테이징 — 단일 발화 가드 (전 경로 raw 적재)."""
         import raw_log
+        from log_event import LogEvent, Channel
         try:
             from pot_server import pot_readiness
             from po_client import server_ping
+            from pot_provider import kill_process_on_port
             if server_ping():
-                raw_log.raw("prewarm", "skip — server already running")
+                # server_ping 내부에서 PID 생존 확인하므로 좀비면 False 반환
+                # 하지만 보수적으로 포트 점유 프로세스가 좀비일 가능성 대비
+                import os as _os
+                from po_client import DEFAULT_HOST, DEFAULT_PORT
+                pid_str = "?"
+                try:
+                    import subprocess as _sub
+                    if _os.name == "nt":
+                        out = _sub.check_output(["netstat", "-ano"], text=True, stderr=_sub.DEVNULL)
+                        for line in out.splitlines():
+                            if f":{DEFAULT_PORT} " in line and "LISTENING" in line:
+                                parts = line.split()
+                                if parts:
+                                    pid_str = parts[-1]
+                                    break
+                    else:
+                        out = _sub.check_output(["lsof", "-ti", f":{DEFAULT_PORT}"], text=True, stderr=_sub.DEVNULL)
+                        pid_str = out.strip().split("\n")[0] if out.strip() else "?"
+                except Exception:
+                    pass
+                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
+                                 msg=f"skip — server already running (pid={pid_str})")
+                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
                 return  # 이미 기동 — 스테이징 불필요
             ready, reason = pot_readiness(
                 log_func=lambda m: raw_log.raw("pot-readiness", m),
@@ -872,17 +940,27 @@ class MainWindow(QMainWindow):
             )
             if ready:
                 if "refresh" in reason:
-                    raw_log.raw("prewarm", f"starting refresh (reason={reason})")
+                    event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
+                                     msg=f"starting refresh (reason={reason})")
+                    raw_log.raw("prewarm", event, channel=Channel.CONCISE)
                 else:
-                    raw_log.raw("prewarm", "skip — artifacts ready")
+                    event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
+                                     msg="skip — artifacts ready")
+                    raw_log.raw("prewarm", event, channel=Channel.CONCISE)
                     return  # 산출물 완비 — 스테이징 불필요
             if getattr(self, "_pot_provider_started", False):
-                raw_log.raw("prewarm", "skip — gate already started")
+                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
+                                 msg="skip — gate already started")
+                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
                 return  # 게이트/프리웜 이미 진행 중 — 중복 스폰 금지
             if getattr(self, "_prewarm_started", False):
-                raw_log.raw("prewarm", "skip — already in flight")
+                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
+                                 msg="skip — already in flight")
+                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
                 return
-            raw_log.raw("prewarm", f"starting staging (reason={reason})")
+            event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
+                             msg=f"starting staging (reason={reason})")
+            raw_log.raw("prewarm", event, channel=Channel.CONCISE)
             self._prewarm_started = True
             self._prewarm_worker = pot_provider.POTProviderWorker(self, prewarm=True)
             self._prewarm_worker.line.connect(self._component_line)
@@ -890,17 +968,26 @@ class MainWindow(QMainWindow):
             self._prewarm_worker.finished.connect(self._on_prewarm_finished)
             self._prewarm_worker.start(QThread.Priority.LowPriority)
         except Exception as e:
-            raw_log.raw("prewarm", f"spawn failed: {type(e).__name__}: {e}")
+            event = LogEvent(stage="POT", status="FAIL", platform="pot", spec="-",
+                             msg=f"spawn failed: {type(e).__name__}: {e}")
+            raw_log.raw("prewarm", event, channel=Channel.CONCISE)
 
     def _on_prewarm_finished(self):
         """프리웜 워커 종료 — 플래그 정리 + 산출물 판별 로그 (게이트 READY 무관)."""
         import raw_log
+        from log_event import LogEvent, Channel
         try:
             self._prewarm_started = False
             w = getattr(self, "_prewarm_worker", None)
             outcome = w.outcome if w is not None else ("err", "")
-            raw_log.raw("prewarm", f"finished outcome={outcome[0]}")
+            event = LogEvent(stage="POT", status="OK" if outcome[0] == "ok" else "FAIL",
+                             platform="pot", spec="-",
+                             msg=f"finished outcome={outcome[0]}")
+            raw_log.raw("prewarm", event, channel=Channel.CONCISE)
             if outcome[0] == "ok":
+                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
+                                 msg=f"ready — {outcome[1]}")
+                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
                 self.append_concise_log(
                     log_console.emit_event("POT", "OK", "POT", "prewarm staged"),
                     is_status=False,

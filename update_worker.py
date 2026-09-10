@@ -67,8 +67,13 @@ class UpdateWorker(QThread):
         # [단일 호출] check_deps 내부 pot_readiness에 log_func 직접 전달 —
         # 판정+로그 1회 (별도 호출 시 standby 2중 출력).
         import raw_log
+        from log_event import LogEvent, Channel
         for label, status, ver in updater.check_deps(
-            log_func=lambda m: raw_log.raw("pot-readiness", m)
+            log_func=lambda m: raw_log.raw(
+                "pot-readiness",
+                LogEvent(stage="POT", status="RUN", platform="pot", spec="-", msg=m),
+                channel=Channel.FULL,
+            )
         ):
             self.line.emit(emit_component("DEPS", status, label, ver), False, False)
         # [raw] 실제 CLI 실행 — 터미널에서 직접 친 것과 동일한 원문을 F12에 기록.

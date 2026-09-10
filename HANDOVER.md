@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: v3.2.2+ — 2026-09-10 앱 상태별 버튼 동작 표준화·update_ui_state() 단일 통제·핸들러 수동 가드 제거
+> 마지막 갱신: v3.2.4+ — 2026-09-10 로그 전달 구조 개편 Phase 1 — LogEvent/Channel 구조화·raw_log 버스 단일화·is_tui_line 정규식 판정 제거 착수
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.2.2` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-10 앱 상태별 버튼 동작 표준화·update_ui_state() 단일 통제·핸들러 수동 가드 제거)
+- **버전**: `v3.2.3` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-10 좀비 프로세스 차단 회로 전수조사·크로스플랫폼 정리·PID 생존 확인·server_ping 강화)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -685,20 +685,65 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 | `HANDOVER.md` | 마지막 갱신 v3.2+ 표기, §6 하지 말 것 위반사례 추가, 아키텍처 맵 최신화 |
 | `tests/test_download_pipeline.py` | raw 팬아웃·stale 감지·cli_raw 절단·락 콜백 등 12개 테스트 추가 (전체 80건) |
 | `dl_context.py(🤖 touched)` | `advance_target()` 신규 추가 — 타겟 진행 상태 단일 지점 갱신·속도계 초기화 |
-| `downloader.py(🤖 touched)` | `_emit_chzzk_header` 스텁 제거, `_reset_loop_state()` 단순화, `run()` 루프 `ctx.advance_target()`로 이중 대입 해소 |
+| `downloader.py(🤖 touched)` | `_emit_chzzk_header` 스텁 제거, `_reset_loop_state()` 단순화, `run()` 루프 `ctx.advance_target()`로 이중 대입 해소, `_live_proc` 추가·`terminate()/kill_live_process()`로 라이브 녹화 프로세스 정리 |
 | `target_downloader.py(🤖 touched)` | `ctx._emit_chzzk_header()` → `_pe.emit_chzzk_header()` 모듈 함수 직접 호출로 단일화 |
-| `main.py(🤖 touched)` | `get_current_app_state()` 추가, `update_ui_state()` 완전 리팩토링(State-Button Matrix 적용), 5개 핸들러 수동 가드 제거, 상태 변경 7개 시점에 `update_ui_state()` 호출 보강 |
+| `main.py(🤖 touched)` | Phase 2 완료: `_maybe_prewarm_pot`, `_on_prewarm_finished`, `_on_pot_finished`, `_start_pot_provider`, `_ensure_pot_for_info` 전부 LogEvent + Channel 전환 |
+| `pot_provider.py(🤖 touched)` | Phase 2 완료: `_dbg`, `_note`, POT-FAIL 전부 LogEvent + Channel 전환 |
+| `update_worker.py(🤖 touched)` | Phase 2 완료: `raw_log.raw("pot-readiness", ...)` → LogEvent + Channel.FULL 전환 |
+| `log_event.py(🤖 touched)` | `to_log_line()` 메서드 추가 — `format_log_line` 시그니처와 안전 바인딩, `slots=True` 적용 |
+| `raw_log.py(🤖 touched)` | 다형성 브리지 — 시그니처 `(object, bool, bool)`/`(object, str)` 변경, 문자열→LogEvent 자동 승격, `_emit_event()` 정리 |
+| `log_console.py(🤖 touched)` | `format_log_line_for_event()` 신규 — LogEvent → TUI 컬럼 문자열 |
+| `pot_server.py(🤖 touched)` | `kill_process_on_port()` 신규 — 크로스플랫폼 좀비 프로세스 강제 종료 |
+| `po_client.py(🤖 touched)` | `server_ping()` PID 생존 확인 추가 |
+| `live_recorder.py(🤖 touched)` | `_live_proc` 저장 |
+| `downloader.py(🤖 touched)` | `_live_proc`, `terminate()/kill_live_process()` 추가 |
 
 #### 검증
 - py_compile raw_log/pot_server/pot_provider/main/update_worker/updater/analyze_worker/tests: OK
 - pytest 전체: 80 passed
 - smoke_test: PASS (MainWindow + SettingsDialog)
 - 런타임: `raw_log` 구독 정상, log_full 직접호출 없어져 F12 중복 해소, F12 `configuration:` 줄 160자+털 절단
-- `dl_context.py` / `downloader.py` / `target_downloader.py` / `main.py` py_compile OK, pytest 80 passed
+- `dl_context.py` / `downloader.py` / `target_downloader.py` / `main.py` / `pot_provider.py` / `pot_server.py` / `po_client.py` / `live_recorder.py` py_compile OK, pytest 80 passed
 
 #### 남은 과제
 - pot 서버 스폰 대기 시간 단축(45초 → 기존 빌드 재사용 시 즉시 바인딩 가능하도록)
 - 분석/다운로드 중 pot 서버 가동 시 버튼(F1~F4/ESC/ENTER) 동작 정의 및 큐 꼬임 방지
+
+---
+
+## 2026-09-10 — POT 서버 시동 raw_log 전수 기록 + 좀비 프로세스 식별 가능하게 보강
+
+### 문제
+`[prewarm] skip — server already running` 한 줄만 출력되고 **서버 시동/재사용 관련 모든 정보가 raw_log로 누출되지 않음** → 좀비 프로세스 여부 판별 불가
+
+### 해결
+| 모듈 | 변경 |
+|------|------|
+| `main.py` | `_maybe_prewarm_pot`: server_ping True 시 PID 정보(raw_log에 포함) 기록 |
+| `main.py` | `_start_pot_provider`: 시동 시작/완료/실패 전부 raw_log 기록 |
+| `main.py` | `_on_pot_finished`: outcome 메시지 raw_log 기록 |
+| `main.py` | `_on_prewarm_finished`: outcome 메시지 raw_log 기록 |
+| `po_client.py` | `server_ping()`에 PID 생존 확인 추가 (락 홀더 PID 죽으면 False 반환) |
+| `pot_server.py` | `kill_process_on_port()` 신규 — 크로스플랫폼 좀비 프로세스 강제 종료 |
+| `pot_provider.py` | `POTProviderWorker`에 `_server_proc` 저장, `terminate()/kill_server_process()` 추가 |
+| `live_recorder.py` | `record_live_stream()` 워커에 `_live_proc` 저장 |
+| `downloader.py` | `DownloadWorker`에 `_live_proc`, `terminate()/kill_live_process()` 추가 |
+| `main.py` | `closeEvent`에서 POT/라이브 워커의 프로세스 정리 추가 |
+
+### raw_log 기록 예시 (시동 성공 시)
+```
+[HH:MM:SS] [pot] starting POT server provider...
+[HH:MM:SS] [pot] POT server worker started
+[HH:MM:SS] [pot] gate finished ok=ok outcome=ok
+[HH:MM:SS] [pot] msg=pot server bound (127.0.0.1:4416)
+[HH:MM:SS] [pot-gate] gated=True age_limit=18 availability=needs_auth
+```
+
+### raw_log 기록 예시 (prewarm skip 시 — 정상 재사용)
+```
+[HH:MM:SS] [prewarm] skip — server already running (pid=12345)
+```
+→ PID가 실제 프로세스인지 `ps`/터미널로 확인 가능
 
 ---
 

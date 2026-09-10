@@ -119,6 +119,9 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
         creationflags=_no_window(),
     )
 
+    # 워커에 프로세스 핸들 저장 (앱 종료 시 정리용)
+    worker._live_proc = proc
+
     worker._speed_win.reset()
     total_bytes = 0
     start_t = time.monotonic()
