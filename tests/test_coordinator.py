@@ -14,6 +14,7 @@ def coord():
     view.add_concise_task_separator = Mock()
     view.update_ui_state = Mock()
     view._pot_provider_started = False
+    view._prewarm_pending = False
     view._startup_completed = False
     return StartupCoordinator(view)
 
@@ -22,6 +23,7 @@ class TestReadyEmission:
     def test_ready_after_deps_and_upgrade(self, coord):
         coord.report_deps(True, "deps ok")
         coord.report_upgrade(True, "")
+        coord.report_pot(True, "standby")  # POT 단계 완료 필요
         assert coord._ready_emitted is True
 
     def test_ready_not_emitted_before_upgrade(self, coord):
@@ -31,6 +33,7 @@ class TestReadyEmission:
     def test_duplicate_upgrade_no_double_ready(self, coord):
         coord.report_deps(True, "deps ok")
         coord.report_upgrade(True, "")
+        coord.report_pot(True, "standby")
         first = coord._ready_emitted
         coord.report_upgrade(True, "late")
         assert coord._ready_emitted == first  # 여전히 True, 중복 아님

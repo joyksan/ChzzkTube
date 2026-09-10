@@ -131,13 +131,11 @@ class StartupCoordinator(QObject):
             if self._ready_emitted:
                 return
             
-            # 필수 단계 확인
+            # 필수 단계 확인 - View 역참조 제거, 플래그 기반으로 전환
             deps_ok = self._stage_complete["deps"]
-            # upgrade는 항상 수행되므로 체크
             upgrade_ok = self._stage_complete["upgrade"]
-            # POT은 조건부 - 시작됐으면 완료됐어야 함, 시작 안했으면 무시
-            pot_needed = self._view._pot_provider_started if hasattr(self._view, '_pot_provider_started') else False
-            pot_ok = (not pot_needed) or self._stage_complete["pot"]
+            # POT은 _stage_complete["pot"]로만 판단 (View 플래그 역참조 제거)
+            pot_ok = self._stage_complete["pot"]
             # 폴백은 선택적
             
             if deps_ok and upgrade_ok and pot_ok:

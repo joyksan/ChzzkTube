@@ -895,10 +895,10 @@ class MainWindow(QMainWindow):
         # [Coordinator 보고] deps 체크 단계 완료 — READY 게이트용 플래그.
         # 결론 라인은 위에서 이미 출력했으므로 Coordinator는 플래그만 세팅한다.
         self._startup_coord.report_deps(not bool(stale), "deps ok" if not stale else "update")
-        # [유휴 프리웜] READY 후 빌드 스테이징 — 첫 게이트 히트 0.1~3초 보장.
+        # [유휴 프리웜] deps 완료 즉시 POT prewarm 시작 — 3초 지연 제거.
         # Popen 없이 디스크 산출물만 준비 (RAM 0MB·포트 미점유). READY 게이트
         # 미포함 — 실패해도 기동 블록 없음. 중복 스폰은 _maybe_prewarm_pot 가드.
-        QTimer.singleShot(3000, self._maybe_prewarm_pot)
+        self._maybe_prewarm_pot()
 
     def _maybe_prewarm_pot(self):
         """READY 후 유휴 POT 빌드 스테이징 — 단일 발화 가드 (전 경로 raw 적재)."""
@@ -931,8 +931,9 @@ class MainWindow(QMainWindow):
                     pass
                 event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
                                  msg=f"skip — server already running (pid={pid_str})")
-                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
-                return  # 이미 기동 — 스테이징 불필요
+                raw_log.raw("prewarm", event, channel=Channel.FULL)
+                self._startup_coord.report_pot(True, "server already running")
+                return
             ready, reason = pot_readiness(
                 log_func=lambda m: raw_log.raw("pot-readiness", m),
                 check_stale=True,
@@ -942,25 +943,26 @@ class MainWindow(QMainWindow):
                 if "refresh" in reason:
                     event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
                                      msg=f"starting refresh (reason={reason})")
-                    raw_log.raw("prewarm", event, channel=Channel.CONCISE)
+                    raw_log.raw("prewarm", event, channel=Channel.FULL)
                 else:
                     event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
                                      msg="skip — artifacts ready")
-                    raw_log.raw("prewarm", event, channel=Channel.CONCISE)
-                    return  # 산출물 완비 — 스테이징 불필요
+                    raw_log.raw("prewarm", event, channel=Channel.FULL)
+                    self._startup_coord.report_pot(True, "artifacts ready")
+                    return
             if getattr(self, "_pot_provider_started", False):
                 event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
                                  msg="skip — gate already started")
-                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
-                return  # 게이트/프리웜 이미 진행 중 — 중복 스폰 금지
+                raw_log.raw("prewarm", event, channel=Channel.FULL)
+                return
             if getattr(self, "_prewarm_started", False):
                 event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
                                  msg="skip — already in flight")
-                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
+                raw_log.raw("prewarm", event, channel=Channel.FULL)
                 return
             event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
                              msg=f"starting staging (reason={reason})")
-            raw_log.raw("prewarm", event, channel=Channel.CONCISE)
+            raw_log.raw("prewarm", event, channel=Channel.FULL)
             self._prewarm_started = True
             self._prewarm_worker = pot_provider.POTProviderWorker(self, prewarm=True)
             self._prewarm_worker.line.connect(self._component_line)
@@ -970,7 +972,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             event = LogEvent(stage="POT", status="FAIL", platform="pot", spec="-",
                              msg=f"spawn failed: {type(e).__name__}: {e}")
-            raw_log.raw("prewarm", event, channel=Channel.CONCISE)
+            raw_log.raw("prewarm", event, channel=Channel.FULL)
 
     def _on_prewarm_finished(self):
         """프리웜 워커 종료 — 플래그 정리 + 산출물 판별 로그 (게이트 READY 무관)."""
