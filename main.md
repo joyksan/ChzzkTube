@@ -479,10 +479,13 @@ class MainWindow(QMainWindow):
 
     def _esc_action(self):
         """ESC 컨텍스트 액션 — 실행 중이면 중단, pick 대기면 취소, 아니면 입력 클리어."""
-        if self.ctrl.running:
+        state = self.get_current_app_state()
+        if state == "RUNNING":
             self.abort_download()
-        elif self.ctrl.picking:
+        elif state == "PICKING":
             self._cancel_pick()
+        elif state == "ANALYZING":
+            self.ctrl.request_cancel()
         else:
             self.url_input.clear()
 
@@ -505,8 +508,6 @@ class MainWindow(QMainWindow):
         )
 
     def change_folder(self):
-        if self.ctrl.running:
-            return
         folder = QFileDialog.getExistingDirectory(
             self, "Select Download Folder", self.cfg["download_path"]
         )
@@ -534,12 +535,10 @@ class MainWindow(QMainWindow):
         ):
             self.settings_dlg.activateWindow()
             return
-        self.settings_dlg = SettingsDialog(self, is_running=self.ctrl.running)
+        self.settings_dlg = SettingsDialog(self)
         self.settings_dlg.show()
 
     def pick_txt(self):
-        if self.ctrl.running:
-            return
         path, _ = QFileDialog.getOpenFileName(
             self,
             "Select TXT File",
@@ -593,6 +592,7 @@ class MainWindow(QMainWindow):
             return  # 중복 기동 방지
         try:
             self._pot_starting = True
+            self.update_ui_state()
             self._pot_worker = pot_provider.POTProviderWorker(self)
             self._pot_worker.line.connect(self._component_line)
             self._pot_worker.log_full.connect(self.append_full_log)
@@ -603,6 +603,7 @@ class MainWindow(QMainWindow):
             self._pot_provider_started = True
         except Exception:
             self._pot_starting = False
+            self.update_ui_state()
             # 실패 시 큐 비우기
             self._pending_download = None
             pass
@@ -714,6 +715,7 @@ class MainWindow(QMainWindow):
 
         # Controller가 기존 워커 유기 + 새 워커 생성을 담당 (Zombie Pattern)
         self.ctrl.spawn_analyzer(url, self.cfg)
+        self.update_ui_state()
 
     def stop_analysis_anim(self, ok=True):
         """분석 완료/실패 시 최종 결과 로그를 히스토리에 박제 (마침표 애니메이션 정리 불요)."""
@@ -934,13 +936,16 @@ class MainWindow(QMainWindow):
         self._ensure_pot_for_info(data.get("info"))
         if data.get("is_playlist"):
             self.stop_analysis_anim()
+            self.update_ui_state()
             return
         # [포맷 직접 고르기] 딥 분석 결과 → 메뉴 출력 + 입력 대기
         if getattr(self, "_pick_pending", False):
             self._pick_pending = False
             self._show_pick_menu(data)
+            self.update_ui_state()
             return
         self.stop_analysis_anim()
+        self.update_ui_state()
         # 콜백은 결과만 보관 — 콤보/버튼이 없으므로 UI 갱신 없음
         # 좌측 패널이 자동 처리 — 별도 UI 갱신 없음
 
@@ -952,26 +957,63 @@ class MainWindow(QMainWindow):
         if pick_pending:
             self.ctrl.state["picking"] = False
         self.stop_analysis_anim(ok=False)
+        self.update_ui_state()
         self.append_concise_log(
             log_console.emit_event("ANAL", "FAIL", "-", err_msg),
             True,   # is_status — analyzing... 을 에러 메시지로 덮어쓰기
             True,   # is_error
         )
 
+    def get_current_app_state(self) -> str:
+        """앱의 현재 단일 진실 상태(Single Source of Truth)를 도출한다."""
+        if not getattr(self, "_startup_completed", False) or getattr(self, "_pot_starting", False):
+            return "STARTUP"
+        if self.ctrl.running:
+            return "RUNNING"
+        if self.ctrl.analyzing:
+            return "ANALYZING"
+        if self.ctrl.picking:
+            return "PICKING"
+        return "IDLE"
+
     def update_ui_state(self):
-        # URL 필드 활성도만 관리 — 진행바/콤보/버튼은 존재하지 않음
-        is_running = self.ctrl.running
-        startup_completed = getattr(self, "_startup_completed", False)
-        self.url_input.setEnabled(not is_running and startup_completed)
-        # ESC 버튼 동적 라벨 — 실행 중 Abort / pick 대기 Cancel / 대기 Clear
-        if getattr(self, "btn_esc", None) is not None:
-            if is_running:
-                esc_label = "[ ESC: Abort ]"
-            elif self.ctrl.picking:
-                esc_label = "[ ESC: Cancel ]"
-            else:
-                esc_label = "[ ESC: Clear ]"
-            self.btn_esc.setText(esc_label)
+        """상태 머신 기준 전역 UI 위젯 활성화 및 단축키 라벨 단일 통제."""
+        state = self.get_current_app_state()
+
+        # 1. URL 입력창 활성화
+        self.url_input.setEnabled(state in ("IDLE", "PICKING"))
+
+        # 2. 버튼별 Enable / Disable 선언적 제어
+        self.btn_open.setEnabled(True)  # 저장위치 열기: 상시 허용
+        self.btn_change.setEnabled(state == "IDLE")  # 저장위치 변경: IDLE만
+        self.btn_settings.setEnabled(state in ("IDLE", "RUNNING"))  # 설정: IDLE, RUNNING 허용
+        self.btn_txt.setEnabled(state == "IDLE")  # txt파일 열기: IDLE만
+
+        # 3. ESC (제거/클리어/중단) 동적 라벨 & 활성화
+        if state == "STARTUP":
+            self.btn_esc.setEnabled(False)
+            self.btn_esc.setText("[ ESC: Clear ]")
+        elif state == "RUNNING":
+            self.btn_esc.setEnabled(True)
+            self.btn_esc.setText("[ ESC: Abort ]")
+        elif state in ("ANALYZING", "PICKING"):
+            self.btn_esc.setEnabled(True)
+            self.btn_esc.setText("[ ESC: Cancel ]")
+        else:  # IDLE
+            self.btn_esc.setEnabled(True)
+            self.btn_esc.setText("[ ESC: Clear ]")
+
+        # 4. ENTER (다운로드/선택) 동적 라벨 & 활성화
+        if state == "IDLE":
+            self.btn_enter.setEnabled(True)
+            self.btn_enter.setText("[ ENTER: Start ]")
+        elif state == "PICKING":
+            self.btn_enter.setEnabled(True)
+            self.btn_enter.setText("[ ENTER: Select ]")
+        else:  # STARTUP, ANALYZING, RUNNING
+            self.btn_enter.setEnabled(False)
+            self.btn_enter.setText("[ ENTER: Start ]")
+
         self.console.reset_status_flag()
 
     def showEvent(self, event):
@@ -1115,10 +1157,11 @@ class MainWindow(QMainWindow):
         super().keyPressEvent(event)
 
     def toggle_download(self):
-        if self.ctrl.running:
-            return
-        if self.ctrl.picking:
+        state = self.get_current_app_state()
+        if state == "PICKING":
             self._submit_pick()
+            return
+        if state != "IDLE":
             return
         try:
             targets = MediaController.parse_targets(
@@ -1172,7 +1215,7 @@ class MainWindow(QMainWindow):
             is_error=False,
         )
 
-        self.url_input.setEnabled(False)
+        self.update_ui_state()
 
         live_hint = len(targets) == 1 and bool(
             (self.extracted_data.get("info") or {}).get("is_live")
@@ -1230,6 +1273,7 @@ class MainWindow(QMainWindow):
             is_error=False,
         )
         self.ctrl.spawn_analyzer(url, self.cfg, deep=True)
+        self.update_ui_state()
 
     def _show_pick_menu(self, data):
         """포맷 목록을 콘솔에 번호 매겨 출력하고 입력 대기 상태로 전환."""
@@ -1240,12 +1284,14 @@ class MainWindow(QMainWindow):
                 log_console.emit_event("ANAL", "FAIL", "YT", "no formats for pick"),
                 False, True,
             )
+            self.update_ui_state()
             return
         lines = log_console.format_pick_menu(v_list, a_list)
         lines.append("enter: 'N' video  /  'N.M' v+a  /  empty=best")
         self.append_concise_log("\n".join(lines), False, False)
         self.ctrl.state["picking"] = True
         self.url_input.setFocus()
+        self.update_ui_state()
 
     def _submit_pick(self):
         """pick 입력 파싱(1-based) 후 다운로드 시작 — v/a 각각 format_id 지정."""
@@ -1291,6 +1337,7 @@ class MainWindow(QMainWindow):
             log_console.emit_event("DL", "ABORT", "YT", "format pick canceled"),
             False, True,
         )
+        self.update_ui_state()
 
     def skip_current(self):
         if self.ctrl.running:
@@ -1308,7 +1355,6 @@ class MainWindow(QMainWindow):
         # 상태 초기화와 분석 데이터 클리어는 Controller에 위임
         self.ctrl.on_download_finished(success_count, fail_count)
 
-        self.url_input.setEnabled(True)
         self.update_ui_state()
 
         self.add_concise_task_separator()
