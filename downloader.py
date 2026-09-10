@@ -86,18 +86,10 @@ class DownloadWorker(QThread):
         )
 
     def _reset_loop_state(self):
-        """매 타겟마다 필요한 상태 변수들을 한 번에 초기화."""
-        self.current_file = None
-        self._meta_logged = False
+        """매 타겟마다 필요한 상태 변수들을 한 번에 초기화 (worker 내부용)."""
         self._last_tick_t = 0.0
-        self._speed_win.reset()
         self._tick_file = None
         self._tick_last = 0
-
-    def _emit_chzzk_header(self, ch_info, fmt):
-        """yt-dlp에 chzzk 메타데이터를 전달하는 헤더 설정."""
-        # chzzk API에서 받은 메타데이터를 yt-dlp에 전달하여 올바른 Downloader로 인식
-        pass
 
     def run(self):
         """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
@@ -110,25 +102,20 @@ class DownloadWorker(QThread):
 
         try:
             for idx, url in enumerate(self.targets, 1):
-                self.current_idx = idx
-                self.current_url = url
-                ctx.current_idx = idx
-                ctx.current_url = url
+                ctx.advance_target(idx, url)
+                self.current_idx = ctx.current_idx
+                self.current_url = ctx.current_url
+
                 if self.state["canceled"]:
                     break
                 if self.state["skip"]:
                     self.state["skip"] = False
-                    self._reset_loop_state()
-                    ctx._meta_logged = False
                     self.log_concise.emit(
                         _pe.emit_dl("SKIP", "-", spec="-", speed="-", pct=None, bar_frac=None,
                                     msg=f"skipped ({idx}/{self.total_count})"),
                         False, False,
                     )
                     continue
-                self._reset_loop_state()
-                ctx._meta_logged = False
-                ctx.current_file = None
 
                 if _td.download_target(ctx, url, failed_targets):
                     success_count += 1

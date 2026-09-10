@@ -79,3 +79,12 @@ class DownloadContext:
     def errors(self) -> List[str]:
         """수집된 오류 목록 (읽기 전용)."""
         return list(self._errors)
+
+    def advance_target(self, idx: int, url: str) -> None:
+        """타겟 진행 상태를 단일 지점에서 안전하게 업데이트하고 속도계 윈도우를 초기화한다."""
+        self.current_idx = idx
+        self.current_url = url
+        self.current_file = None
+        self._meta_logged = False
+        if self.speed_win:
+            self.speed_win.reset()

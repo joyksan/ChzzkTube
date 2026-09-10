@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: v3.1.2+ — 2026-09-10 F12 중복 제거·raw 로그 버스·POT stale 감지 + 자동 리프레시 최신화
+> 마지막 갱신: v3.2.1+ — 2026-09-10 다운로드 컨텍스트 상태 캡슐화·_emit_chzzk_header 스텁 제거·run() 루프 이중 대입 해소
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.2.0` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-10 F12 중복 제거·raw 로그 버스·POT stale 감지 + 자동 리프레시 최신화)
+- **버전**: `v3.2.1` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-10 다운로드 컨텍스트 상태 캡슐화·_emit_chzzk_header 스텁 제거·run() 루프 이중 대입 해소)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -684,17 +684,20 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 | `DownloadContext` | `log_concise` 속성 추가 (progress_emitter 연동용) |
 | `HANDOVER.md` | 마지막 갱신 v3.2+ 표기, §6 하지 말 것 위반사례 추가, 아키텍처 맵 최신화 |
 | `tests/test_download_pipeline.py` | raw 팬아웃·stale 감지·cli_raw 절단·락 콜백 등 12개 테스트 추가 (전체 80건) |
+| `dl_context.py(🤖 touched)` | `advance_target()` 신규 추가 — 타겟 진행 상태 단일 지점 갱신·속도계 초기화 |
+| `downloader.py(🤖 touched)` | `_emit_chzzk_header` 스텁 제거, `_reset_loop_state()` 단순화, `run()` 루프 `ctx.advance_target()`로 이중 대입 해소 |
+| `target_downloader.py(🤖 touched)` | `ctx._emit_chzzk_header()` → `_pe.emit_chzzk_header()` 모듈 함수 직접 호출로 단일화 |
 
 #### 검증
 - py_compile raw_log/pot_server/pot_provider/main/update_worker/updater/analyze_worker/tests: OK
 - pytest 전체: 80 passed
 - smoke_test: PASS (MainWindow + SettingsDialog)
 - 런타임: `raw_log` 구독 정상, log_full 직접호출 없어져 F12 중복 해소, F12 `configuration:` 줄 160자+털 절단
+- `dl_context.py` / `downloader.py` / `target_downloader.py` py_compile OK, pytest 80 passed
 
 #### 남은 과제
 - pot 서버 스폰 대기 시간 단축(45초 → 기존 빌드 재사용 시 즉시 바인딩 가능하도록)
 - 분석/다운로드 중 pot 서버 가동 시 버튼(F1~F4/ESC/ENTER) 동작 정의 및 큐 꼬임 방지
-- `DownloadContext.log_concise` 구현 및 progress_emitter 연동
 
 ---
 

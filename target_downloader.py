@@ -139,7 +139,7 @@ def _download_chzzk(ctx, url, content_type):
         raise RuntimeError("chzzk URL missing")
 
     if not ctx._meta_logged:
-        ctx._emit_chzzk_header(ch_info, fmt)
+        _pe.emit_chzzk_header(ctx, ch_info, fmt)
 
     out_path = os.path.join(
         ctx.cfg["download_path"], _chzzk_filename(ch_info, fmt, ctx.cfg)
