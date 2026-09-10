@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from PySide6.QtCore import QObject
 from log_console import format_log_line
+from startup_state import StartupState
 
 
 class StartupCoordinator(QObject):
@@ -24,19 +25,39 @@ class StartupCoordinator(QObject):
         # [RLock 필수] report_* 메서드가 lock을 잡은 상태에서 _try_emit_ready가
         # 재차 lock을 획득하므로 재진입 가능한 Lock이어야 한다 (Lock은 deadlock).
         self._lock = threading.RLock()
+        # 상태는 StartupState로 위임 (단일 진실 공급원)
+        self._state = StartupState()
+        # 테스트 호환용 별칭 (기존 속성 접근 유지)
         self._ready_emitted = False
-        self._stage_complete = {
-            "deps": False,
-            "upgrade": False, 
-            "pot": False,
-            "fallback": False
-        }
-        self._stage_msgs = {
-            "deps": "",
-            "upgrade": "",
-            "pot": "",
-            "fallback": ""
-        }
+        self._fallback_done = False
+
+    # 테스트 호환용 프로퍼티
+    @property
+    def _ready_emitted(self):
+        return self._state.ready_emitted
+
+    @_ready_emitted.setter
+    def _ready_emitted(self, value):
+        self._state.ready_emitted = value
+
+    @property
+    def _stage_complete(self):
+        """테스트 호환용: _state를 dict처럼 동작하게 하는 프록시"""
+        class StageProxy:
+            def __init__(self, state):
+                self._state = state
+            def __getitem__(self, key):
+                if key == "deps": return self._state.deps_ok
+                if key == "upgrade": return self._state.upgrade_done
+                if key == "pot": return self._state.pot_status != "unknown"
+                if key == "fallback": return getattr(self, "_fallback_done", False)
+                return False
+            def __setitem__(self, key, value):
+                if key == "deps": self._state.set_deps(value)
+                elif key == "upgrade": self._state.set_upgrade(value)
+                elif key == "pot": self._state.set_pot(value if value else "unknown")
+                elif key == "fallback": self._fallback_done = value
+        return StageProxy(self._state)
     
     def _emit_log(self, stage: str, status: str, platform: str, spec: str, msg: str, 
                   is_status: bool = False, is_error: bool = False):
@@ -76,15 +97,13 @@ class StartupCoordinator(QObject):
         _on_update_check_done에서 이미 출력된다. 여기서 또 찍으면 3중 출력.
         """
         with self._lock:
-            self._stage_complete["deps"] = True
-            self._stage_msgs["deps"] = msg
+            self._state.set_deps(ok)
             self._try_emit_ready()
 
     def report_upgrade(self, ok: bool, summary: str):
         """업그레이드 완료 보고 — 변화가 있었을 때만 결론 1줄 출력."""
         with self._lock:
-            self._stage_complete["upgrade"] = True
-            self._stage_msgs["upgrade"] = summary
+            self._state.set_upgrade(True)
             if summary:  # 변화가 있었으면 결론 라인 출력 (없으면 침묵)
                 status = "OK" if ok else "FAIL"
                 self._emit_log("SYS", status, "DEPS", "-", f"update {summary}",
@@ -94,8 +113,7 @@ class StartupCoordinator(QObject):
     def report_pot(self, ok: bool, msg: str):
         """POT 기동 완료 보고 — 플래그만 세팅 (라인은 _component_line 경유)."""
         with self._lock:
-            self._stage_complete["pot"] = True
-            self._stage_msgs["pot"] = msg
+            self._state.set_pot(msg if ok else "failed")
             self._try_emit_ready()
 
     def report_ready(self, ok: bool = True, msg: str = "ready"):
