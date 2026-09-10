@@ -23,7 +23,7 @@ class LogBus(QObject):
         self._history_cap = 5000
 
 
-_bus = LogBus()
+bus = LogBus()
 _LOCK = threading.RLock()
 _concise_subs: list = []
 _full_subs: list = []
@@ -33,14 +33,14 @@ def subscribe_concise(fn):
     with _LOCK:
         if fn not in _concise_subs:
             _concise_subs.append(fn)
-            _bus.concise.connect(fn)
+            bus.concise.connect(fn)
 
 
 def subscribe_full(fn):
     with _LOCK:
         if fn not in _full_subs:
             _full_subs.append(fn)
-            _bus.full.connect(fn)
+            bus.full.connect(fn)
 
 
 def emit(msg: str, channel: Channel = Channel.FULL, is_status: bool = False, is_error: bool = False):
@@ -51,6 +51,6 @@ def emit(msg: str, channel: Channel = Channel.FULL, is_status: bool = False, is_
     except Exception:
         pass
     if channel & Channel.CONCISE:
-        _bus.concise.emit(msg, bool(is_status), bool(is_error))
+        bus.concise.emit(msg, bool(is_status), bool(is_error))
     if channel & Channel.FULL:
-        _bus.full.emit(msg)
+        bus.full.emit(msg)

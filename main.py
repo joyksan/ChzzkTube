@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
 
 # [시퀀스 코디네이터] 시작 시퀀스 단일 책임자
 from startup_coordinator import StartupCoordinator
+from pot_manager import POTManager
 
 ##### 설정 상수/경로/로드·저장은 config 모듈에서 관리
 import config
@@ -87,8 +88,10 @@ class MainWindow(QMainWindow):
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
                 # StartupCoordinator: DEPS/POT/업데이트 시그널을 중앙에서 수신하고 3대 로그에 전파
+        # POTManager: POT 서버 수명주기 단일 관리자 (prewarm + gate 통합).
         # 단일 인스턴스 원칙 (HANDOVER §7): 시그널 연결 전 최초 1회만 생성
-        self._startup_coord = StartupCoordinator(self)
+        self._pot_manager = POTManager()
+        self._startup_coord = StartupCoordinator(self._pot_manager, self)
 
         self.settings_dlg = None
         self.verbose_win = None
@@ -102,18 +105,9 @@ class MainWindow(QMainWindow):
         self.ctrl.analyze_error_occurred.connect(self.on_analyze_error)
         self.ctrl.analyze_log_full.connect(self.append_full_log)
 
-        # 락 가드: 앱 시작 및 PO Token 서버 구성 중에는 드롭다운/입력 차단 및 순서 보정
+        # POTManager가 서버 수명주기를 담당
         self._startup_completed = False
-        # [가드 초기화] _try_emit_ready의 pot_needed 판별용 — 미정의 시
-        # hasattr() False → pot 무시 → POT 진행 중 READY 선행 발산 결함.
-        self._pot_provider_started = False
-        # [POT 기동 상태] POT 서버 기동 중인지 추적 — Enter 등 키 입력 차단/지연용
-        self._pot_starting = False
-        # [POT 대기 큐] POT 기동 중 ENTER 입력 시 다운로드 파라미터 보관
         self._pending_download = None
-        # [프리웜 가드] READY 후 유휴 스테이징 단일 발화용.
-        self._prewarm_started = False
-        self._prewarm_worker = None
 
         self.init_ui()
 
@@ -179,15 +173,12 @@ class MainWindow(QMainWindow):
                             "shutdown: orphaned analyze worker (1.5s) — forcing exit",
                             "WARN",
                         )
-            for name in ("_pot_worker", "_prewarm_worker", "update_worker"):
+            # POTManager가 서버/워커 정리 담당
+            self._pot_manager.cancel()
+
+            for name in ("update_worker",):
                 w = getattr(self, name, None)
                 if w is not None and w.isRunning():
-                    # POT 워커면 서버 프로세스 먼저 정리
-                    if name in ("_pot_worker", "_prewarm_worker") and hasattr(w, "kill_server_process"):
-                        try:
-                            w.kill_server_process()
-                        except Exception:
-                            pass
                     w.wait(1500)
                     if w.isRunning():
                         log_history.log(
@@ -601,102 +592,12 @@ class MainWindow(QMainWindow):
                 delay = _BULK_INPUT_DELAY_MS if is_bulk_input else _ANALYZE_DEBOUNCE_MS
                 self.analyze_timer.start(delay)
 
-    def _start_pot_provider(self):
-        """PO Token 서버 가동 (필요 시에만)."""
-        if hasattr(self, "_pot_worker") and self._pot_worker.isRunning():
-            return  # 중복 기동 방지
-        try:
-            import raw_log
-            from log_event import LogEvent, Channel
-            self._pot_starting = True
-            self.update_ui_state()
-            event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
-                             msg="starting POT server provider...")
-            raw_log.raw("pot", event, channel=Channel.CONCISE)
-            # 좀비 프로세스 정리 (server_ping이 True인데 PID 죽은 경우)
-            from pot_provider import kill_process_on_port
-            from po_client import server_ping
-            if server_ping():
-                event = LogEvent(stage="POT", status="WARN", platform="pot", spec="-",
-                                 msg="detected existing server — cleaning before spawn")
-                raw_log.raw("pot", event, channel=Channel.CONCISE)
-                kill_process_on_port(log_func=lambda m: raw_log.raw("pot:zombie", m))
-                self.append_concise_log(
-                    log_console.emit_event("pot", "WARN", "pot", "cleaned zombie server"),
-                    False, True,
-                )
-            self._pot_worker = pot_provider.POTProviderWorker(self)
-            self._pot_worker.line.connect(self._component_line)
-            self._pot_worker.log_full.connect(self.append_full_log)
-            # [시그널 계약] QThread.finished는 인자 0개 — report_pot(ok, msg)는
-            # 직접 연결 시 TypeError → _on_pot_finished 어댑터 경유 필수.
-            self._pot_worker.finished.connect(self._on_pot_finished)
-            self._pot_worker.start()
-            event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
-                             msg="POT server worker started")
-            raw_log.raw("pot", event, channel=Channel.CONCISE)
-            self._pot_provider_started = True
-        except Exception as e:
-            self._pot_starting = False
-            self.update_ui_state()
-            # 실패 시 큐 비우기
-            self._pending_download = None
-            event = LogEvent(stage="POT", status="FAIL", platform="pot", spec="-",
-                             msg=f"POT server spawn failed: {type(e).__name__}: {e}")
-            raw_log.raw("pot", event, channel=Channel.CONCISE)
-
-    def _on_pot_finished(self):
-        """POT 워커 종료 어댑터 — outcome을 풀어 Coordinator에 보고 + raw 적재.
-        대기 중인 다운로드가 있으면 실행 (POT 성공 시만)."""
-        import raw_log
-        from log_event import LogEvent, Channel
-        self._pot_starting = False
-        outcome = ("err", "")
-        try:
-            w = getattr(self, "_pot_worker", None)
-            if w is not None:
-                outcome = w.outcome
-        except Exception:
-            pass
-        ok = outcome[0] == "ok"
-        msg = outcome[1] if len(outcome) > 1 else ""
-        event = LogEvent(stage="POT", status="OK" if ok else "FAIL", platform="pot",
-                         spec="-", msg=f"gate finished ok={ok} outcome={outcome[0]}")
-        raw_log.raw("pot", event, channel=Channel.CONCISE)
-        if msg:
-            event = LogEvent(stage="POT", status="OK" if ok else "FAIL", platform="pot",
-                             spec="-", msg=f"msg={msg}")
-            raw_log.raw("pot", event, channel=Channel.CONCISE)
-        self._startup_coord.report_pot(ok, msg)
-        
-        # POT 완료 후 대기 중인 다운로드 실행 (성공 시만)
-        if self._pending_download:
-            if ok:
-                targets, v_id, a_id = self._pending_download
-                self._pending_download = None
-                self._start_download(targets, v_id, a_id)
-            else:
-                # POT 실패 시 큐 비우고 사용자 알림
-                self._pending_download = None
-                self.append_concise_log(
-                    log_console.emit_event("SYS", "FAIL", "pot", "POT server failed — download cancelled"),
-                    is_status=False, is_error=True
-                )
-
     def _ensure_pot_for_info(self, info):
         """PO 필요 여부 판단 후 필요 시에만 서버 가동.
 
-        [Lazy 2층 분리] 게이트 책임은 View(main)가 유지 — AnalyzeWorker는
-        순수 추출만 담당. spawn(Popen)만 이 지점까지 지연되며, DEPS 단계의
-        pot_readiness(디스크 준비)가 선행 보장되므로 즉시 기동 가능.
-
-        PO가 필요한 경우:
-        - age_limit > 0 (연령 제한)
-        - availability가 'needs_auth', 'premium_only', 'subscriber_only' 등
+        [POTManager 위임] 게이트 책임은 POTManager가 담당.
+        Spawn(Popen)은 POTManager.ensure_ready("gate")로 지연.
         """
-        if getattr(self, "_pot_provider_started", False):
-            return  # 이미 가동 중이거나 시도함
-
         needs_pot = False
         if info:
             age_limit = info.get("age_limit") or 0
@@ -719,28 +620,15 @@ class MainWindow(QMainWindow):
         _rl.raw("pot-gate", event, channel=Channel.CONCISE)
 
         if needs_pot:
-            # [프리웜 경합] 유휴 스테이징 진행 중이면 게이트 spawn과 npm 락이
-            # 충돌 — 프리웜 종료를 기다리지 않고 게이트 워커가 이어받도록
-            # 프리웜 워커는 그대로 두고(단일 스폰 가드) 게이트만 진행.
-            # ensure_node_server의 npm ci는 디스크 산출물 기준 멱등이므로
-            # 중복 실행돼도 산출물만 덮어쓴다.
             self.append_concise_log(
                 log_console.emit_event("POT", "RUN", "pot", "starting..."),
                 is_status=True,
                 is_error=False,
             )
-            self._start_pot_provider()
+            # [POTManager] gate 모드로 서버 기동 (중복 스폰 가드 내장)
+            self._pot_manager.ensure_ready("gate")
 
-    def _force_unlock_input(self):
-        """[폴백] 구성요소 체인이 15초 내 완료되지 않으면 입력 강제 개방.
-
-        POT server is only needed for age-restricted videos — a stalled chain
-        should not block basic downloads. 플래그 직접 세팅 대신 Coordinator에
-        위임 — READY 로그도 이 경로에서 단 한 번 발산된다.
-        """
-        if getattr(self, "_startup_completed", False):
-            return
-        self._startup_coord.report_ready(True, "ready (fallback timeout)")
+    
 
     def run_analysis(self):
         url = self.url_input.text().strip()
@@ -878,7 +766,6 @@ class MainWindow(QMainWindow):
             self._stale_updates = True
         else:
             self._stale_updates = False
-            self._pot_provider_started = False  # PO 서버는 필요 시에만 가동
             # [결론 라인] 최신 상태 — deps ok 단 한 줄 (체크 5줄과 구분되는 결론)
             self.append_concise_log(
                 log_console.emit_event("DEPS", "OK", "-", "deps ok"),
@@ -898,105 +785,9 @@ class MainWindow(QMainWindow):
         # [유휴 프리웜] deps 완료 즉시 POT prewarm 시작 — 3초 지연 제거.
         # Popen 없이 디스크 산출물만 준비 (RAM 0MB·포트 미점유). READY 게이트
         # 미포함 — 실패해도 기동 블록 없음. 중복 스폰은 _maybe_prewarm_pot 가드.
-        self._maybe_prewarm_pot()
+        self._pot_manager.ensure_ready("prewarm")
 
-    def _maybe_prewarm_pot(self):
-        """READY 후 유휴 POT 빌드 스테이징 — 단일 발화 가드 (전 경로 raw 적재)."""
-        import raw_log
-        from log_event import LogEvent, Channel
-        try:
-            from pot_server import pot_readiness
-            from po_client import server_ping
-            from pot_provider import kill_process_on_port
-            if server_ping():
-                # server_ping 내부에서 PID 생존 확인하므로 좀비면 False 반환
-                # 하지만 보수적으로 포트 점유 프로세스가 좀비일 가능성 대비
-                import os as _os
-                from po_client import DEFAULT_HOST, DEFAULT_PORT
-                pid_str = "?"
-                try:
-                    import subprocess as _sub
-                    if _os.name == "nt":
-                        out = _sub.check_output(["netstat", "-ano"], text=True, stderr=_sub.DEVNULL)
-                        for line in out.splitlines():
-                            if f":{DEFAULT_PORT} " in line and "LISTENING" in line:
-                                parts = line.split()
-                                if parts:
-                                    pid_str = parts[-1]
-                                    break
-                    else:
-                        out = _sub.check_output(["lsof", "-ti", f":{DEFAULT_PORT}"], text=True, stderr=_sub.DEVNULL)
-                        pid_str = out.strip().split("\n")[0] if out.strip() else "?"
-                except Exception:
-                    pass
-                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
-                                 msg=f"skip — server already running (pid={pid_str})")
-                raw_log.raw("prewarm", event, channel=Channel.FULL)
-                self._startup_coord.report_pot(True, "server already running")
-                return
-            ready, reason = pot_readiness(
-                log_func=lambda m: raw_log.raw("pot-readiness", m),
-                check_stale=True,
-                want_refresh=True,
-            )
-            if ready:
-                if "refresh" in reason:
-                    event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
-                                     msg=f"starting refresh (reason={reason})")
-                    raw_log.raw("prewarm", event, channel=Channel.FULL)
-                else:
-                    event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
-                                     msg="skip — artifacts ready")
-                    raw_log.raw("prewarm", event, channel=Channel.FULL)
-                    self._startup_coord.report_pot(True, "artifacts ready")
-                    return
-            if getattr(self, "_pot_provider_started", False):
-                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
-                                 msg="skip — gate already started")
-                raw_log.raw("prewarm", event, channel=Channel.FULL)
-                return
-            if getattr(self, "_prewarm_started", False):
-                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
-                                 msg="skip — already in flight")
-                raw_log.raw("prewarm", event, channel=Channel.FULL)
-                return
-            event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
-                             msg=f"starting staging (reason={reason})")
-            raw_log.raw("prewarm", event, channel=Channel.FULL)
-            self._prewarm_started = True
-            self._prewarm_worker = pot_provider.POTProviderWorker(self, prewarm=True)
-            self._prewarm_worker.line.connect(self._component_line)
-            self._prewarm_worker.log_full.connect(self.append_full_log)
-            self._prewarm_worker.finished.connect(self._on_prewarm_finished)
-            self._prewarm_worker.start(QThread.Priority.LowPriority)
-        except Exception as e:
-            event = LogEvent(stage="POT", status="FAIL", platform="pot", spec="-",
-                             msg=f"spawn failed: {type(e).__name__}: {e}")
-            raw_log.raw("prewarm", event, channel=Channel.FULL)
 
-    def _on_prewarm_finished(self):
-        """프리웜 워커 종료 — 플래그 정리 + 산출물 판별 로그 (게이트 READY 무관)."""
-        import raw_log
-        from log_event import LogEvent, Channel
-        try:
-            self._prewarm_started = False
-            w = getattr(self, "_prewarm_worker", None)
-            outcome = w.outcome if w is not None else ("err", "")
-            event = LogEvent(stage="POT", status="OK" if outcome[0] == "ok" else "FAIL",
-                             platform="pot", spec="-",
-                             msg=f"finished outcome={outcome[0]}")
-            raw_log.raw("prewarm", event, channel=Channel.CONCISE)
-            if outcome[0] == "ok":
-                event = LogEvent(stage="POT", status="OK", platform="pot", spec="-",
-                                 msg=f"ready — {outcome[1]}")
-                raw_log.raw("prewarm", event, channel=Channel.CONCISE)
-                self.append_concise_log(
-                    log_console.emit_event("POT", "OK", "POT", "prewarm staged"),
-                    is_status=False,
-                    is_error=False,
-                )
-        except Exception:
-            pass
 
     def _is_stale_analyze_signal(self):
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단.
@@ -1055,7 +846,7 @@ class MainWindow(QMainWindow):
 
     def get_current_app_state(self) -> str:
         """앱의 현재 단일 진실 상태(Single Source of Truth)를 도출한다."""
-        if not getattr(self, "_startup_completed", False) or getattr(self, "_pot_starting", False):
+        if not getattr(self, "_startup_completed", False) or self._pot_manager.is_busy():
             return "STARTUP"
         if self.ctrl.running:
             return "RUNNING"
@@ -1280,7 +1071,7 @@ class MainWindow(QMainWindow):
                 "needs_auth", "premium_only", "subscriber_only", "private"
             )
         )
-        if needs_pot and self._pot_starting:
+        if needs_pot and self._pot_manager.is_busy():
             # POT 기동 중이면 큐에 넣고 사용자 알림
             self._pending_download = (targets, "auto", "auto")
             self.append_concise_log(
