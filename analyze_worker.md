@@ -50,45 +50,6 @@ from client_opts import (
 )
 from yt_logger_bridge import YtLoggerBridge
 
-class YtLoggerBridge:
-    def __init__(self, log_full_signal, log_concise_signal=None):
-        self.log_full_signal = log_full_signal
-        self.log_concise_signal = log_concise_signal
-
-    def debug(self, msg):
-        clean_msg = clean_ansi(msg)
-        if "Merging formats into" in clean_msg and self.log_concise_signal:
-            self.log_concise_signal.emit(
-                log_console.format_log_line('MERG', 'RUN', platform='-', spec='-', msg='merging'),
-                False, False,
-            )
-        if clean_msg.strip():
-            self.log_full_signal.emit(clean_msg)
-            # [핵심] yt-dlp가 출력하는 이미 다운로드됨 안내 문구 감지!
-            if "has already been downloaded" in clean_msg and self.log_concise_signal:
-                # 파일명만 깔끔하게 추출해서 간결 로그에 출판
-                fname = (
-                    clean_msg.replace("[download]", "")
-                    .replace("has already been downloaded", "")
-                    .strip()
-                )
-                self.log_concise_signal.emit(
-                    log_console.emit_event("DL", "OK", "-", f"skip — exists ({os.path.basename(fname)})"),
-                    False,
-                    False,
-                )
-
-    def info(self, msg):
-        self.debug(msg)
-
-    def warning(self, msg):
-        if msg.strip():
-            self.log_full_signal.emit(clean_ansi(msg))
-
-    def error(self, msg):
-        if msg.strip():
-            self.log_full_signal.emit(clean_ansi(msg))
-
 class AnalyzeWorker(QThread):
     result_ready = Signal(dict)
     error_occurred = Signal(str)

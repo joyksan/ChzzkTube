@@ -109,6 +109,8 @@ class MainWindow(QMainWindow):
         self._pot_provider_started = False
         # [POT 기동 상태] POT 서버 기동 중인지 추적 — Enter 등 키 입력 차단/지연용
         self._pot_starting = False
+        # [POT 대기 큐] POT 기동 중 ENTER 입력 시 다운로드 파라미터 보관
+        self._pending_download = None
         # [프리웜 가드] READY 후 유휴 스테이징 단일 발화용.
         self._prewarm_started = False
         self._prewarm_worker = None
@@ -601,10 +603,13 @@ class MainWindow(QMainWindow):
             self._pot_provider_started = True
         except Exception:
             self._pot_starting = False
+            # 실패 시 큐 비우기
+            self._pending_download = None
             pass
 
     def _on_pot_finished(self):
-        """POT 워커 종료 어댑터 — outcome을 풀어 Coordinator에 보고 + raw 적재."""
+        """POT 워커 종료 어댑터 — outcome을 풀어 Coordinator에 보고 + raw 적재.
+        대기 중인 다운로드가 있으면 실행 (POT 성공 시만)."""
         import raw_log
         self._pot_starting = False
         outcome = ("err", "")
@@ -618,6 +623,20 @@ class MainWindow(QMainWindow):
         msg = outcome[1] if len(outcome) > 1 else ""
         raw_log.raw("pot", f"gate finished ok={ok} outcome={outcome[0]}")
         self._startup_coord.report_pot(ok, msg)
+        
+        # POT 완료 후 대기 중인 다운로드 실행 (성공 시만)
+        if self._pending_download:
+            if ok:
+                targets, v_id, a_id = self._pending_download
+                self._pending_download = None
+                self._start_download(targets, v_id, a_id)
+            else:
+                # POT 실패 시 큐 비우고 사용자 알림
+                self._pending_download = None
+                self.append_concise_log(
+                    log_console.emit_event("SYS", "FAIL", "pot", "POT server failed — download cancelled"),
+                    is_status=False, is_error=True
+                )
 
     def _ensure_pot_for_info(self, info):
         """PO 필요 여부 판단 후 필요 시에만 서버 가동.
@@ -1093,12 +1112,6 @@ class MainWindow(QMainWindow):
             self._esc_action()
             event.accept()
             return
-        # [POT 기동 중 Enter 차단] POT 서버 기동 중 Enter 입력이 큐를 꼬이게 함.
-        # 입력 필드에 포커스가 있고 POT 기동 중이면 Enter 무시.
-        if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return):
-            if self._pot_starting and self.url_input.hasFocus():
-                event.accept()
-                return
         super().keyPressEvent(event)
 
     def toggle_download(self):
@@ -1126,10 +1139,31 @@ class MainWindow(QMainWindow):
             self._start_pick_flow(targets[0])
             return
 
+        # POT 필요 영상이고 POT 기동 중이면 큐에 적재
+        info = (self.extracted_data or {}).get("info") or {}
+        age_limit = info.get("age_limit") or 0
+        availability = info.get("availability") or ""
+        needs_pot = age_limit > 0 or (
+            isinstance(availability, str) and availability.lower() in (
+                "needs_auth", "premium_only", "subscriber_only", "private"
+            )
+        )
+        if needs_pot and self._pot_starting:
+            # POT 기동 중이면 큐에 넣고 사용자 알림
+            self._pending_download = (targets, "auto", "auto")
+            self.append_concise_log(
+                log_console.emit_event("SYS", "WAIT", "pot", "queued — waiting for POT server"),
+                is_status=True, is_error=False
+            )
+            return
+
         self._start_download(targets, "auto", "auto")
 
     def _start_download(self, targets, v_id, a_id):
         """워커 스폰 공통 루틴 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 공용."""
+        # POT 필요 여부 확인 후 준비될 때까지 대기 (연령제한/프라이빗 영상 등)
+        self._wait_pot_if_needed()
+        
         self.ctrl.begin_download()
 
         self.append_concise_log(
@@ -1156,6 +1190,34 @@ class MainWindow(QMainWindow):
             audio_desc="",
             yt_client=self.extracted_data.get("yt_client", "auto"),
         )
+
+    def _wait_pot_if_needed(self):
+        """PO Token 필요 영상(연령제한 등)인 경우 POT 서버 기동 트리거.
+        논블로킹 — 큐 메커니즘(_pending_download + _on_pot_finished)이 완료 후 실행."""
+        info = (self.extracted_data or {}).get("info") or {}
+        age_limit = info.get("age_limit") or 0
+        availability = info.get("availability") or ""
+        needs_pot = age_limit > 0 or (
+            isinstance(availability, str) and availability.lower() in (
+                "needs_auth", "premium_only", "subscriber_only", "private"
+            )
+        )
+        if not needs_pot:
+            return
+        
+        # POT 서버가 이미 실행 중이면 바로 진행
+        from po_client import server_ping
+        if server_ping():
+            return
+        
+        # POT 서버가 없으면 기동만 트리거 (대기는 큐가 처리)
+        self.append_concise_log(
+            log_console.emit_event("POT", "RUN", "pot", "starting server..."),
+            is_status=True,
+            is_error=False,
+        )
+        self._start_pot_provider()
+        # 여기서 리턴 — _on_pot_finished에서 _pending_download 실행
 
     # ── 포맷 직접 고르기 흐름 ──────────────────────────────────────────
     def _start_pick_flow(self, url):

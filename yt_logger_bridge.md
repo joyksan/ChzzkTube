@@ -17,6 +17,10 @@ class YtLoggerBridge:
         self.log_full_signal = log_full_signal
         self.log_concise_signal = log_concise_signal
 
+    @property
+    def log_concise(self):
+        return self.log_concise_signal
+
     def debug(self, msg):
         clean_msg = clean_ansi(msg)
         if "Merging formats into" in clean_msg and self.log_concise_signal:
