@@ -784,7 +784,7 @@ class MainWindow(QMainWindow):
         self._startup_coord.report_deps(not bool(stale), "deps ok" if not stale else "update")
         # [유휴 프리웜] deps 완료 즉시 POT prewarm 시작 — 3초 지연 제거.
         # Popen 없이 디스크 산출물만 준비 (RAM 0MB·포트 미점유). READY 게이트
-        # 미포함 — 실패해도 기동 블록 없음. 중복 스폰은 _maybe_prewarm_pot 가드.
+        # 미포함 — 실패해도 기동 블록 없음. 중복 스폰은 POTManager 가드.
         self._pot_manager.ensure_ready("prewarm")
 
 
@@ -1139,8 +1139,8 @@ class MainWindow(QMainWindow):
             is_status=True,
             is_error=False,
         )
-        self._start_pot_provider()
-        # 여기서 리턴 — _on_pot_finished에서 _pending_download 실행
+        # [POTManager] gate 모드로 서버 기동 (중복 스폰 가드 내장)
+        self._pot_manager.ensure_ready("gate")
 
     # ── 포맷 직접 고르기 흐름 ──────────────────────────────────────────
     def _start_pick_flow(self, url):

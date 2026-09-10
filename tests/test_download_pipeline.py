@@ -114,13 +114,13 @@ class TestPotProviderFacade:
         assert isinstance(ready, bool)
         assert isinstance(reason, str) and reason != ""
 
-    def test_pot_provider_prewarm_mode(self):
-        """POTProviderWorker(prewarm=True) 생성자 계약."""
+    def test_pot_provider_worker_contract(self):
+        """POTProviderWorker 생성자 계약 — prewarm은 POTManager가 담당."""
         import pot_provider
-        w = pot_provider.POTProviderWorker(prewarm=True)
-        assert w.prewarm is True
-        w2 = pot_provider.POTProviderWorker()
-        assert w2.prewarm is False
+        w = pot_provider.POTProviderWorker()
+        assert w.outcome == (False, "")
+        assert hasattr(w, "request_interruption")
+        assert hasattr(w, "finished_signal")
 
     def test_deps_pot_readiness_labels(self):
         """check_deps POT 분기: FAIL 오경보 금지 — OK running / SKIP *."""

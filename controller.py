@@ -213,15 +213,7 @@ class MediaController(QObject):
             if w.isRunning():
                 w.wait(1500)
 
-        # POT 서버 워커가 있으면 서버 프로세스도 정리
-        try:
-            from pot_provider import POTProviderWorker
-            # MainWindow에서 _pot_worker, _prewarm_worker 참조 가능하므로
-            # View를 통해 접근 (self.view._pot_worker 등)
-            # 하지만 Controller는 View 참조를 가지므로 직접 정리
-            pass
-        except Exception:
-            pass
+        # POT 서버 워커 정리는 POTManager.cancel()이 담당 (MainWindow.closeEvent에서 호출)
 
 
 # ── 하위 호환성 유지 (기존 코드에서 DownloadController로 참조 가능) ──
