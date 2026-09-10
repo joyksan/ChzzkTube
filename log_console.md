@@ -726,6 +726,29 @@ def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar
         return fixed + " │ " + full_msg
     return fixed
 
+
+def format_log_line_for_event(event):
+    """구조화된 LogEvent → TUI 컬럼 문자열. (정규식 판정 불필요)
+
+    log_event 모듈의 LogEvent dataclass 인스턴스를 받아
+    format_log_line()의 인자 시그니처로 변환 후 포맷팅한다.
+    """
+    from log_event import LogEvent  # lazy import (순환 참조 방지)
+    if not isinstance(event, LogEvent):
+        if isinstance(event, str):
+            return event  # 이미 문자열이면 그대로 반환
+    return format_log_line(
+        stage=event.stage,
+        status=event.status,
+        platform=event.platform,
+        spec=event.spec,
+        speed=event.speed,
+        pct=event.pct,
+        bar_frac=event.bar_frac,
+        msg=event.msg,
+    )
+
+
 def _log_line_segments(line):
     """컬럼 로그 라인의 색상 — STATUS 기반 단색 분기."""
     if " │ FAIL" in line:

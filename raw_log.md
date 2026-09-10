@@ -19,10 +19,13 @@ from PySide6.QtCore import QObject, Signal
 
 
 class _RawHub(QObject):
-    """raw 스택 버스의 시그널 브리지 — 워커 → GUI 스레드 전환 담당."""
+    """raw 스택 버스의 시그널 브리지 — 워커 → GUI 스레드 전환 담당.
 
-    concise = Signal(str, bool, bool)
-    full = Signal(str, bool)
+    [다형성] 시그니처를 (object, bool, bool)와 (object, str)로 변경하여
+    기존 문자열(str)과 신규 LogEvent를 모두 수용.
+    """
+    concise = Signal(object, bool, bool)  # (str|LogEvent, is_status, is_error)
+    full = Signal(object, str)            # (str|LogEvent, tag)
 
 
 _hub = _RawHub()
@@ -47,37 +50,66 @@ def subscribe_full(fn):
             _hub.full.connect(fn)
 
 
-def raw(tag, msg, is_status=False, is_error=False, full_only=False):
-    """단일 진입점 — 모든 앱 동작은 여기로.
+from log_event import LogEvent, Channel
+
+
+def raw(tag, msg, is_status=False, is_error=False, full_only=False, channel=None):
+    """단일 진입점 — 문자열과 LogEvent 모두 수용하는 다형성 버스.
 
     Args:
-        tag: 발생원 (pot-readiness / prewarm-lock / pot / deps 등)
-        msg: 로그 본문.
-        is_status / is_error: concise 상태줄 계약 그대로 전달.
-        full_only: True면 F12(full)+history 전용. 메인 콘솔에는 절대 안 나간다.
+        tag: 발생원 (pot-readiness / prewarm-lock / pot 등)
+        msg: 로그 본문. **문자열** 또는 **LogEvent 객체**.
+        is_status / is_error: concise 상태줄 계약 (문자열 전용).
+        full_only: True면 F12(full)+history 전용 (문자열 전용 파라미터).
+        channel: LogEvent 전송 시 채널 지정 (Channel enum). None이면 문자열 모드.
 
-    [채널 규칙] 메인(F12 아님) TUI와 full은 병렬 관계다.
-    - full_only=False & TUI 라인  → 메인 콘솔(concise) 전용. F12에는 실지 않는다.
-    - full_only=False & non-TUI  → F12(full)+history 전용. 메인에는 안 나갔다.
-    - full_only=True              → 무조건 F12(full)+history. (prewarm 단계별 상세용)
-
-    [스레드 안전] 이 함수는 history 기록(자체 lock)과 Signal.emit만 수행한다.
-    Signal.emit은 스레드 안전 — 워커 스레드에서 호출해도 UI 위젯을 만들러
-    직접 건드리지 않는다.
+    [하위 호환] 레거시 문자열 수신 시 LogEvent로 자율 승격.
+    [Event 모드] LogEvent 객체 + Channel enum — 정규식 판정 제로.
     """
-    from log_console import is_tui_line
     import log_history
-    text = str(msg)
+    from log_console import is_tui_line
+
+    # --- 문자열 → LogEvent 자동 승격 (하위 호환 브리지) ---
+    if not isinstance(msg, LogEvent) and channel is None and not full_only:
+        text = str(msg)
+        try:
+            log_history.log(f"[{tag}] {text}")
+        except Exception:
+            pass
+        if is_tui_line(text):
+            _hub.concise.emit(text, bool(is_status), bool(is_error))
+        else:
+            tagged = f"[{tag}] {text}" if not text.startswith(f"[{tag}]") else text
+            _hub.full.emit(tagged, tag)
+        return
+
+    if full_only:
+        channel = Channel.FULL | Channel.HISTORY
+
+    # --- Event 모드 ---
+    if not isinstance(msg, LogEvent):
+        msg = LogEvent(stage="SYS", status="OK", platform="-", spec="-",
+                       msg=str(msg), is_status=is_status, is_error=is_error)
+    _emit_event(tag, msg, channel)
+
+
+def _emit_event(tag, event, channel):
+    """구조화된 LogEvent → 채널별 전송 (정규식 판정 없음).
+
+    [다형성] 수신 시 Subscriber는 isinstance(event, LogEvent)으로 판별하여
+    event.to_log_line() 호출 (TypeError 원천 차단).
+    """
     try:
-        log_history.log(f"[{tag}] {text}")
+        # history: 항상 기록
+        import log_history
+        log_history.log(f"[{tag}] {event.msg}", is_status=event.is_status, is_error=event.is_error)
+
+        # 채널별 emit (정규식 검사 0회)
+        if channel is None:
+            channel = Channel.BOTH
+        if channel & Channel.CONCISE:
+            _hub.concise.emit(event, event.is_status, event.is_error)
+        if channel & Channel.FULL:
+            _hub.full.emit(event, tag)
     except Exception:
         pass
-    if full_only:
-        tagged = f"[{tag}] {text}" if not text.startswith(f"[{tag}]") else text
-        _hub.full.emit(tagged, bool(is_status))
-        return
-    if is_tui_line(text):
-        _hub.concise.emit(text, bool(is_status), bool(is_error))
-    else:
-        tagged = f"[{tag}] {text}" if not text.startswith(f"[{tag}]") else text
-        _hub.full.emit(tagged, bool(is_status))

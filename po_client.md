@@ -22,13 +22,30 @@ def server_ping(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1):
 
     [v3.1.0 변경] 타임아웃 3초→1초로 단축. DEPS 로그 표시 시간을
     줄이기 위해. PO 서버는 로컬(127.0.0.1)이므로 1초면 충분.
+
+    [좀비 프로세스 방지] 포트 응답이 와도 PID가 죽었으면 좀비로 간주 → False.
     """
     try:
         url = f"http://{host}:{port}/ping"
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            return resp.status == 200
+            if resp.status != 200:
+                return False
     except Exception:
         return False
+
+    # 포트 응답 성공 시 PID 기반 생존 확인 (크로스플랫폼)
+    # pot_server 모듈의 _pid_alive 헬퍼를 통해 락 파일의 PID 확인
+    try:
+        from pot_server import _prewarm_lock_path, _read_lock_info, _pid_alive
+        lock_path = _prewarm_lock_path()
+        if os.path.exists(lock_path):
+            pid, _ = _read_lock_info(lock_path)
+            if pid and not _pid_alive(pid):
+                return False  # 락 홀더가 죽었으면 좀비로 간주
+    except Exception:
+        pass  # 확인 실패 시 포트 응답만으로 통과 (보수적)
+
+    return True
 
 
 def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
