@@ -24,9 +24,9 @@ class MediaController(QObject):
        자연 종료 시 _reap_zombie()로 메모리에서 소거한다. """
 
     # ── 분석 워커 시그널 포워딩 (View 바인딩용) ──
+    # [v3.3.0] 로그는 raw 버스 단일 경유 — analyze_log_full 포워딩 폐기.
     analyze_result_ready = Signal(dict)
     analyze_error_occurred = Signal(str)
-    analyze_log_full = Signal(str)
 
     def __init__(self, view):
         super().__init__()
@@ -67,7 +67,6 @@ class MediaController(QObject):
         # View 시그널로 포워딩 (Controller가 중개)
         self.worker_analyze.result_ready.connect(self.analyze_result_ready)
         self.worker_analyze.error_occurred.connect(self.analyze_error_occurred)
-        self.worker_analyze.log_full.connect(self.analyze_log_full)
         self.worker_analyze.start()
 
     def _abandon_analyzer(self):
@@ -77,7 +76,7 @@ class MediaController(QObject):
             return
         if w.isRunning():
             # 시그널을 끊어 UI 오염 차단
-            for sig in (w.result_ready, w.error_occurred, w.log_full):
+            for sig in (w.result_ready, w.error_occurred):
                 try:
                     sig.disconnect()
                 except TypeError:
@@ -197,8 +196,6 @@ class MediaController(QObject):
             audio_desc=audio_desc,
             yt_client=yt_client,
         )
-        w.log_concise.connect(v.append_concise_log)
-        w.log_full.connect(v.append_full_log)
         w.finished_all.connect(v.on_download_finished)
         self.worker_dl = w
         w.start()

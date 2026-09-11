@@ -10,7 +10,6 @@ from startup_coordinator import StartupCoordinator
 def coord():
     view = Mock()
     view.append_concise_log = Mock()
-    view.append_full_log = Mock()
     view.add_concise_task_separator = Mock()
     view.update_ui_state = Mock()
     view._pot_provider_started = False

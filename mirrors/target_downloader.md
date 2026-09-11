@@ -13,7 +13,7 @@
   worker.v_sel / a_sel    : str   — 선택된 비디오/오디오 format_id ("auto" 가능)
   worker.v_spec           : dict  — height, fps 등 비디오 스펙 (v_list[0]에서 추출)
   worker.audio_desc       : str   — 오디오 설명 (a_list[0]에서 추출)
-  worker.logger           : YtLoggerBridge — log_full/log_concise 시그널
+  worker.logger           : YtLoggerBridge — raw 버스 직행 (log_full/log_concise 시그널 폐기)
   worker.current_url       : str   — 현재 처리 중인 URL
   worker.current_file      : str|None — 현재 다운로드 파일 경로
   worker.state             : dict  — canceled, skip 플래그 (UI→워커 단방향 쓰기)
@@ -41,6 +41,7 @@ from client_opts import (
     _apply_pot_opts,
 )
 from log_console import emit_err as _emit_err
+import raw_log
 import progress_emitter as _pe
 import live_recorder as _lr
 
@@ -189,13 +190,9 @@ def _download_vod(ctx, url):
 
 
 def _emit_error_log(ctx, url, reason, failed_targets):
-    """에러 로그 출력 및 실패 목록에 추가."""
+    """에러 로그 출력 및 실패 목록에 추가. (버스 단일 경유)"""
     url_short = url[:40] + ("..." if len(url) > 40 else "")
-    ctx.log_concise.emit(
-        _emit_err(f"{url_short} — {reason}"),
-        False,
-        True,
-    )
+    raw_log.raw("dl", _emit_err(f"{url_short} — {reason}"), to_tui=True)
     failed_targets.append((url, reason))
 
 
@@ -318,9 +315,5 @@ def expand_targets(ctx):
             expanded.extend(urls or [url])
         except Exception as ex:
             url_short = url[:40] + ("..." if len(url) > 40 else "")
-            ctx.log_concise.emit(
-                emit_err(f"{url_short} — {str(ex)}"),
-                False,
-                True,
-            )
+            raw_log.raw("dl", _emit_err(f"{url_short} — {str(ex)}"), to_tui=True)
     return expanded or ctx.targets

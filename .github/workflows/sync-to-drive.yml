@@ -15,6 +15,33 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5.1.0
 
+      # 1. mirrors/chzzktube_codebase.md 생성
+      - name: Generate Codebase Bundle
+        run: |
+          python - << 'EOF'
+          import os
+          from pathlib import Path
+
+          output_dir = Path("mirrors")
+          output_dir.mkdir(parents=True, exist_ok=True)
+          output_file = output_dir / "chzzktube_codebase.md"
+          
+          exclude_dirs = {".git", ".github", ".venv", "venv", "__pycache__", ".pytest_cache", "build", "dist", "tests", "mirrors"}
+
+          with open(output_file, "w", encoding="utf-8") as outfile:
+              outfile.write("# ChzzkTube Project Full Codebase\n\n")
+              for root, dirs, files in os.walk("."):
+                  dirs[:] = [d for d in dirs if d not in exclude_dirs]
+                  for file in sorted(files):
+                      if file.endswith(".py"):
+                          rel_path = os.path.relpath(os.path.join(root, file), ".")
+                          outfile.write(f"\n## File: {rel_path}\n\n```python\n")
+                          with open(os.path.join(root, file), "r", encoding="utf-8", errors="ignore") as infile:
+                              outfile.write(infile.read())
+                          outfile.write("\n```\n")
+          print("mirrors/chzzktube_codebase.md created successfully.")
+          EOF
+
       - name: Install Rclone
         run: |
           sudo curl https://rclone.org/install.sh | sudo bash
@@ -30,14 +57,15 @@ jobs:
           root_folder_id = ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           EOL
 
+      # 2. mirrors/** (합본 + 개별 35개) 및 루트 문서 동기화
       - name: Sync Markdown files to Google Drive
         run: |
           rclone sync . gdrive: \
-            --include "*.md" \
-            --exclude "node_modules/**" \
-            --exclude ".git/**" \
-            --exclude "build/**" \
-            --exclude "dist/**" \
+            --include "mirrors/**" \
+            --include "README.md" \
+            --include "CHANGELOG.md" \
+            --exclude "*" \
+            --delete-excluded \
             --transfers 8 \
             --checkers 16 \
             --fast-list \

@@ -35,11 +35,8 @@ class DownloadContext:
     # 오디오 설명 (a_list[0]에서 추출)
     audio_desc: str = ""
 
-    # 로거 (YtLoggerBridge — log_full/log_concise 시그널 포함)
+    # 로거 (YtLoggerBridge — raw 버스 직행 어댑터)
     logger: Any = None
-    
-    # 간결 로그용 콜백 (progress_emitter 연동용)
-    log_concise: Any = None
 
     # 현재 처리 중인 대상
     current_url: str = ""

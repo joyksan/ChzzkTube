@@ -8,7 +8,7 @@
 
 ── Worker Contract ──────────────────────────────────────────────
 본 모듈의 함수들이 요구하는 worker 객체의 인터페이스:
-  worker.logger           : YtLoggerBridge — log_full/log_concise 시그널
+  worker.logger           : YtLoggerBridge — raw 버스 직행 (log_full/log_concise 시그널 폐기)
   worker.cfg              : dict  — download_path, container 등 설정
   worker.v_spec           : dict  — height, fps 등 비디오 스펙
   worker.audio_desc       : str   — 오디오 설명
@@ -26,8 +26,8 @@ from log_console import (
     emit_event,
     emit_dl,
     emit_err,
-    format_log_line,
 )
+import raw_log
 from media import cli_format_desc, format_bytes
 from dl_platform import _dl_platform
 from client_opts import _apply_client_opts, _apply_cookie_opts
@@ -79,7 +79,8 @@ def emit_progress_tick(ctx, d):
     # 제목은 이미 ANAL 단계에서 표시되었으므로 제외 (중복 방지)
     title = ""
 
-    ctx.logger.log_concise.emit(
+    raw_log.raw(
+        "dl",
         emit_dl(
             status="RUN",
             platform=_dl_platform(ctx.current_url or ""),
@@ -88,9 +89,9 @@ def emit_progress_tick(ctx, d):
             pct=pct,
             bar_frac=min(pct / 100.0, 1.0),
             msg=title,
+            is_status=True,   # 진행률 틱은 새 줄 금지, 한 줄 덮어쓰기(갱신형)
         ),
-        True,   # is_status=True — 진행률 틱은 새 줄 금지, 한 줄 덮어쓰기(갱신형)
-        False,
+        to_tui=True,
     )
 
 
@@ -103,11 +104,7 @@ def log_success_info(ctx, file_path):
     channel = _dl_platform(ctx.current_url or "")
     fname = os.path.basename(file_path) if file_path else "done"
     msg = f"{fname} ({format_bytes(size)})" if file_path else "done"
-    ctx.logger.log_concise.emit(
-        emit_event("DL", "OK", channel, msg),
-        False,
-        False,
-    )
+    raw_log.raw("dl", emit_event("DL", "OK", channel, msg), to_tui=True)
 
 
 # ── 헤더 ───────────────────────────────────────────────────────────────────
@@ -125,10 +122,10 @@ def emit_download_header(ctx, info):
     msg = f"{title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
-    ctx.logger.log_concise.emit(
+    raw_log.raw(
+        "dl",
         emit_event("DL", "RUN", _dl_platform(ctx.current_url or ""), msg),
-        False,
-        False,
+        to_tui=True,
     )
     ctx._meta_logged = True
 
@@ -137,16 +134,18 @@ def emit_live_header(ctx, info, res_label=""):
     """라이브 녹화 시작 헤더 — LIVE 스테이지, 해상도는 SPEC 분리."""
     title = _title_of(info)
     if res_label:
-        ctx.logger.log_concise.emit(
+        raw_log.raw(
+            "dl",
             emit_dl("RUN", _dl_platform(ctx.current_url or ""),
                     spec=res_label, stage="LIVE", msg=title),
-            False, False,
+            to_tui=True,
         )
     else:
-        ctx.logger.log_concise.emit(
+        raw_log.raw(
+            "dl",
             emit_dl("RUN", _dl_platform(ctx.current_url or ""),
                     stage="LIVE", msg=title),
-            False, False,
+            to_tui=True,
         )
     ctx._meta_logged = True
 
@@ -158,11 +157,7 @@ def emit_chzzk_header(ctx, ch_info, fmt):
     msg = f"chzzk — {title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
-    ctx.logger.log_concise.emit(
-        emit_event("DL", "RUN", "chzzk", msg),
-        False,
-        False,
-    )
+    raw_log.raw("dl", emit_event("DL", "RUN", "chzzk", msg), to_tui=True)
     ctx._meta_logged = True
 
 
@@ -170,7 +165,8 @@ def emit_live_final_stats(ctx, total_bytes, start_time):
     """라이브 종료 통계 — LIVE 스테이지, 용량은 MSG·평균 속도는 SPEED."""
     dur = (time.monotonic() - start_time) if start_time else 0.0
     rate = (total_bytes / dur) if dur > 0 else 0.0
-    ctx.logger.log_concise.emit(
+    raw_log.raw(
+        "dl",
         emit_dl(
             status="DONE",
             platform="-",
@@ -181,7 +177,6 @@ def emit_live_final_stats(ctx, total_bytes, start_time):
             stage="LIVE",
             msg=f"live done ({format_bytes(total_bytes)})",
         ),
-        False,
-        False,
+        to_tui=True,
     )
     ctx.live_partially_saved = False

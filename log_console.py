@@ -59,7 +59,7 @@ class ConciseLogConsole:
             if self._buffer:
                 self.reflow()
 
-    def append(self, msg, is_status=False, is_error=False, fg_color=None):
+    def append(self, msg, is_status=False, is_error=False, fg_color=None, no_wrap=False):
         """빈 줄 생성 차단 및 정밀 문단 삭제 파이프라인.
 
         [진행률 갱신형 계약] 진행률/진행 중 상태 로그는 반드시 is_status=True로
@@ -67,11 +67,17 @@ class ConciseLogConsole:
         (Single-Line In-Place Status, HANDOVER §6). is_status=False로 emit하면
         매 틱 새 줄이 쌓여 '한 행 = 한 정보' 규칙을 위반한다. DL/LIVE 틱,
         DEPS 다운로드 %, PO 서버 진행 등 모든 반복 로그가 해당.
+
+        [줄바꿈 계약] 줄바꿈 결정은 발행자(raw() 경유 LogEvent → 구독자) 측의
+        no_wrap 플래그를 그대로 따르며, 렌더 레이어에서 문자열 내용을 다시
+        뜯어 판단하지 않는다(정규식 라우팅 제로). LogEvent 경유분(컬럼 포맷·
+        프리포맷)은 True, 큐 호환용 bare 문자열은 False다.
         """
         self._sync_budget()  # 현재 뷰포트/폰트 기준 예산 보장 — 자동랩 침범 방지
         # [리플로우 대비] 원본 로그를 버퍼에 보관 (렌더 시점 절단을 위해 잘리지 않음)
         self._buffer.append(
-            {"msg": msg, "is_status": is_status, "is_error": is_error, "fg_color": fg_color}
+            {"msg": msg, "is_status": is_status, "is_error": is_error,
+             "fg_color": fg_color, "no_wrap": bool(no_wrap)}
         )
         doc = self.te.document()
         cursor = self.te.textCursor()
@@ -131,7 +137,7 @@ class ConciseLogConsole:
         #    NoWrap 콘솔에서 화면 초과분이 가로로 흘러버리는 것을 방지.
         #    [리플로우] 렌더 시점 예산으로 msg를 잘라서 그린다 (원본은 버퍼 보존).
         inserted = self._insert_clamped(
-            cursor, clean_msg, is_status, is_error, fg_color
+            cursor, clean_msg, is_status, is_error, fg_color, bool(no_wrap)
         )
 
         # 4. 상태 플래그 및 블록 수 기록 — wrap 포함 실제 삽입 블록 수
@@ -238,15 +244,16 @@ class ConciseLogConsole:
         msg_budget_px = viewport_px - head_px - RIGHT_PADDING_PX
         return head + " │ " + _truncate_by_pixels(msg, msg_budget_px, fm)
 
-    def _insert_clamped(self, cursor, msg, is_status, is_error, fg_color):
+    def _insert_clamped(self, cursor, msg, is_status, is_error, fg_color, no_wrap=False):
         """한 로그(다중 줄 허용)를 렌더 클램프 후 삽입. (삽입 블록 수 반환)
 
         append와 reflow가 공유하는 유일한 삽입 경로 — 파이프라인 중복 제거.
+        no_wrap 플래그를 _flow_lines에 그대로 전달한다.
         """
         inserted = 0
         lines = msg.split("\n")
         for idx, raw in enumerate(lines):
-            for f_idx, line in enumerate(_flow_lines(raw)):
+            for f_idx, line in enumerate(_flow_lines(raw, no_wrap)):
                 if idx > 0 or f_idx > 0:
                     cursor.insertBlock()
                 inserted += 1
@@ -300,7 +307,8 @@ class ConciseLogConsole:
             if idx > 0 or not doc.isEmpty():
                 cursor.insertBlock()
             self._insert_clamped(
-                cursor, e["msg"], e["is_status"], e["is_error"], e["fg_color"]
+                cursor, e["msg"], e["is_status"], e["is_error"], e["fg_color"],
+                e.get("no_wrap", False),
             )
 
         # 바닥 여백 상시 유지
@@ -512,14 +520,20 @@ def update_tree_budget(text_edit):
 ### 줄기 없는(' └─') 연속 줄의 선행 공백 폭 — cont_prefix는 prefix 폭(TREE_LABEL_WIDTH+6)만큼의 공백 나열
 STEMLESS_CONT_WIDTH = TREE_LABEL_WIDTH + 6
 
-def _flow_lines(line):
+def _flow_lines(line, no_wrap=False):
     """라인 분할 규칙 — Single-Line TUI는 wrap하지 않는다.
 
-    *  TUI 컬럼 라인([HH:MM:SS] STAGE │ ...)과 트리 조판 줄은 그대로 한 줄 —
+    *  no_wrap=True(LogEvent 경유 컬럼/프리포맷 라인): 그대로 한 줄 —
        예산 초과분은 ConciseLogConsole._render_clamp가 '…'로 절단한다.
-    *  그 외 비트리 일반 라인(yt-dlp/pip 출력 등)만 예산 폭으로 wrap한다.
+       (트리 조판 줄은 자식 줄 예산 산정용으로 내부 wrap 유지)
+    *  no_wrap=False(큐 호환 bare 문자열·yt-dlp/pip 출력 등 비트리 일반
+       라인): 예산 폭으로 wrap한다.
+    발행자(raw → 구독자) 플래그가 유일한 분기 기준이며, 문자열 콘텐츠를
+    다시 뜯어 판단하지 않는다(정규식 라우팅 제로).
     """
-    if is_tui_line(line) or line[:2] in (" ├", " └", " │"):
+    if no_wrap:
+        return [line]
+    if line[:2] in (" ├", " └", " │"):
         return [line]
     if line.startswith(" " * STEMLESS_CONT_WIDTH):
         return [line]
@@ -606,12 +620,10 @@ def _log_ts():
     return time.strftime("[%H:%M:%S]")
 
 def is_tui_line(msg):
-    """TUI 컬럼 포맷 라인인지 판별 (non-regex — 정규식 라우팅 제로).
+    """[호환 shim] 구버전 콘텐츠 판정 — 렌더 레이어에서는 더 이상 사용하지 않는다.
 
-    *  True  : [HH:MM:SS] STAGE │ STATUS │ ... 컬럼 로그
-    *  False : raw 텍스트 (yt-dlp/pip 출력, 플레인 메시지 등)
-    판정은 뷰가 산출한 컬럼 포맷의 구조([HH:MM:SS] + │ 구분자)만으로
-    레이아웃(비젼) 결정에 사용되며, 발행 시점의 to_tui 비트와 무관하다.
+    줄바꿈 결정은 발행자(raw → 구독자) 플래그(_flow_lines no_wrap)가 유일한
+    기준이다. 외부 호출부 호환용으로만 남겨두며, 구조적(non-regex) 판정은 유지한다.
     """
     s = str(msg).strip()
     # [HH:MM:SS] : 위치/숫자 구조 검증 (regex 없음)

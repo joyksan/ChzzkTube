@@ -73,18 +73,18 @@ __all__ = [
 ]
 
 import os
-import log_console
-from log_console import emit_component
-from PySide6.QtCore import QThread, Signal
-from log_event import LogEvent, Channel
 import raw_log
+from log_event import LogEvent
+from PySide6.QtCore import QThread, Signal
 import subprocess
 class POTProviderWorker(QThread):
-    """PO Token 서버 기동용 워커 (gate 모드만 담당, prewarm은 POTManager 담당)."""
+    """PO Token 서버 기동용 워커 (gate 모드만 담당, prewarm은 POTManager 담당).
 
-    line = Signal(str, bool, bool)
-    log_full = Signal(str)
-    finished_signal = Signal(bool, str)  # (ok, message)
+    [v3.3.0] 로그는 raw 버스 단일 경유 — line/log_full 시그널 폐기.
+    finished_signal(ok, msg)는 로그가 아닌 '결과 전달' 계약이므로 유지 —
+    워커 스레드 → GUI 스레드 결과 통보는 시그널이 정답이고, 로그는 버스가 정답.
+    """
+    finished_signal = Signal(bool, str)  # (ok, message) — 결과 전달용, 로그 아님
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -135,18 +135,22 @@ class POTProviderWorker(QThread):
                 self._child_procs.remove(proc)
 
     def _note(self, msg, is_status=False, is_error=False):
-        """로깅 브리지 — raw 스택 단일 경유."""
+        """로깅 브리지 — raw 버스 단일 경유.
+
+        [발행자 결정] gate 전용 워커이므로 to_tui=True — TUI + F12 + history 전부.
+        """
         stage = "SYS" if is_error else "POT"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
         event = LogEvent(stage=stage, status=status, platform="pot",
                          spec="-", msg=str(msg)[:120],
                          is_status=is_status, is_error=is_error)
-        raw_log.raw("pot", event, channel=Channel.BOTH)
+        raw_log.raw("pot", event, to_tui=True)
 
     def _dbg(self, msg):
+        """로깅 브리지 — raw 버스 단일 경유 (to_tui=True, gate 전용)."""
         event = LogEvent(stage="POT", status="RUN", platform="pot",
                          spec="-", msg=str(msg)[:120])
-        raw_log.raw("pot", event, channel=Channel.BOTH)
+        raw_log.raw("pot", event, to_tui=True)
 
     def _run(self):
         from pot_server import probe_server, built_server_js, _spawn_existing

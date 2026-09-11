@@ -51,16 +51,16 @@ from client_opts import (
 from yt_logger_bridge import YtLoggerBridge
 
 class AnalyzeWorker(QThread):
+    # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 시그널 폐기.
     result_ready = Signal(dict)
     error_occurred = Signal(str)
-    log_full = Signal(str)
 
     def __init__(self, target_url, cfg, deep=False):
         super().__init__()
         self.target_url = target_url
         self.cfg = cfg
         self.deep = bool(deep)  # True → 매니페스트 열거 포함(포맷 직접 고르기). False → 경량(기본)
-        self.logger = YtLoggerBridge(self.log_full)
+        self.logger = YtLoggerBridge()
         # [다운로드 일관성] 분석에서 통과한 클라이언트 기록 — 다운로드가
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
         self.client_used = "auto"
@@ -75,8 +75,10 @@ class AnalyzeWorker(QThread):
 
     def _on_analysis_timeout(self):
         """[hang-prevention] 분석 타임아웃 — yt-dlp가 멈췄을 때 스레드 강제 종료 + 에러 보고."""
-        self.log_full.emit(
-            f"[analyze] timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s - yt-dlp hung."
+        import raw_log
+        raw_log.raw(
+            "analyze",
+            f"[analyze] timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s - yt-dlp hung.",
         )
         self.terminate()
         self.error_occurred.emit(
@@ -143,13 +145,13 @@ class AnalyzeWorker(QThread):
                 if not self._is_bot_block(e):
                     break
                 nxt = attempts[idx + 1] if idx + 1 < len(attempts) else "give up"
-                self.log_full.emit(
-                    f"[client retry] bot check — {client} → {nxt}"
-                )
+                import raw_log
+                raw_log.raw("analyze", f"[client retry] bot check — {client} → {nxt}")
         raise last_err
 
     def run(self):
-        self.log_full.emit(f"--- [format analysis start] {self.target_url} ---")
+        import raw_log
+        raw_log.raw("analyze", f"--- [format analysis start] {self.target_url} ---")
         self._timeout_timer.start(self._ANALYSIS_TIMEOUT_MS)
 
         try:

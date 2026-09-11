@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: v3.2.4+ — 2026-09-10 로그 전달 구조 개편 Phase 1 — LogEvent/Channel 구조화·raw_log 버스 단일화·is_tui_line 정규식 판정 제거 착수
+> 마지막 갱신: v3.3.0 — 2026-09-12 로그 버스 단일화 v3.3.0 — raw_log 단일 경로·LogEvent 발행·is_tui_line 렌더 퇴출·no_wrap 플래그·log_bus.py 삭제·append_full_log 제거 — 회귀 방지 불변식 5건 추가
 
 ---
 
@@ -128,7 +128,7 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
 | 히스토리 로그 | `logs/chzzktube_YYYY-MM-DD.log` (`log_history`, 날짜별 append, 30일 보존, thread-safe) |
 | 스모크 | `smoke_test.py` — `QT_QPA_PLATFORM=offscreen` 강제로 CI 가능 |
 
-## 3. 아키텍처 (역방향 참조 0 · 순환 import 0 — 실측 검증됨)
+## 3. 아키텍처 (역방향 참조 0 · 순환 import 0 — 2026-09-12 `wc -l *.py` 총 9745줄 실측)
 
 ### 레이어별 구조 (4계층 + L0 Leaf)
 
@@ -148,53 +148,99 @@ LAYER 0: Domain / Helpers / Infra (Leaf)
   components.py · log_history.py · smoke_test.py · sync_mirrors.py
 ```
 
-### 시그널 방향 트리
+### 시그널 방향 트리 (v3.3.0 실측 — 상세: [2026-09-12 시그널 방향 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거). 아래 구 트리는 역사 기록으로 유지)
 
 ```
 StartupCoordinator._on_update_check_done → upgrade → _on_auto_upgrade_done → report_upgrade → report_ready(1회)
 POTProviderWorker.finished → coordinator.report_pot
 UpdateWorker.check_done → DEPS 5줄 출력 + upgrade 기동 + report_deps 플래그
 MediaController: analyze_result_ready → View 포워딩 (Signal-to-Signal)
-DownloadWorker: log_concise → append_concise_log (is_status=True 틱)
+DownloadWorker: log_concise → append_concise_log (is_status=True 틱)  # v3.3.0 이전 — 현행은 raw("dl") 버스 직행, shim 경유
 ```
 
-### 모듈 목록 (34개)
+### 모듈 목록 (39개 루트 .py — 2026-09-12 `ls *.py` 실측. 일회용 패치 스크립트 8종 삭제 후. [상세 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거) 참조)
 
 | 분류 | 모듈 | 핵심 책임 |
 |------|------|----------|
-| View | main | 진입점 + MainWindow |
-| View | dialogs | 6종 Dialog + ComboBox + UpdateWorker(이전) |
+| View | main | 진입점 + MainWindow (1281) — 버스 구독 2점, append_concise_log=bus shim |
+| View | dialogs | 6종 Dialog + ComboBox + UpdateWorker 연동 |
 | View | theme | QSS/컬러 토큰 |
-| View | log_console | 컬럼 포맷 규격(format_log_line/emit_dl/emit_err) |
-| Control | controller | MediaController(state 머신 + 워커 생명주기) |
-| Control | startup_coordinator | 시작 시퀀스 게이트(READY 1회 발산) |
-| Worker | downloader | DownloadWorker + YtLoggerBridge |
-| Worker | analyze_worker | AnalyzeWorker(QThread) — 경량 분석 |
-| Worker | update_worker | UpdateWorker(QThread) — DEPS/업그레이드 |
-| Worker | pot_provider | POTProviderWorker + 3개 모듈 재수출 facade |
-| Pipeline | target_downloader | VOD/라이브/치지직/Streamlink 분기 |
-| Pipeline | progress_emitter | emit_dl/emit_err — 진행 틱/헤더/완료 |
-| Pipeline | live_recorder | ffmpeg/streamlink 라이브 녹화 |
-| Pipeline | finalizer | 배치 마감 요약 |
-| Pipeline | dl_context | DownloadContext dataclass (파이프라인 계약) |
-| Shared | yt_logger_bridge | 공용 로거 어댑터 |
-| Infra | po_client | L0 leaf — PO Token HTTP 클라이언트 |
-| Infra | node_provider | L0 leaf — Node.js 런타임 수급 |
-| Infra | pot_server | L1 — bgutil 서버 빌드/기동 |
-| Domain | media | map_res, format_bytes, codec rank |
-| Domain | chzzk_api | 치지직 클립/VOD API 분석 |
-| Domain | cookies | 브라우저 쿠키 DB 추출 |
-| Domain | config | 경로/기본값/로드/저장 |
-| Domain | updater | 구성요소 버전 확인/PyPI 업그레이드 |
-| Domain | utils | 문자열/윈도우 헬퍼 |
-| Domain | dl_platform | URL → 플랫폼/콘텐츠 타입 |
-| Domain | speed_window | 속도 측정 슬라이딩 윈도우 |
-| Domain | playlist | YouTube 채널 URL 정규화 |
-| Infra | components | ffmpeg 런타임 수급 퍼사드 |
-| Infra | log_history | thread-safe 히스토리(30일 보존) |
-| Infra | worker_context | Worker 컨텍스트 헬퍼 |
-| Infra | smoke_test | offscreen 기동 검증 하네스 |
-| Infra | sync_mirrors | docstring → .md 미러 동기화 |
+| View | log_console | ConciseLogConsole 렌더러 (832) — append(no_wrap)→_flow_lines 플래그 체인 |
+| Control | controller | MediaController — spawn_worker/spawn_analyzer + URL 파싱 (217) |
+| Control | startup_coordinator | 기동 게이트 (137) — report_* + View행 Signal 3종 + raw("startup") |
+| Control | startup_state | READY 단일 진실 (118) — `can_emit_ready()` 멱등 가드 |
+| Control | pot_manager | POT 수명주기 (199) — `ensure_ready(prewarm/gate)` + Signal 2종 |
+| Worker | downloader | DownloadWorker — `finished_all`만 잔존, 로그 시그널 0 (164) |
+| Worker | analyze_worker | AnalyzeWorker (354) — result_ready/error_occurred + pot-gate 판정 |
+| Worker | update_worker | UpdateWorker (201) — check_done/upgrade_done + deps raw 발행 |
+| Worker | pot_provider | POTProviderWorker facade (177) — `finished_signal(bool,str)` |
+| Pipeline | progress_emitter | LogEvent 빌더 단일 출처 (182) — emit_event/emit_dl/emit_err/… |
+| Pipeline | target_downloader | 다운로드 실행부 (318) — `raw("dl"/"ytdlp"/"live")` |
+| Pipeline | live_recorder | ffmpeg 라이브 녹화 (221) — `_live_proc` + kill |
+| Pipeline | finalizer | `_finalize` 분할 — TUI 컬럼 마무리 |
+| Pipeline | dl_context | DownloadContext dataclass (86) · worker_context 공유 상태 캡슐화 |
+| Pipeline | speed_window | 속도 측정 슬라이딩 윈도우 |
+| Shared | yt_logger_bridge | yt-dlp logger → `raw("ytdlp")` 어댑터 (시그널 없음) |
+| Shared | updater | PyPI 조회+pip 업그레이드 (423, stdlib only) |
+| Infra | po_client | bgutil HTTP 순수 계층 (103) — `server_ping` PID 생존 확인 |
+| Infra | node_provider | Node.js 런타임 수급 (314) |
+| Infra | pot_server | bgutil 서버 수명주기 (760) — 수급/빌드/기동/락/kill |
+| Domain | media | 코덱랭크/포맷설명/remux/cleanup (350) — `import log_history` 잔재 §5-15 |
+| Domain | chzzk_api | 치지직 clip/vod/live 분석 (365) — `import log_history` 잔재 §5-15 |
+| Domain | cookies | 브라우저 쿠키 추출 (87) — `import log_history` 잔재 §5-15 |
+| Domain | config | `default_config()` 15키 + `_APP_VERSION` + 병합 |
+| Domain | playlist | YT 채널 URL 정규화 |
+| Domain | client_opts | player_client/쿠키 옵션 주입 (125) |
+| Domain | dl_platform | URL 판정 + `_short_platform`/`_dl_platform` (111) |
+| Infra | components | ffmpeg 자동 수급/관리 (522) |
+| Infra | log_history | 파일 로그 단일 소유자 (95) — 직접 호출 금지, raw 경유만 |
+| Infra | smoke_test | offscreen 기동 검증 하네스 · tests/*.py 7종 · logs/ 일자 산출물 |
+
+> 구 분류표의 `cookie.py`(단수)·`pot_manager alivede progress`·`startup_coordinator 시퀀스 스텝 실행기` 서술은 2026-09-12 실측으로 정정 — 실제 파일은 `cookies.py`, POTManager=수명주기 관리자, Coordinator=게이트+보고 중계. 구 34행 분류표는 아래 v3.3.0 실측 시그널 계약으로 대체.
+
+### Worker ↔ UI 시그널 계약 (v3.3.0 — 로그 시그널 0, 결과/게이트만 잔존. 2026-09-12 실측)
+
+```
+AnalyzeWorker(target_url, cfg):                        # 결과 전달 전용 — 로그 시그널 없음
+    result_ready(dict) : 성공 — {info, v_list, a_list, is_chzzk:False, yt_client}
+                         또는 {info, v_list, a_list, is_chzzk:True}
+                         또는 {is_playlist:True, title, count, v_list:[], a_list:[]}
+    error_occurred(str): 실패 — 미니멀 영문 오류 코드
+   로그: logger=YtLoggerBridge → raw("ytdlp") 버스 직행 + raw("analyze"/"pot-gate", LogEvent)
+
+DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
+               v_spec=None, audio_desc="", yt_client="auto"):  # 로그 시그널 없음
+    finished_all(int, int)       : (성공 수, 실패 수) — 유일 잔존 Signal
+   로그: logger=YtLoggerBridge → raw("ytdlp") + raw("dl", emit_dl/emit_err, to_tui=True)
+
+UpdateWorker(parent, upgrade, stale_updates, channel, check_updates):  # 로그 시그널 없음
+    check_done(list)             : [stale …] — Main._on_update_check_done이 중계 (Coordinator 직결 금지)
+    upgrade_done(bool, str)      : (ok, summary) — Coord.report_upgrade 직결
+   로그(check): raw("deps", emit_component DEPS, to_tui=True) 결론 1줄 + raw("deps-cli"/"pip"/"pypi", str) F12+history 전용
+   로그(upgrade): _provision_cb(show 플래그) → raw("deps", event, to_tui=show)
+
+POTProviderWorker(mode):                                   # 로그 시그널 없음
+    finished_signal(bool, str)   : (ok, msg) — POTManager._on_worker_finished 경유
+   로그: _note/_dbg → raw("pot", …) — prewarm은 to_tui=False (TUI 오염 방지)
+
+POTManager:                                                # 수명주기 단일 스폰 가드
+    pot_status_changed(str)      : starting/staging/staged/failed → Coordinator._on_pot_status (passthrough)
+    pot_finished(bool, str)      : (ok, msg) → Coordinator._on_pot_finished → report_pot → READY 게이트
+    ensure_ready(mode): prewarm 실행 중 gate 요청 → _pending_gate=True, 완료 후 gate 자동 재기동
+
+StartupCoordinator:                                        # 기동 게이트 — View행 Signal 3종
+    ready_emitted(str, bool, str): (stage, is_status, msg) — READY 1회 (StartupState 멱등 가드)
+    pot_status_changed(str)      : View passthrough
+    ui_unlocked()                : 입력 잠금 해제
+    _emit(stage,status,msg): raw("startup", LogEvent SYS, to_tui=True) — 기동 라인 버스 발행
+    보고 진입점(함수 호출, Signal 아님): report_deps / report_upgrade / report_pot / report_ready / force_unlock(15s 폴백)
+
+raw 버스(raw_log.py — Qt Signal 브리지 2점, 워커→GUI 스레드 전환):
+    _hub.concise(LogEvent,is_status,is_error) → Main._render_concise → console.append(no_wrap=True)
+    _hub.full(LogEvent,is_status)             → Main._mirror_event_full → _mirror_full_log(F12 버퍼+stamp)
+```
+
+> 구 계약표의 `log_full(str)` / `log_concise(str,bool,bool)` 행은 v3.3.0에서 삭제 — 워커 로그 시그널 0건 실측. `yt_client`(분석 실증·통과 player_client) 강제 규칙은 유지 — 0% 스톨 재진입 방지.
 
 ## 4. 핵심 데이터 구조
 ```python
@@ -214,7 +260,9 @@ browser_cookie("auto"), cookie_file_path(""), yt_player_client("auto")
 > `use_uploader`/`use_title`/`use_id`/`filename_format`/`auto_shutdown`)는 보존되지만
 > **현재 어떤 모듈도 읽지 않는다(데드 키)** — 제거 시 깔끔해진다.
 
-### Worker ↔ UI 시그널 계약
+### Worker ↔ UI 시그널 계약 (구 블록 — v3.3.0 이전 역사 기록, 참고용으로 유지)
+<details><summary>펼치기</summary>
+
 ```
 AnalyzeWorker(target_url, cfg):
     result_ready(dict) : 성공 — {info, v_list, a_list, is_chzzk:False, yt_client}
@@ -231,6 +279,8 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 ```
 > `yt_client`(분석에서 실증·통과한 player_client)는 다운로드가 분석과 같은
 > 클라이언트로 0% 스톨 경로를 재진입하지 않도록 강제하는 핵심 값.
+
+</details>
 
 ## 5. 불변식 (코드 수정 시 절대 위반 금지)
 
@@ -250,12 +300,17 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 10. **경량 분석/무거운 다운로드 분리**: `AnalyzeWorker`는 항상 `youtube:skip=[hls,dash]`(매니페스트 미열거), `DownloadWorker`는 항상
     매니페스트 재열거. 분석 옵션을 다운로드에 재사용 금지. **포맷 선택 UI 도입 시에도 분석 결과의 v_list/a_list를 다운로드
     포맷으로 직접 신뢰 금지** — 다운로드 경로에서 재열거된 `info` 기준으로 다시 매칭해야 한다.
+11. **로그 단일 진입 (v3.3.0)**: 모든 로그는 `raw_log.raw(tag, msg, is_status, is_error, to_tui)` 경유. `log_history.log` 직접 호출·`log_bus` 부활·워커 로그 시그널(`line/full/log_concise/log_full`) 신설 금지. history 적재는 raw 내부 1회가 유일 — 구독자(`_render_concise`/`_mirror_event_full`)에서 history 호출 금지.
+12. **플래그 라우팅 (v3.3.0)**: TUI 노출은 `to_tui` 비트, 줄바꿈은 `no_wrap` 플래그로만 결정. 렌더 레이어(`log_console.append`→`_insert_clamped`→`_flow_lines`→`_render_clamp`)에서 문자열 콘텐츠 판정(정규식·`is_tui_line`·`startswith` 분기) 부활 금지. `is_tui_line`은 호환 shim — 호출부 신설 금지.
+13. **신호-보고 분리 (v3.3.0)**: `check_done(list)` 등 결과 Signal은 Main이 중계 후 `report_*` 호출. Worker→Coordinator 직결 금지(시그널 교통 정리 — `check_done` 시그니처가 `(bool,str)`이 아니라 직결 시 오동작).
+14. **READY 멱등 (v3.3.0)**: READY 발산은 `StartupState.can_emit_ready()`(= `deps_ok ∧ upgrade_done ∧ pot_status∈{running,standby,staged} ∧ ¬ready_emitted`) 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지.
+15. **잔재 정리 (v3.3.0)**: `media/chzzk_api/cookies`의 `import log_history`는 미사용 잔재 — 직접 호출로 회귀 금지, 정리 시 import 행 삭제. `log_console`의 `import re`는 `is_tui_line` 퇴출 후 미사용이므로 제거 후보(타 용도 전수 확인 후).
 
 ## 6. 하지 말 것 (회귀 방지)
 
 - ❌ `state/cfg` 딕셔너리를 복사해서 워커에 넘기는 것
 - ❌ `smoke_test` 통과 없이 리팩토링 커밋하는 것
-- ❌ `.md` 미러를 손으로 고치는 것 (항상 `.py`가 원본)
+- ❌ `mirrors/*.md` 미러를 손으로 고치는 것 (항상 `.py`가 원본 — `python sync_mirrors.py`로 재생성)
 - ❌ GUI 없는 CI 가정으로 Qt 코드를 임포트만으로 검증 끝이라 착각하는 것 — `smoke_test(offscreen)`를 돌릴 것
 - ❌ 로그 채널을 각 호출점이 수동으로 흩뿌리기 — raw 버스(🤖 `raw_log.py`) 단일 진입만 유지. F12/메인/역사 팬아웃은 버스, 필터링은 각 모듈
 - ❌ POT 워커가 포그라운드/히스토리를 직접 import 하는 것 — L0 `log_func` 콜백으로 연결 (계층 역전 방지)
@@ -343,9 +398,31 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **JSON** | `dl_config.json` UTF-8 / indent-4 |
 | **Markdown** | `.md` 파일 LF 유지 |
 | **바이너리** | 이미지/폰트/실행 파일은 `.gitattributes`에서 binary 지정 |
-| **문서 미러** | `.py` docstrings가 원본, `.md` 미러는 자동 생성. 손수정 금지 |
+| **문서 미러** | `.py`가 원본, `mirrors/*.md` + `mirrors/chzzktube_codebase.md` 합본은 `python sync_mirrors.py` 자동 생성. 손수정 금지 |
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-12 — v3.3.0 로그 버스 단일화 — raw 단일 경로·플래그 라우팅·레거시 제거
+
+| 모듈 | 변경 |
+|------|------|
+| `config.py` | `_APP_VERSION` v3.2.1 → v3.3.0 (minor 점프 — 아키텍처 재편. semver-lite `y` 릴리즈) |
+| `raw_log.py` | `raw(tag, msg, is_status, is_error, to_tui)` 단일 진입 확정 — 문자열→LogEvent 정규화(`rendered=True`), history 내부 1회 적재(`level=ERROR↔INFO`) |
+| `main.py` | 버스 구독 2점(`subscribe_concise/full`) · `_render_concise` 컬럼화+`no_wrap=True` · `append_concise_log`=bus shim(호출부 20곳 무수정) · `append_full_log` 제거 · 분석 성공 `format_log_line` 직접 호출→`raw("anal", LogEvent)` · 직접 `log_history.log` 3곳 bus reroute |
+| `log_console.py` | `append(…, no_wrap)`→`_buffer{…, no_wrap}`→`_insert_clamped`→`_flow_lines(raw, no_wrap)` 플래그 체인 · `is_tui_line` 렌더 퇴출(호환 shim 강등) |
+| `chzzk_api.py`/`cookies.py`/`media.py` | 직접 `log_history.log` 7곳 → `raw_log.raw(…, to_tui=False)` (F12+history 전용) |
+| `log_bus.py` | 삭제(`git rm`) — `import log_bus` 참조 0건 확인 |
+| `sync_mirrors.py` | 미러 출력처 루트 `*.md` → `mirrors/*.md` 이전 + `mirrors/chzzktube_codebase.md` 합본 번들 신규 · `fix_target`/`log_event`/`worker_context` 대상 추가(→ `fix_target`은 일회용 스크립트 정리로同日 제거, 37개 확정) |
+| `README.md` | 주의사항 로그 서술 현행 계약으로 교체 (단일 진입·전량·`to_tui` 팬아웃) |
+| `CHANGELOG.md` | v3.3.0 엔트리 5 bullets 추가 |
+| `HANDOVER.md` | 머리글 v3.3.0 · §3 40개 모듈 실측표 · §4 v3.3.0 시그널 계약 신설(구 블록 `<details>` 보존) · §5 불변식 11~15 편입 · 본 §9 v3.3.0 행 |
+| `tests/test_log_console.py` | `TestFlowLinesNoWrapFlag` 6건 신규 (no_wrap passthrough·트리 유지·plain wrap·shim 구조판정·기본값 wrap) |
+| `tests/test_coordinator.py` | 죽은 `append_full_log` Mock 제거 |
+
+#### 검증
+- ✅ py_compile 전체 OK
+- ✅ pytest 32 passed (log_console + coordinator + dl_platform)
+- 행위 변화 1건: 미리 포맷된 LogEvent 문자열(pick 메뉴 등)은 wrap 대신 한 줄 유지 + `_render_clamp` `…` 절단. bare 문자열은 기존대로 wrap
 
 ### 2026-09-09 — pot_provider SRP 3-웨이 분리 + dataclass 컨텍스트 추출 + 통합 테스트 + CI
 
@@ -752,3 +829,96 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 - `CHANGELOG.md` — 버전별 변경 사항
 - `README.md` — 프로젝트 소개
 - `CLAUDE.md` — (폐지: 규약은 `.clinerules`로 통합)
+
+---
+
+## 2026-09-12 — 로그 버스 단일화 v3.3.0 (raw_log 단일 경로·플래그 라우팅·레거시 제거)
+
+### 이번 작업 변경분 (검증: py_compile 전체 + pytest 32 passed)
+- `raw_log.py` — `raw(tag, msg, is_status, is_error, to_tui)` 단일 진입 확정. 문자열은 LogEvent로 정규화(`rendered=True`), history는 raw 내부에서 정확히 1회 적재(`level=ERROR↔INFO`), `_hub.full.emit`(F12 전량) + `to_tui` 시 `_hub.concise.emit`(TUI 선택).
+- `main.py` — 버스 구독 2점(`subscribe_concise(_render_concise)` / `subscribe_full(_mirror_event_full)`). `_render_concise`가 LogEvent→컬럼 문자열 변환 + `no_wrap=True` 동봉 후 `console.append`. `append_concise_log`는 bus shim으로 전환(호출부 20곳 무수정). `append_full_log` 제거(호출부 0). 분석 성공 경로는 `format_log_line` 직접 호출 → `raw("anal", LogEvent(ANAL/OK…), to_tui=True)` 근원 라벨링. `chzzk_api/cookies/media/shutdown`의 직접 `log_history.log` 10곳 → bus reroute(`to_tui=False`, F12+history 전용).
+- `log_console.py` — `append(…, no_wrap)` → `_buffer{…, no_wrap}` → `_insert_clamped` → `_flow_lines(raw, no_wrap)` 플래그 체인. `_flow_lines`에서 콘텐츠 판정(`is_tui_line`) 퇴출, `is_tui_line`은 호환 shim으로 강등(호출부 0).
+- `log_bus.py` — 삭제(`git rm`, staged `D`). `import log_bus` 참조 0건 확인 후 폐기.
+- `tests/` — `test_log_console.py`에 `TestFlowLinesNoWrapFlag` 6건 추가. `test_coordinator.py` fixture의 죽은 `append_full_log` Mock 제거.
+- 행위 변화 1건: 미리 포맷된 LogEvent 문자열(pick 메뉴 등)은 wrap 대신 한 줄 유지 + `_render_clamp` `…` 절단. bare 문자열(yt-dlp 원본 등)은 기존대로 wrap.
+
+### DEPS (POT server 포함) 시그널 계약·호출 구조 (2026-09-12 실측)
+- 기동 시퀀스: `Main._start_update_check` → `UpdateWorker(check)` → `check_done(list)` → `Main._on_update_check_done`(결론 1줄 + `report_deps` + upgrade 워커 기동 + `ensure_ready("prewarm")`) → `UpdateWorker(upgrade)` → `upgrade_done(bool,str)` → `Coord.report_upgrade` → READY 게이트.
+- `check_done(list)`는 시그니처가 `(bool,str)`이 아니므로 Coordinator 직결 금지 — Main이 중계한다(교통 정리 불변식).
+- POT 수명주기: `POTManager.ensure_ready(mode)` 단일 스폰 가드. `prewarm`(staging, to_tui=False) 실행 중 `gate` 요청 → `_pending_gate=True`, prewarm 완료 후 gate 자동 재기동. Signal 2종: `pot_status_changed(starting/staging/staged/failed)` + `pot_finished(bool,str)` → Coordinator `_on_pot_finished` → `report_pot` → READY 게이트 입력.
+- POT 게이트(다운로드 시): `Main._ensure_pot_for_info(info)` — `age_limit>0` 또는 `availability∈{needs_auth,premium_only,subscriber_only,private}` → `raw("pot-gate", gated/age_limit/availability, to_tui=True)` 판정 로그 + `ensure_ready("gate")`. 기동 중이면 `_pending_download` 큐잉.
+- READY 게이트: `StartupState.can_emit_ready() = deps_ok ∧ upgrade_done ∧ pot_status∈{running,standby,staged} ∧ ¬ready_emitted` (멱등 1회). 15초 폴백 `force_unlock → report_ready("ready (fallback timeout)")`.
+
+### 회귀 방지 불변식 (v3.3.0 — §5에 11~15로 본편입, 아래는 초안)
+- 11. **로그 단일 진입**: 모든 로그는 `raw_log.raw()` 경유. `log_history.log` 직접 호출·`log_bus` 부활·워커 로그 시그널(`line/full/log_concise/log_full`) 신설 금지. history 적재는 raw 내부 1회가 유일.
+- 12. **플래그 라우팅**: TUI 노출은 `to_tui` 비트, 줄바꿈은 `no_wrap` 플래그로만 결정. 렌더 레이어에서 문자열 콘텐츠 판정(정규식·`is_tui_line`·`startswith` 분기) 부활 금지.
+
+- 13. **신호-보고 분리**: `check_done(list)` 등 결과 Signal은 Main이 중계 후 `report_*` 호출. Worker→Coordinator 직결 금지(시그널 교통 정리).
+- 14. **READY 멱등**: READY 발산은 `StartupState.can_emit_ready()` 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지.
+- 15. **잔재 정리**: `media/chzzk_api/cookies`의 `import log_history`는 미사용 잔재 — 직접 호출로 회귀 금지, 정리 시 import 행 삭제. `log_console.import re` 미사용 확인 후 제거 후보.
+
+### 프로젝트 전체 아키텍처 트리 (2026-09-12 실측, `wc -l *.py` 총 9745줄)
+```
+L4 View (Qt 위젯 보유)
+├── main.py(1281) ......... MainWindow — 진입점·UI 조립·버스 구독 2점(concise/full)
+├── dialogs.py(846) ....... ExitConfirmDialog / SettingsDialog / VerboseLogWindow(F12)
+├── log_console.py(832) ... ConciseLogConsole — append→_insert_clamped→_flow_lines→_render_clamp
+└── speed_window.py ....... DL 속도 샘플러
+L3 Control (QObject/Signal — Qt 소유)
+├── controller.py(217) .... MediaController — spawn_worker/spawn_analyzer
+├── startup_coordinator.py(137)  기동 게이트 — report_* + View행 Signal 3종 + raw("startup")
+├── startup_state.py(118) . READY 게이트 단일 진실(can_emit_ready)
+├── pot_manager.py(199) ... POT 수명주기 — ensure_ready(prewarm/gate) + Signal 2종
+├── downloader.py(164) .... DownloadWorker — finished_all만 잔존
+├── analyze_worker.py(354)  AnalyzeWorker — result_ready/error_occurred + pot-gate 판정
+├── update_worker.py(201) . UpdateWorker — check_done/upgrade_done + deps raw 발행
+└── pot_provider.py(177) .. POTProviderWorker facade — finished_signal
+L2 Service (QObject 아님 — plain)
+├── progress_emitter.py(182)  LogEvent 빌더 단일 출처(emit_event/emit_dl/emit_err/…)
+├── target_downloader.py(318)  다운로드 실행부(DownloadWorker 분할)
+├── finalizer.py .......... _finalize 분할 — TUI 컬럼 포맷 마무리
+├── live_recorder.py(221) . ffmpeg 라이브 녹화(_live_proc + kill)
+├── updater.py(423) ....... PyPI 조회+pip 업그레이드(stdlib only)
+├── yt_logger_bridge.py ... yt-dlp logger → raw("ytdlp") 어댑터(시그널 없음)
+├── pot_server.py(760) .... bgutil 서버 수명주기(수급/빌드/기동/락/kill)
+├── po_client.py(103) ..... bgutil HTTP 순수 계층(server_ping PID 확인)
+├── node_provider.py(314) . Node.js 런타임 수급
+├── components.py(522) .... ffmpeg 자동 수급/관리
+├── dl_context.py(86) / worker_context.py  dataclass 컨텍스트
+└── log_history.py(95) .... 파일 로그 단일 소유자 — 직접 호출 금지(raw 경유만)
+L1 Model (순수 — Qt 금지)
+├── log_event.py .......... LogEvent{stage,status,platform,spec,msg,is_status,is_error,rendered}
+├── raw_log.py(82) ........ 단일 진입 raw() — 정규화·history 1회·full 전량·concise 선택
+├── config.py ............. default_config 15키 + _APP_VERSION + dl_config.json 병합
+├── theme.py(306) ......... QSS/색상 단일 정의
+├── utils.py .............. explorer/clean_ansi/filename_template
+├── dl_platform.py(111) ... URL 판정 + _short_platform/_dl_platform
+├── media.py(350) ......... 코덱랭크/포맷설명/remux/cleanup (+log_history 잔재 §5-15)
+├── chzzk_api.py(365) ..... 치지직 API 분석 (+log_history 잔재 §5-15)
+├── cookies.py(87) ........ 브라우저 쿠키 추출 (+log_history 잔재 §5-15)
+├── playlist.py ........... YT 채널 URL 정규화
+└── client_opts.py(125) ... player_client/쿠키 옵션 주입
+L0 Leaf (진입·검증·잡일 — import 대상 아님)
+├── smoke_test.py / tests/*.py(7종) / logs/ 일자별 산출물
+└── fix_*/list_arch/locate_arch/print_nonascii/read_arch/run_find/bump_version/sync_mirrors  # v3.3.0 이전 — 일회용 패치 스크립트 8종은 2026-09-12 삭제(`git rm`), bump_version/sync_mirrors는 현행 유지
+    src/chzzktube/__init__.py(스텁) · build/ dist/ mirrors/(산출물·미러, 소스 아님)
+```
+
+### 시그널 방향 트리 (로그 시그널 0 — 결과/게이트 시그널만 잔존)
+```
+워커(QThread) — 결과 전달 전용 Signal
+├── UpdateWorker: check_done(list)→Main._on_update_check_done / upgrade_done(bool,str)→Coord.report_upgrade
+├── AnalyzeWorker: result_ready(dict)/error_occurred(str)→Controller 중계→Main 슬롯
+├── DownloadWorker: finished_all / POTProviderWorker: finished_signal(bool,str)→POTManager
+└── yt-dlp logger: YtLoggerBridge — 시그널 없이 raw("ytdlp") 버스 직행
+raw 버스(raw_log.py, Qt Signal 브리지 2점 — 워커→GUI 스레드 전환)
+├── _hub.concise(LogEvent,is_status,is_error) → Main._render_concise → console.append(no_wrap=True)
+└── _hub.full(LogEvent,is_status) → Main._mirror_event_full → _mirror_full_log(F12 버퍼+stamp)
+기동 게이트(StartupCoordinator — View행 Signal 3종)
+├── ready_emitted(str,bool,str) + ui_unlocked() → Main (READY 1회, StartupState 멱등 가드)
+├── pot_status_changed(str) → Coordinator _on_pot_status passthrough → View
+└── POTManager: pot_status_changed(starting/staging/staged/failed) + pot_finished(bool,str)
+    → Coordinator _on_pot_finished → report_pot → READY 게이트 입력
+보고 진입점(함수 호출 — Signal 아님)
+└── Main._on_update_check_done → Coord.report_deps / Main → Coord.report_ready/force_unlock(15s 폴백)
+```

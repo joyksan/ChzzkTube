@@ -1,12 +1,28 @@
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'mirrors/**'
+      - '.github/workflows/sync-drive.yml'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'mirrors/**'
+
+# 연속 푸시 시 이전 진행 중이던 테스트 작업 취소
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
     runs-on: macos-latest
     env:
-      QT_QPA_PLATFORM: offscreen  # headless Qt 실행을 위해
+      QT_QPA_PLATFORM: offscreen  # headless Qt 실행
 
     steps:
       - uses: actions/checkout@v5.1.0
@@ -26,10 +42,3 @@ jobs:
 
       - name: Run unit and integration tests
         run: uv run python -m pytest tests/ -v --tb=short
-
-  # CI 파이프라인: 푸시/프리퀘스트 시 자동 실행.
-  # - macOS 최신 환경에서 Python 3.12 + uv 캐싱
-  # - Qt 헤드리스 모드(QT_QPA_PLATFORM=offscreen) 강제
-  # - pytest 80개 테스트 자동 실행
-  # - 액션: checkout v5(+Node24), setup-python v6(+Node24), setup-uv v10(+Node24,
-  #   민감 이벤트 캐시 자동 비활성) — Node 20 deprecation 경고 해소

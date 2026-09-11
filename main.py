@@ -930,13 +930,18 @@ class MainWindow(QMainWindow):
         컬럼화는 뷰(메인로그 모듈)의 책임이다. raw 레이어는 운반만 하고,
         발행자가 근원에서 동봉한 라벨(stage/status/platform/spec)을 컬럼에 꽂는다.
         [중복 방지] history는 raw_log.raw가 수행한다 — 여기서 log_history 호출 안 함.
+        [레이아웃 플래그] LogEvent 경유분은 컬럼/프리포맷 라인이므로 no_wrap=True —
+        _flow_lines의 콘텐츠 판정 없이 래핑을 건너뛴다. bare 문자열은 비컬럼으로
+        간주해 기존처럼 폭 예산으로 wrap한다.
         """
         from log_event import LogEvent
         if isinstance(event, LogEvent):
             line = log_console.format_log_line_for_event(event)
+            no_wrap = True
         else:
             line = str(event)
-        self.console.append(line, is_status, is_error)
+            no_wrap = False
+        self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
         """[F12 렌더러] 버스 full 구독 — 모든 행동의 원문(event.msg)을 적재한다.
@@ -989,10 +994,6 @@ class MainWindow(QMainWindow):
             raw_log.raw("ui", msg, to_tui=True)
         else:
             raw_log.raw("ui", msg, is_status=is_status, is_error=is_error, to_tui=True)
-
-    def append_full_log(self, msg, is_status=False):
-        # is_status=True: 진행률 틱 — F12에서 마지막 줄 갱신, 버퍼 미적재
-        self._mirror_full_log(msg, is_status)
 
     def toggle_verbose_log(self):
         """F12 상세 로그 창 토글 — 최초 진입 시 누적 버퍼로 초기화 후 미러링."""
