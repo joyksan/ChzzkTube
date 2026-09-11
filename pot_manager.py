@@ -67,7 +67,7 @@ class _POTWorker(QThread):
                          spec="-", msg=str(msg)[:120],
                          is_status=is_status, is_error=is_error)
         raw_log.raw("pot", event, to_tui=True)
-    
+
     def _dbg(self, msg):
         """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지).
 
@@ -153,48 +153,70 @@ class POTManager(QObject):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 릴레이 시그널 폐기.
     pot_status_changed = Signal(str)
     pot_finished = Signal(bool, str)
-    
+
     def __init__(self):
         super().__init__()
         self._worker = None
         self._mode = "idle"
         self._pending_gate = False
         self._lock = threading.Lock()
-    
+
     def ensure_ready(self, mode="gate"):
+        if mode not in {"prewarm", "gate"}:
+            raise ValueError(f"unknown POT mode: {mode}")
         with self._lock:
-            if self._worker and self._worker.isRunning():
+            worker = self._worker
+            if worker is not None and worker.isRunning():
                 if mode == "gate" and self._mode == "prewarm":
                     self._pending_gate = True
                 return
-            self._mode = mode
-            self._worker = _POTWorker(mode=mode)
-            self._worker.finished_signal.connect(self._on_worker_finished)
-            self._worker.start()
-            self.pot_status_changed.emit("starting" if mode == "gate" else "staging")
-    
+            self._start_worker_locked(mode)
+
+    def _start_worker_locked(self, mode: str) -> None:
+        self._mode = mode
+        worker = _POTWorker(mode=mode)
+        self._worker = worker
+        worker.finished_signal.connect(self._on_worker_finished)
+        worker.start()
+        self.pot_status_changed.emit("starting" if mode == "gate" else "staging")
+
     def _on_worker_finished(self, ok: bool, msg: str):
-        with threading.Lock():
-            if self.mode == "prewarm" and self._pending_gate:
+        # Qt may deliver this callback after cancel(); ignore stale workers.
+        with self._lock:
+            worker = self._worker
+            mode = self._mode
+            if worker is None or worker.isFinished() and worker is not self._worker:
+                return
+            if mode == "prewarm" and (self._pending_gate or not ok):
                 self._pending_gate = False
-                self.ensure_ready("gate")
-            else:
-                self.pot_status_changed.emit("staged" if ok else "failed")
-                self.pot_finished.emit(ok, msg)
-                self._mode = "idle"
-    
+                self._start_worker_locked("gate")
+                return
+            self._worker = None
+            self._mode = "ready" if ok else "failed"
+
+        self.pot_status_changed.emit("staged" if ok else "failed")
+        self.pot_finished.emit(ok, msg)
+
     @property
     def mode(self):
         return self._mode
-    
+
+    def is_ready(self):
+        with self._lock:
+            return self._mode == "ready" and self._worker is None
+
     def is_busy(self):
         return self._worker is not None and self._worker.isRunning()
-    
+
     def cancel(self):
-        if self._worker and self._worker.isRunning():
-            self._worker.request_interruption()
-            if not self._worker.wait(2000):
-                self._worker.terminate()
-                self._worker.wait(1000)
+        with self._lock:
+            worker = self._worker
+            self._worker = None
+            self._mode = "idle"
+        if worker and worker.isRunning():
+            worker.request_interruption()
+            if not worker.wait(2000):
+                worker.terminate()
+                worker.wait(1000)
 
 POTProviderWorker = _POTWorker

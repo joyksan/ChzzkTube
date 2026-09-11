@@ -29,6 +29,7 @@ def test_main():
         print("[Smoke Test] MainWindow 생성 성공!")
         assert win is not None
         assert win.ctrl is not None
+        assert hasattr(win, "_force_unlock_input")
         print("[Smoke Test] dl_state 프로퍼티 확인:", win.dl_state)
         # [다이얼로그 커버] SettingsDialog 실생성 — 콤보/체크박스 초기화가
         # NameError 없이 완료되는지 검증 (QGroupBox 미import·format__flay

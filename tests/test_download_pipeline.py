@@ -282,11 +282,13 @@ class TestPotProviderFacade:
         # to_tui=True → concise+TUI + full(F12) + history 전량
         event = emit_dl(status="RUN", platform="YT", spec="1080p30", msg="staged")
         raw_log.raw("pot-test", event, to_tui=True)
+        raw_log.flush()
         assert concise_got and concise_got[-1] is event
         assert full_got and full_got[-1] is event
         # to_tui=False → full(F12)+history만, concise 제외
         n0 = len(concise_got)
         raw_log.raw("pot-test", "plain detail message")
+        raw_log.flush()
         assert len(concise_got) == n0
         assert full_got and "plain detail message" in full_got[-1].msg
 

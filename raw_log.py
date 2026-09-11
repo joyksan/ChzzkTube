@@ -7,76 +7,176 @@
 - 라우팅: 채널은 발행자(raw() 호출점)가 결정한다 — 콘텐츠 정규식 판정 제로.
 - 구독 전 호출도 history에 적재되므로 유실 없다.
 
-[계층] 구독자(팬아웃 대상)는 QT SIGNAL로 연결한다. Signal.emit은 스레드
-안전이며, 수신자(MainWindow 앱렌더)가 GUI 스레드 객체이므로 QueuedConnection
-정책에 따라 슬롯은 항상 GUI 스레드에서 실행된다. 즉 워커 스레드에서 raw()를
-호출해도 UI 위젯 직접 조작이 절대 발생하지 않는다.
+[계층] 발행 스레드에서는 bounded queue 적재만 수행한다.
+파일 I/O와 구독자 호출은 단일 dispatcher 스레드에서 순차 처리하며,
+구독자 콜백은 dispatcher lock을 잡지 않은 상태에서 호출한다.
 """
-import sys
+from collections import deque
+import queue
 import threading
-
-from PySide6.QtCore import QObject, Signal
-
-
-class _RawHub(QObject):
-    """raw 버스의 시그널 브리지 — 워커 → GUI 스레드 전환 담당."""
-    concise = Signal(object, bool, bool)  # (LogEvent, is_status, is_error)
-    full = Signal(object, bool)           # (LogEvent, is_status) — True면 F12 마지막 줄 갱신
-
-
-_hub = _RawHub()
-_LOCK = threading.RLock()
-_concise_subs: list = []
-_full_subs: list = []
-
-
-def subscribe_concise(fn):
-    """메인로그(TUI) 구독 등록 (중복 방지, 시그널 연결 1회)."""
-    with _LOCK:
-        if fn not in _concise_subs:
-            _concise_subs.append(fn)
-            _hub.concise.connect(fn)
-
-
-def subscribe_full(fn):
-    """F12 상세로그 구독 등록 (중복 방지, 시그널 연결 1회)."""
-    with _LOCK:
-        if fn not in _full_subs:
-            _full_subs.append(fn)
-            _hub.full.connect(fn)
-
+import time
+from typing import Callable
 
 from log_event import LogEvent
 
 
+MAX_QUEUE = 2048
+MAX_FULL_EVENTS = 4096
+MAX_LINE_CHARS = 4096
+_HISTORY_SUMMARY = "raw_log queue overflow: UI mirror dropped"
+
+
+class _RawDispatcher:
+    """Single-consumer dispatcher; publishers only perform a non-blocking put."""
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[tuple] = queue.Queue(maxsize=MAX_QUEUE)
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._concise_subs: list[Callable] = []
+        self._full_subs: list[Callable] = []
+        self._full_events: deque[LogEvent] = deque(maxlen=MAX_FULL_EVENTS)
+        self._overflowed = False
+        self._thread = threading.Thread(target=self._run, name="raw-log-dispatcher", daemon=True)
+        self._thread.start()
+
+    def subscribe_concise(self, fn: Callable) -> None:
+        with self._lock:
+            if fn not in self._concise_subs:
+                self._concise_subs.append(fn)
+
+    def subscribe_full(self, fn: Callable) -> None:
+        with self._lock:
+            if fn not in self._full_subs:
+                self._full_subs.append(fn)
+
+    def publish(self, event: LogEvent, to_tui: bool) -> bool:
+        try:
+            self._queue.put_nowait((event, bool(to_tui)))
+            return True
+        except queue.Full:
+            self._record_overflow()
+            return False
+
+    def _record_overflow(self) -> None:
+        with self._lock:
+            if self._overflowed:
+                return
+            self._overflowed = True
+        try:
+            import log_history
+            log_history.log(f"[raw-log] {_HISTORY_SUMMARY}", level="WARN")
+        except Exception:
+            pass
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                event, to_tui = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self._dispatch(event, to_tui)
+            except Exception:
+                # A subscriber must never kill the log pipeline.
+                pass
+            finally:
+                self._queue.task_done()
+
+    def _dispatch(self, event: LogEvent, to_tui: bool) -> None:
+        try:
+            import log_history
+            log_history.log(
+                f"[{getattr(event, 'tag', 'raw')}] {event.msg}",
+                level="ERROR" if event.is_error else "INFO",
+            )
+        except Exception:
+            pass
+
+        with self._lock:
+            self._full_events.append(event)
+            full_subs = tuple(self._full_subs)
+            concise_subs = tuple(self._concise_subs) if to_tui else ()
+
+        for fn in full_subs:
+            try:
+                fn(event, bool(event.is_status))
+            except TypeError:
+                try:
+                    fn(event)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        for fn in concise_subs:
+            try:
+                fn(event, bool(event.is_status), bool(event.is_error))
+            except TypeError:
+                try:
+                    fn(event)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+    def shutdown(self, timeout: float = 1.0) -> None:
+        self._stop.set()
+        self._thread.join(timeout=timeout)
+
+    def flush(self, timeout: float = 1.0) -> None:
+        deadline = time.monotonic() + timeout
+        while self.pending and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    @property
+    def pending(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def overflowed(self) -> bool:
+        with self._lock:
+            return self._overflowed
+
+
+_dispatcher = _RawDispatcher()
+
+
+def subscribe_concise(fn):
+    """메인로그(TUI) 구독 등록 (중복 방지)."""
+    _dispatcher.subscribe_concise(fn)
+
+
+def subscribe_full(fn):
+    """F12 상세로그 구독 등록 (중복 방지)."""
+    _dispatcher.subscribe_full(fn)
+
+
 def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
-    """단일 진입점 — 앱의 모든 행동은 여기로 수신된다.
-
-    Args:
-        tag: 발행 원점 식별자 (pot / dl / deps / ytdlp / ui ...)
-        msg: LogEvent 권장. 문자열은 즉시 LogEvent로 정규화된다 (하위 호환).
-        is_status / is_error: 문자열 정규화 시 상태 계약.
-        to_tui: True면 TUI(concise)에도 발사. history/F12는 항상 수신.
-
-    [포함관계] history ⊆ F12 ⊆ (F12+TUI). 채널은 1비트(to_tui)로 축소됐다.
-    """
+    """단일 진입점 — 앱의 모든 행동은 여기로 수신된다."""
     if not isinstance(msg, LogEvent):
         msg = LogEvent(
-            stage="SYS", status="FAIL" if is_error else "OK",
-            platform="-", spec="-", msg=str(msg),
-            is_status=is_status, is_error=is_error,
+            stage="SYS",
+            status="FAIL" if is_error else "OK",
+            platform="-",
+            spec="-",
+            msg=str(msg),
+            is_status=is_status,
+            is_error=is_error,
             rendered=True,
         )
-    try:
-        import log_history
-        log_history.log(
-            f"[{tag}] {msg.msg}",
-            level="ERROR" if msg.is_error else "INFO",
-        )
-    except Exception:
-        pass
-    # F12 = 전량 (슈퍼셋) — is_status 틱은 뷰에서 마지막 줄 갱신
-    _hub.full.emit(msg, bool(msg.is_status))
-    # TUI = 발행자 선택
-    if to_tui:
-        _hub.concise.emit(msg, bool(msg.is_status), bool(msg.is_error))
+    else:
+        if is_status:
+            msg.is_status = True
+        if is_error:
+            msg.is_error = True
+    _dispatcher.publish(msg, to_tui)
+
+
+def flush(timeout: float = 1.0) -> None:
+    """테스트/종료용: 현재 queue가 처리될 때까지 기다린다."""
+    _dispatcher.flush(timeout)
+
+
+def shutdown(timeout: float = 1.0) -> None:
+    _dispatcher.shutdown(timeout)
+

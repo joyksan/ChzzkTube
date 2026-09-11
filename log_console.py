@@ -1,6 +1,7 @@
 ﻿### log_console.py - 간결 로그 콘솔 렌더러
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
+from collections import deque
 import re
 import time
 import unicodedata
@@ -33,7 +34,7 @@ class ConciseLogConsole:
         self._budget_key = None
         # [리플로우 대비] 원본 로그 버퍼 — msg는 잘리지 않은 전체를 보관하고,
         # 화면에는 렌더 시점 예산으로 잘라서 그린다. 창 폭 변경 시 재구성 루트.
-        self._buffer = []  # list[dict] = {msg, is_status, is_error, fg_color}
+        self._buffer = deque(maxlen=4096)  # list[dict] = {msg, is_status, is_error, fg_color}
 
     def _sync_budget(self):
         """로그를 찍는 시점 기준으로 트리 줄바꿈 예산을 재동기화한다.
