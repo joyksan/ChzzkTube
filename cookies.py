@@ -1,4 +1,4 @@
-### cookies.py - 브라우저 쿠키 추출 (Firefox / Chromium 계열)
+﻿### cookies.py - 브라우저 쿠키 추출 (Firefox / Chromium 계열)
 import glob
 import os
 import platform
@@ -70,9 +70,16 @@ def get_browser_cookies():
             except Exception as e:
                 # [증거 남김] DB 잠금/권한 실패는 '쿠키가 있는데도 401' 증상의
                 # 유일한 추적 단서 — 흡수는 유지하고 원인만 히스토리에 남긴다.
-                log_history.log(
-                    f"cookie DB read failed ({os.path.basename(p)}): {type(e).__name__}: {e}",
-                    "WARN",
+                import raw_log
+                from log_event import LogEvent
+                raw_log.raw(
+                    "cookie",
+                    LogEvent(
+                        stage="CK", status="WARN", platform="cookie",
+                        msg=f"cookie DB read failed ({os.path.basename(p)}): {type(e).__name__}: {e}",
+                        is_error=False,
+                    ),
+                    to_tui=False,
                 )
                 continue
     except Exception:

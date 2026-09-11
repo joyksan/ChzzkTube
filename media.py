@@ -1,4 +1,4 @@
-### media.py - 순수 미디어 처리 헬퍼 (해상도 라벨 / 임시파일 정리 / FFmpeg 리먹싱 / 코덱 랭킹)
+﻿### media.py - 순수 미디어 처리 헬퍼 (해상도 라벨 / 임시파일 정리 / FFmpeg 리먹싱 / 코덱 랭킹)
 import glob
 import os
 import re
@@ -334,10 +334,17 @@ def remux_live_to_container(ts_path, container_setting="mp4"):
     except Exception as e:
         # [증거 남김] windowed 빌드에선 print가 소멸하므로 히스토리에 기록 —
         # 임시 ts는 실패 시 보존되므로 사용자가 재시도할 수 있다.
-        log_history.log(
-            f"라이브 리먹싱 실패 — 원본 ts 보존됨 ({os.path.basename(ts_path)}): "
-            f"{type(e).__name__}: {e}",
-            "ERROR",
+        import raw_log
+        from log_event import LogEvent
+        raw_log.raw(
+            "media",
+            LogEvent(
+                stage="MEDIA", status="FAIL", platform="-",
+                msg=f"라이브 리먹싱 실패 — 원본 ts 보존됨 ({os.path.basename(ts_path)}): "
+                    f"{type(e).__name__}: {e}",
+                is_error=True,
+            ),
+            to_tui=False,
         )
 
     return ts_path

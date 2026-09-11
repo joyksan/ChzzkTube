@@ -16,13 +16,13 @@ yt_dlp.plugins.plugin_dirs.value = []
 from PySide6.QtCore import QThread, Signal
 from speed_window import SpeedWindow
 from yt_logger_bridge import YtLoggerBridge
+import raw_log
 import progress_emitter as _pe
 import target_downloader as _td
 import finalizer as _fin
 
 class DownloadWorker(QThread):
-    log_concise = Signal(str, bool, bool)
-    log_full = Signal(str)
+    # [v3.3.0] 로그는 raw 버스(raw_log.raw) 단일 경유 — log_concise/log_full 시그널 폐기.
     finished_all = Signal(int, int)
 
     def __init__(
@@ -55,7 +55,7 @@ class DownloadWorker(QThread):
         self._tick_file = None
         self._tick_last = 0
         self.live_partially_saved = False
-        self.logger = YtLoggerBridge(self.log_full, self.log_concise)
+        self.logger = YtLoggerBridge()  # [v3.3.0] 버스 직행 — 시그널 인자 폐기
         self.total_count = len(targets)
         self.current_idx = 1
         self.current_url = None
@@ -72,7 +72,6 @@ class DownloadWorker(QThread):
             v_spec=self.v_spec,
             audio_desc=self.audio_desc,
             logger=self.logger,
-            log_concise=self.log_concise,
             current_url=self.current_url or "",
             current_file=self.current_file,
             state=self.state,
@@ -111,10 +110,11 @@ class DownloadWorker(QThread):
                     break
                 if self.state["skip"]:
                     self.state["skip"] = False
-                    self.log_concise.emit(
+                    raw_log.raw(
+                        "dl",
                         _pe.emit_dl("SKIP", "-", spec="-", speed="-", pct=None, bar_frac=None,
                                     msg=f"skipped ({idx}/{self.total_count})"),
-                        False, False,
+                        to_tui=True,
                     )
                     continue
 
@@ -127,9 +127,7 @@ class DownloadWorker(QThread):
             if "CANCELED_BY_USER" in str(ex) or "중지되었습니다" in str(ex) or self.state["canceled"]:
                 pass
             else:
-                self.log_concise.emit(
-                    _pe.emit_err(str(ex)), False, True
-                )
+                raw_log.raw("dl", _pe.emit_err(str(ex)), to_tui=True)
 
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 
@@ -138,9 +136,11 @@ class DownloadWorker(QThread):
         if self._live_proc is not None:
             try:
                 self._live_proc.kill()
-                self.log_concise.emit(
-                    _pe.emit_event("DL", "WARN", "FFMP", "killed live recorder on worker terminate"),
-                    False, True,
+                raw_log.raw(
+                    "dl",
+                    _pe.emit_event("DL", "WARN", "FFMP",
+                                   "killed live recorder on worker terminate", is_error=True),
+                    to_tui=True,
                 )
             except Exception:
                 pass
@@ -152,9 +152,11 @@ class DownloadWorker(QThread):
         if self._live_proc is not None:
             try:
                 self._live_proc.kill()
-                self.log_concise.emit(
-                    _pe.emit_event("DL", "WARN", "FFMP", "killed live recorder externally"),
-                    False, True,
+                raw_log.raw(
+                    "dl",
+                    _pe.emit_event("DL", "WARN", "FFMP",
+                                   "killed live recorder externally", is_error=True),
+                    to_tui=True,
                 )
             except Exception:
                 pass

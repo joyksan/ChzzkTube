@@ -1,4 +1,4 @@
-### log_console.py - 간결 로그 콘솔 렌더러
+﻿### log_console.py - 간결 로그 콘솔 렌더러
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
 import re
@@ -605,24 +605,23 @@ def _log_ts():
     """현재 시각 — [HH:MM:SS] 형식."""
     return time.strftime("[%H:%M:%S]")
 
-_TUI_RE = re.compile(r"^\s*\[\d{2}:\d{2}:\d{2}\] .+│.+")
-
-
 def is_tui_line(msg):
-    """TUI 컬럼 포맷 라인인지 판별 — 모든 로그 경로의 단일 판별 기준.
+    """TUI 컬럼 포맷 라인인지 판별 (non-regex — 정규식 라우팅 제로).
 
-    *  True  : [HH:MM:SS] STAGE │ STATUS │ ... 형태의 컬럼 로그
-    *  False : raw 텍스트 (yt-dlp 출력, pip 출력, 플레인 메시지 등)
-    이중 포맷(메시지 내부에 타임스탬프가 또 겹친 라인)도 여기서 잡아낸다.
+    *  True  : [HH:MM:SS] STAGE │ STATUS │ ... 컬럼 로그
+    *  False : raw 텍스트 (yt-dlp/pip 출력, 플레인 메시지 등)
+    판정은 뷰가 산출한 컬럼 포맷의 구조([HH:MM:SS] + │ 구분자)만으로
+    레이아웃(비젼) 결정에 사용되며, 발행 시점의 to_tui 비트와 무관하다.
     """
     s = str(msg).strip()
-    if not s:
+    # [HH:MM:SS] : 위치/숫자 구조 검증 (regex 없음)
+    if not (len(s) >= 12 and s[0] == "[" and s[3] == ":"
+            and s[6] == ":" and s[9] == "]" and s[10] == " "
+            and s[1:3].isdigit() and s[4:6].isdigit() and s[7:9].isdigit()):
         return False
-    if len(s) < 18 or "│" not in s:
-        return False
-    head = s.split("│", 1)[0].strip()
-    # 헤더가 [HH:MM:SS] STAGE 형태일 때만 TUI로 인정
-    return _TUI_RE.match(s) is not None
+    # 컬럼 구분자 │ : 타임스탬프 뒤에 1글자 이상, 뒤에 1글자 이상
+    idx = s.find("│", 11)
+    return idx > 11 and idx < len(s) - 1
 
 def _log_pct(pct):
     """퍼센트 컬럼 — None 이면 '-', 아니면 '42.1%'."""
@@ -728,15 +727,16 @@ def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar
 
 
 def format_log_line_for_event(event):
-    """구조화된 LogEvent → TUI 컬럼 문자열. (정규식 판정 불필요)
+    """구조화된 LogEvent → TUI 컬럼 문자열 (뷰 전용 컬럼화 — 정규식 판정 제로).
 
-    log_event 모듈의 LogEvent dataclass 인스턴스를 받아
-    format_log_line()의 인자 시그니처로 변환 후 포맷팅한다.
+    렌더링 책임은 View(메인로그 모듈)에 있고, LogEvent는 모델이다.
+    rendered=True면 msg가 이미 표시 완성형이므로 재포맷하지 않는다.
     """
     from log_event import LogEvent  # lazy import (순환 참조 방지)
     if not isinstance(event, LogEvent):
-        if isinstance(event, str):
-            return event  # 이미 문자열이면 그대로 반환
+        return str(event)
+    if event.rendered:
+        return event.msg
     return format_log_line(
         stage=event.stage,
         status=event.status,
@@ -767,57 +767,54 @@ def _log_line_segments(line):
 
 
 # ════════════════════════════════════════════════════════════════════════
-# 새 TUI 컬럼 로그 — emit_event / emit_progress / emit_component
-# 메인/워커에서 호출하면 [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ ... 한 줄 출력
+# LogEvent 빌더 — emit_event / emit_dl / emit_err / emit_progress / emit_component
+# 행동 근원에서 라벨링을 동봉한 LogEvent를 생성한다. 뷰 렌더링은 구독자 몫.
 # ════════════════════════════════════════════════════════════════════════
 
-def emit_event(stage, status, platform="-", msg=""):
-    """단순 이벤트 1줄 — POT/Update/사용자 액션/에러 모두 공통."""
-    return format_log_line(
-        stage=stage, status=status, platform=platform, spec="-", speed="-",
-        pct=None, bar_frac=None, msg=msg,
+def emit_event(stage, status, platform="-", msg="", is_status=False, is_error=False):
+    """단순 이벤트 1건 — POT/Update/사용자 액션/에러 모두 공통."""
+    from log_event import LogEvent  # lazy import (순환 참조 방지)
+    return LogEvent(
+        stage=stage, status=status, platform=platform, msg=msg,
+        is_status=is_status, is_error=is_error,
     )
 
 
-def emit_dl(status, platform="", spec="", speed="", pct=None, bar_frac=None, msg="", stage="DL"):
-    """다운로드 진행률/완료 라인 — SPEC(스트림 속성)과 SPEED(네트워크) 분리.
+def emit_dl(status, platform="", spec="", speed="", pct=None, bar_frac=None, msg="", stage="DL",
+            is_status=False, is_error=False):
+    """다운로드 진행률/완료 이벤트 — SPEC(스트림 속성)과 SPEED(네트워크) 분리.
 
     예: [12:00:01] DL │ RUN │ YT  │ 1080p30 │ 12.4M/s │ 65.0% │ [█⋯░] │ 제목
     """
-    return format_log_line(
-        stage=stage,
-        status=status,
-        platform=platform,
-        spec=spec,
-        speed=speed,
-        pct=pct,
-        bar_frac=bar_frac,
-        msg=msg,
+    from log_event import LogEvent  # lazy import (순환 참조 방지)
+    return LogEvent(
+        stage=stage, status=status, platform=platform, spec=spec,
+        speed=speed, pct=pct, bar_frac=bar_frac, msg=msg,
+        is_status=is_status, is_error=is_error,
     )
 
 
 def emit_err(msg):
-    """에러 1줄 — FAIL 상태, 플랫폼 '-'. 내부적으로 format_log_line 호출."""
-    return format_log_line(
-        stage="DL", status="FAIL", platform="-", spec="-", speed="-",
-        pct=None, bar_frac=None, msg=msg,
-    )
+    """에러 1건 — FAIL 상태, 플랫폼 '-'."""
+    from log_event import LogEvent  # lazy import (순환 참조 방지)
+    return LogEvent(stage="DL", status="FAIL", msg=msg, is_error=True)
 
 
-def emit_progress(stage, status, platform="-", spec="-", speed="-", pct=None, bar_frac=None, msg=""):
-    """진행률 표시 라인 — ANAL/DL/LIVE 단계."""
-    return format_log_line(
+def emit_progress(stage, status, platform="-", spec="-", speed="-", pct=None, bar_frac=None, msg="",
+                  is_status=False, is_error=False):
+    """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
+    from log_event import LogEvent  # lazy import (순환 참조 방지)
+    return LogEvent(
         stage=stage, status=status, platform=platform, spec=spec, speed=speed,
         pct=pct, bar_frac=bar_frac, msg=msg,
+        is_status=is_status, is_error=is_error,
     )
 
 
-def emit_component(stage, status, platform, msg):
-    """컴포넌트/워커 결과 — DEPS / POT / READY 등 system 단계.
-
-    [16:20:01] SYS  │ OK   │ deps  │ Components up-to-date
-    """
-    return format_log_line(
-        stage=stage, status=status, platform=platform, spec="-", speed="-",
-        pct=None, bar_frac=None, msg=msg,
+def emit_component(stage, status, platform, msg="", is_status=False, is_error=False):
+    """컴포넌트/워커 결과 — DEPS / POT / READY 등 system 단계."""
+    from log_event import LogEvent  # lazy import (순환 참조 방지)
+    return LogEvent(
+        stage=stage, status=status, platform=platform, msg=msg,
+        is_status=is_status, is_error=is_error,
     )

@@ -2,28 +2,30 @@
 
 ── Worker Contract ──────────────────────────────────────────────
 본 모듈의 함수들이 요구하는 worker 객체의 인터페이스:
-  worker.logger           : YtLoggerBridge — log_full/log_concise 시그널
+  worker.logger           : YtLoggerBridge — raw 버스 직행 (log_full/log_concise 시그널 폐기)
   worker.total_count      : int   — 전체 대상 수
   worker.current_url       : str   — 현재 처리 중인 URL (실패 시 참조)
 ──────────────────────────────────────────────────────────────────
 """
 import os
 
+import raw_log
 from progress_emitter import emit_dl, emit_err
 
 
 def finalize(ctx, total, failed_targets, success_count):
-    """완료 요약 — TUI 컬럼 라인 1줄 + 개별 실패는 ERR 라인."""
+    """완료 요약 — TUI 컬럼 라인 1줄 + 개별 실패는 ERR 라인. (버스 단일 경유)"""
     fail_count = len(failed_targets)
 
     if ctx.state["canceled"]:
         if ctx.live_partially_saved:
             ctx.live_partially_saved = False
         else:
-            ctx.logger.log_concise.emit(
+            raw_log.raw(
+                "dl",
                 emit_dl("ABORT", "-", spec="-", speed="-", pct=0, bar_frac=0,
                         msg="download canceled by user"),
-                False, False,
+                to_tui=True,
             )
 
     if failed_targets:
@@ -37,13 +39,11 @@ def finalize(ctx, total, failed_targets, success_count):
                 pass
         # [개별 실패 라인] — ERR 컬럼 포맷으로 1건 1줄
         for u, reason in failed_targets:
-            ctx.logger.log_concise.emit(
-                emit_err(f"{u} — {reason}"),
-                False, True,
-            )
+            raw_log.raw("dl", emit_err(f"{u} — {reason}"), to_tui=True)
 
     # [결론 라인] — 성공/실패 카운트는 MSG 전용 (SPEC/SPEED 침범 금지)
-    ctx.logger.log_concise.emit(
+    raw_log.raw(
+        "dl",
         emit_dl(
             status="DONE" if fail_count == 0 else "WARN",
             platform="-",
@@ -52,8 +52,9 @@ def finalize(ctx, total, failed_targets, success_count):
             pct=100,
             bar_frac=1.0,
             msg=f"batch finished (success: {success_count}, fail: {fail_count})",
+            is_error=fail_count > 0,
         ),
-        False, fail_count > 0,
+        to_tui=True,
     )
 
     ctx.finished_all.emit(success_count, fail_count)

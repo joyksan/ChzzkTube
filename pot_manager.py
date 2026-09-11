@@ -3,12 +3,12 @@ from PySide6.QtCore import QObject, QThread, Signal
 import threading
 import subprocess
 import os
-from log_event import LogEvent, Channel
+from log_event import LogEvent
 import raw_log
 
 
 class _POTWorker(QThread):
-    log_full = Signal(str)
+    # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 시그널 폐기.
     finished_signal = Signal(bool, str)
     
     def __init__(self, parent=None, mode="prewarm"):
@@ -50,27 +50,39 @@ class _POTWorker(QThread):
             self._server_proc = None
     
     def _note(self, msg, is_status=False, is_error=False):
+        """raw 버스 단일 경유 — 라벨링은 근원에서 LogEvent로 동봉.
+
+        [채널 분기 — 발행자 결정]
+        - prewarm 모드: to_tui=False → F12+history 전용 (TUI 오염 방지)
+        - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
+        """
         import raw_log
-        from log_event import LogEvent, Channel
+        from log_event import LogEvent
         if self.mode == "prewarm":
-            raw_log.raw("pot", str(msg), is_status=is_status, is_error=is_error, full_only=True)
-        else:
-            stage = "SYS" if is_error else "POT"
-            status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-            event = LogEvent(stage=stage, status=status, platform="pot",
-                             spec="-", msg=str(msg)[:120],
-                             is_status=is_status, is_error=is_error)
-            raw_log.raw("pot", event, channel=Channel.BOTH)
+            raw_log.raw("pot", str(msg), is_status=is_status, is_error=is_error)
+            return
+        stage = "SYS" if is_error else "POT"
+        status = "FAIL" if is_error else ("RUN" if is_status else "OK")
+        event = LogEvent(stage=stage, status=status, platform="pot",
+                         spec="-", msg=str(msg)[:120],
+                         is_status=is_status, is_error=is_error)
+        raw_log.raw("pot", event, to_tui=True)
     
     def _dbg(self, msg):
+        """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지).
+
+        [채널 분기 — 발행자 결정]
+        - prewarm 모드: to_tui=False → F12+history 전용
+        - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
+        """
         import raw_log
-        from log_event import LogEvent, Channel
+        from log_event import LogEvent
         if self.mode == "prewarm":
-            raw_log.raw("pot-DEBUG", msg, full_only=True)
+            raw_log.raw("pot-DEBUG", str(msg))
         else:
             event = LogEvent(stage="POT", status="RUN", platform="pot",
                              spec="-", msg=str(msg)[:120])
-            raw_log.raw("pot", event, channel=Channel.BOTH)
+            raw_log.raw("pot", event, to_tui=True)
     
     def _run(self):
         from pot_server import probe_server, latest_server_ver, server_installed_ver
@@ -138,7 +150,7 @@ class _POTWorker(QThread):
         super().terminate()
 
 class POTManager(QObject):
-    log_full = Signal(str)
+    # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 릴레이 시그널 폐기.
     pot_status_changed = Signal(str)
     pot_finished = Signal(bool, str)
     
@@ -157,7 +169,6 @@ class POTManager(QObject):
                 return
             self._mode = mode
             self._worker = _POTWorker(mode=mode)
-            self._worker.log_full.connect(self.log_full)
             self._worker.finished_signal.connect(self._on_worker_finished)
             self._worker.start()
             self.pot_status_changed.emit("starting" if mode == "gate" else "staging")

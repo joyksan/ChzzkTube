@@ -103,7 +103,6 @@ class MainWindow(QMainWindow):
         # ── 분석 워커 시그널 바인딩 (Controller → View 포워딩) ──
         self.ctrl.analyze_result_ready.connect(self.on_analyze_success)
         self.ctrl.analyze_error_occurred.connect(self.on_analyze_error)
-        self.ctrl.analyze_log_full.connect(self.append_full_log)
 
         # POTManager가 서버 수명주기를 담당
         self._startup_completed = False
@@ -157,9 +156,16 @@ class MainWindow(QMainWindow):
                 self.verbose_win.close()
             self.ctrl.shutdown(1000)
             if self.ctrl.worker_dl is not None and self.ctrl.worker_dl.isRunning():
-                log_history.log(
-                    "shutdown: download worker not stopped (1s) — cancelling then exiting",
-                    "WARN",
+                import raw_log
+                from log_event import LogEvent
+                raw_log.raw(
+                    "shutdown",
+                    LogEvent(
+                        stage="SYS", status="WARN",
+                        msg="shutdown: download worker not stopped (1s) — cancelling then exiting",
+                        is_error=False,
+                    ),
+                    to_tui=False,
                 )
             # [스레드 경계] 종료 전 러닝 QThread 회수 — 좀비 분석 워커/기동 워커가
             # 살아있으면 Qt가 "QThread: Destroyed while thread is still running"
@@ -169,9 +175,16 @@ class MainWindow(QMainWindow):
                 if w is not None and w.isRunning():
                     w.wait(1500)
                     if w.isRunning():
-                        log_history.log(
-                            "shutdown: orphaned analyze worker (1.5s) — forcing exit",
-                            "WARN",
+                        import raw_log
+                        from log_event import LogEvent
+                        raw_log.raw(
+                            "shutdown",
+                            LogEvent(
+                                stage="SYS", status="WARN",
+                                msg="shutdown: orphaned analyze worker (1.5s) — forcing exit",
+                                is_error=False,
+                            ),
+                            to_tui=False,
                         )
             # POTManager가 서버/워커 정리 담당
             self._pot_manager.cancel()
@@ -181,9 +194,16 @@ class MainWindow(QMainWindow):
                 if w is not None and w.isRunning():
                     w.wait(1500)
                     if w.isRunning():
-                        log_history.log(
-                            f"shutdown: startup worker ({name}) not stopped (1.5s) — forcing exit",
-                            "WARN",
+                        import raw_log
+                        from log_event import LogEvent
+                        raw_log.raw(
+                            "shutdown",
+                            LogEvent(
+                                stage="SYS", status="WARN",
+                                msg=f"shutdown: startup worker ({name}) not stopped (1.5s) — forcing exit",
+                                is_error=False,
+                            ),
+                            to_tui=False,
                         )
 
             # 다운로드 워커의 라이브 녹화 프로세스 정리
@@ -427,14 +447,11 @@ class MainWindow(QMainWindow):
 
         # ── 보조 상태 초기화 ──
         self._full_log_buf: list[str] = []
-        # [raw 스택 버스] 모든 동작 로그의 단일 진실 공급원 구독.
-        # Qt 시그널 경유이므로 워커 스레드에서 raw() 호출 안전.
+        # [버스 구독 v3.3.0] 시그널(QueuedConnection) 경유라 워커 스레드의 raw()
+        # 호출도 이 슬롯들은 항상 GUI 스레드에서 실행된다.
         import raw_log
-        raw_log.subscribe_concise(
-            lambda msg, is_status=False, is_error=False:
-                self.append_concise_log(msg, is_status=is_status, is_error=is_error)
-        )
-        raw_log.subscribe_full(self.append_full_log)
+        raw_log.subscribe_concise(self._render_concise)
+        raw_log.subscribe_full(self._mirror_event_full)
         self.update_ui_state()
 
     def _on_url_drop(self, mime_data):
@@ -612,12 +629,12 @@ class MainWindow(QMainWindow):
             ):
                 needs_pot = True
 
-        import raw_log as _rl
-        from log_event import LogEvent, Channel
+                import raw_log
+        from log_event import LogEvent
         event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
                          msg=f"gated={needs_pot} age_limit={age_limit if info else '-'} "
                              f"availability={((info or {}).get('availability') or '-')}")
-        _rl.raw("pot-gate", event, channel=Channel.CONCISE)
+        raw_log.raw("pot-gate", event, to_tui=True)
 
         if needs_pot:
             self.append_concise_log(
@@ -685,15 +702,17 @@ class MainWindow(QMainWindow):
         base_msg = f"stream analyzed{counts}"
         if meta:
             base_msg += f" · {meta[:80]}"
-        # format_log_line에 spec(res=해상도)을 직접 전달
-        full_line = log_console.format_log_line(
-            stage="ANAL", status="OK", platform=platform, spec=res,
-            speed="-", pct=None, bar_frac=None, msg=base_msg,
-        )
-        self.append_concise_log(
-            full_line,
-            True,   # is_status — analyzing... 을 stream analyzed 로 덮어쓰기 (한 줄 유지)
-            False,  # is_error
+        # [버스 v3.3.0] 분석 성공 -> 논리 LogEvent(근원 라벨링). _render_concise가 컬럼화,
+        # _mirror_event_full이 F12에 원본 msg 기록. format_log_line 직접 호출 제거.
+        import raw_log
+        from log_event import LogEvent
+        raw_log.raw(
+            "anal",
+            LogEvent(
+                stage="ANAL", status="OK", platform=platform, spec=res,
+                msg=base_msg, is_status=True, is_error=False,
+            ),
+            to_tui=True,
         )
 
         # 마지막 블록 철회 가드
@@ -736,8 +755,6 @@ class MainWindow(QMainWindow):
         """구성요소(yt-dlp/streamlink) 최신 버전 비동기 확인 — 기동 0.5초 후 1회."""
         self.update_worker = UpdateWorker(self, upgrade=False, channel=self.cfg.get("update_channel", "stable"), check_updates=self.cfg.get("auto_update_check", True))
         # 구성요소 확인 라인은 필터 경유 — 루틴 '최신' 라인 간결 생략 + 히스토리 전건
-        self.update_worker.line.connect(self._component_line)
-        self.update_worker.full.connect(self.append_full_log)
         self.update_worker.check_done.connect(self._on_update_check_done)
         # [응답없음 방지] 낮은 우선순위로 시작해 GIL을 메인 스레드에 양보
         self.update_worker.start(QThread.Priority.LowPriority)
@@ -775,8 +792,6 @@ class MainWindow(QMainWindow):
         # [stale case] Dev/Frozen integration — UpdateWorker handles all deps (PyPI + ffmpeg + node)
         # stale로 확인된 패키지만 업그레이드, 나머지는 수급(ensure)만 — 2중 출력 방지
         self.update_worker = UpdateWorker(self, upgrade=True, stale_updates=stale, channel=self.cfg.get("update_channel", "stable"), check_updates=self.cfg.get("auto_update_check", True))
-        self.update_worker.line.connect(self._component_line)
-        self.update_worker.full.connect(self.append_full_log)
         self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
         self.update_worker.start()
         # [Coordinator 보고] deps 체크 단계 완료 — READY 게이트용 플래그.
@@ -908,55 +923,44 @@ class MainWindow(QMainWindow):
         if hasattr(self, "console"):
             self.console.on_resize()
 
-    def _component_line(self, msg, is_status=False, is_error=False):
-        """구성요소(POT/Update/워커) 라인 필터 — 간결 로그는 TUI 컬럼만.
+    # ── raw_log 버스 구독 슬롯 (v3.3.0) ──────────────────────────────
+    def _render_concise(self, event, is_status=False, is_error=False):
+        """[TUI 렌더러] 버스 concise 구독 — LogEvent → 컬럼 문자열 변환 후 출력.
 
-        *  이미 TUI 컬럼 포맷이면 그대로 간결 로그에 통과.
-        *  구형 prefix ([v]/[!]/[~]/[+]/[X]/[?])는 TUI 이벤트로 변환.
-        *  그 외 플레인 텍스트(yt-dlp/pip raw 등)는 간결 로그에 **노출하지 않고**
-           상세 로그(F12)와 히스토리에만 기록 — Single-Line Pipe-Format 유지.
+        컬럼화는 뷰(메인로그 모듈)의 책임이다. raw 레이어는 운반만 하고,
+        발행자가 근원에서 동봉한 라벨(stage/status/platform/spec)을 컬럼에 꽂는다.
+        [중복 방지] history는 raw_log.raw가 수행한다 — 여기서 log_history 호출 안 함.
         """
-        # 1) 이미 TUI 컬럼 포맷이면 그대로 출력
-        if log_console.is_tui_line(msg):
-            self.append_concise_log(msg, is_status, is_error)
-            return
-        # 2) prefix로 매핑
-        stripped = str(msg).lstrip()
-        if stripped.startswith("[v]") or stripped.startswith("[+]"):
-            status = "OK"
-            payload = stripped.split("]", 1)[-1].strip()
-        elif stripped.startswith("[!]") or stripped.startswith("[X]"):
-            status = "FAIL"
-            payload = stripped.split("]", 1)[-1].strip()
-        elif stripped.startswith("[~]"):
-            status = "RUN"
-            payload = stripped.split("]", 1)[-1].strip()
-        elif stripped.startswith("[?]"):
-            status = "WARN"
-            payload = stripped.split("]", 1)[-1].strip()
+        from log_event import LogEvent
+        if isinstance(event, LogEvent):
+            line = log_console.format_log_line_for_event(event)
         else:
-            # 3) 플레인 텍스트 — 간결 로그에는 노출 금지, 상세/히스토리 전용
-            if str(msg).strip():
-                self._mirror_full_log(msg)
-                log_history.log(msg, "ERROR" if is_error else "INFO")
-            return
-        stage = "pot" if "PO Token" in payload or "pot" in payload else "DEPS"
-        self.append_concise_log(
-            log_console.emit_event(stage, status, "-", payload),
-            is_status=is_status,
-            is_error=is_error,
-        )
+            line = str(event)
+        self.console.append(line, is_status, is_error)
+
+    def _mirror_event_full(self, event, is_status=False):
+        """[F12 렌더러] 버스 full 구독 — 모든 행동의 원문(event.msg)을 적재한다.
+
+        [포함관계 계약] F12는 버스의 전량 수신자(⊇TUI) — 드롭 필터 없음.
+        본문이 없는 진행률 틱은 SPEC/SPEED/PCT 요약 1줄로 생성해 갱신형 유지.
+        """
+        from log_event import LogEvent
+        if isinstance(event, LogEvent):
+            msg = str(event.msg)
+            if not msg.strip():
+                pct = f"{event.pct:.1f}%" if event.pct is not None else "-"
+                msg = " ".join(x for x in (event.spec, event.speed, pct) if x and x != "-") or event.stage
+            self._mirror_full_log(msg, is_status)
+        else:
+            self._mirror_full_log(str(event), is_status)
 
     def _mirror_full_log(self, msg, is_status=False):
         """상세 로그 버퍼 누적 + F12 창 미러링 (append_*_log 공용).
 
         [수정] 간결 로그의 TUI 포맷 메시지는 상세 로그에 포함하지 않음.
-        상세 로그는 raw 원본 로그만 기록 (yt-dlp stdout 등).
+        TUI 컬럼 포맷은 재생성하지 않는다 — event.msg 기반으로 기록.
         [추가] 모든 raw 로그 라인에 [HH:MM:SS] 타임스탬프 자동 부착.
         """
-        # TUI 컬럼 포맷 메시지는 상세 로그에 제외 — raw만 기록
-        if log_console.is_tui_line(msg):
-            return
         ts = time.strftime("%H:%M:%S")
         # 다중 라인 메시지 모두에 동일 타임스탬프 부착
         stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in str(msg).split("\n"))
@@ -974,13 +978,17 @@ class MainWindow(QMainWindow):
                 pass
 
     def append_concise_log(self, msg, is_status=False, is_error=False, fg_color=None):
-        # [콘솔 출력] ConciseLogConsole로 실제 텍스트 위젯에 렌더링
-        self.console.append(msg, is_status, is_error, fg_color)
-        # [전체 로그 미러] 상태 줄(진행률 덮어쓰기)은 누적 제외
-        if not is_status:
-            self._mirror_full_log(msg)
-            # 히스토리 파일 기록 — 상태 줄(틱)은 기록하지 않음
-            log_history.log(msg, "ERROR" if is_error else "INFO")
+        # [버스 v3.3.0] UI 액션도 raw_log.raw 단일 경로 — history/F12/TUI 모두 raw_log가 담당.
+        # 호출부는 LogEvent(emit_event 결과) 또는 미리 포맷된 문자열을 보낸다.
+        # fg_color는 호출부에서 사용되지 않음 — 색상은 _log_line_segments가 status 라벨로 재분류.
+        import raw_log
+        from log_event import LogEvent
+        if isinstance(msg, LogEvent):
+            msg.is_status = is_status
+            msg.is_error = is_error
+            raw_log.raw("ui", msg, to_tui=True)
+        else:
+            raw_log.raw("ui", msg, is_status=is_status, is_error=is_error, to_tui=True)
 
     def append_full_log(self, msg, is_status=False):
         # is_status=True: 진행률 틱 — F12에서 마지막 줄 갱신, 버퍼 미적재

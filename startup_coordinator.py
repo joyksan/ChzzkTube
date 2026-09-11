@@ -1,13 +1,11 @@
-"""시작 시퀀스 단일 책임자 — Signal 경유, POTManager + LogBus 연동."""
+"""시작 시퀀스 단일 책임자 — Signal 경유, POTManager + raw 버스 연동."""
 
 from __future__ import annotations
 
 import threading
 from PySide6.QtCore import QObject, Signal
 
-from log_bus import emit as log_bus_emit, Channel
 from startup_state import StartupState
-from log_console import format_log_line
 from pot_manager import POTManager
 
 
@@ -17,12 +15,12 @@ class StartupCoordinator(QObject):
     [Signal 기반]
     - Worker → Coordinator: report_*() (thread-safe)
     - Coordinator → View: ready_emitted / pot_status_changed / ui_unlocked (Qt Signal)
-    - Coordinator → LogBus: emit() (TUI + F12 + history)
+    - Coordinator → raw 버스: raw() (TUI=to_tui + F12 + history 전량)
 
     [구성 요소]
     - StartupState: 단일 상태 (thread-safe)
     - POTManager: POT 서버 수명주기 (prewarm + gate)
-    - LogBus: 로그 라우팅
+    - raw_log: 로그 라우팅 (라벨링은 여기서 LogEvent로 동봉)
     """
 
     # ── View로의 Signal ──────────────────────────────────────
@@ -41,10 +39,18 @@ class StartupCoordinator(QObject):
         self._pot.pot_status_changed.connect(self._on_pot_status)
         self._pot.pot_finished.connect(self._on_pot_finished)
 
-    # ── View로의 Signal ──────────────────────────────────────
-    ready_emitted = Signal(str, bool, str)  # (stage, is_status, msg)
-    pot_status_changed = Signal(str)
-    ui_unlocked = Signal()
+    # ── 버스 발행 (근원 라벨링 단일 경유) ─────────────────────
+
+    def _emit(self, stage, status, msg, is_status=False, is_error=False):
+        """READY/READY 경고 등 기동 라인을 LogEvent로 동봉해 버스로 발행."""
+        import raw_log
+        from log_event import LogEvent
+        raw_log.raw(
+            "startup",
+            LogEvent(stage=stage, status=status, platform="SYS", msg=msg,
+                     is_status=is_status, is_error=is_error),
+            to_tui=True,
+        )
 
     # ── Worker → Coordinator 보고 ────────────────────────────
 
@@ -57,13 +63,8 @@ class StartupCoordinator(QObject):
         with self._lock:
             self._state.set_upgrade(True)
             if summary:
-                line = format_log_line(
-                    stage="SYS", status="OK" if ok else "FAIL",
-                    platform="DEPS", spec="-", speed="-",
-                    pct=None, bar_frac=None, msg=f"update {summary}",
-                )
-                log_bus_emit(line, Channel.BOTH,
-                             is_status=False, is_error=not ok)
+                self._emit("SYS", "OK" if ok else "FAIL", f"update {summary}",
+                           is_error=not ok)
             self._try_emit_ready()
 
     def report_pot(self, ok: bool, msg: str):
@@ -76,13 +77,7 @@ class StartupCoordinator(QObject):
             if self._state.ready_emitted:
                 return
             self._state.mark_ready_emitted()
-            line = format_log_line(
-                stage="SYS", status="READY" if ok else "WARN",
-                platform="SYS", spec="-", speed="-",
-                pct=None, bar_frac=None, msg=msg,
-            )
-            log_bus_emit(line, Channel.BOTH,
-                         is_status=False, is_error=False)
+            self._emit("SYS", "READY" if ok else "WARN", msg)
             self.ready_emitted.emit("SYS", False, msg)
             self.ui_unlocked.emit()
 
@@ -110,12 +105,7 @@ class StartupCoordinator(QObject):
         with self._lock:
             if self._state.can_emit_ready():
                 self._state.mark_ready_emitted()
-                line = format_log_line(
-                    stage="SYS", status="READY", platform="SYS",
-                    spec="-", speed="-", pct=None, bar_frac=None, msg="ready",
-                )
-                log_bus_emit(line, Channel.BOTH,
-                             is_status=False, is_error=False)
+                self._emit("SYS", "READY", "ready")
                 self.ready_emitted.emit("SYS", False, "ready")
                 self.ui_unlocked.emit()
 

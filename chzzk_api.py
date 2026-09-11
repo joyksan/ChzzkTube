@@ -1,4 +1,4 @@
-### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD/LIVE 메타데이터 + 스트림 목록)
+﻿### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD/LIVE 메타데이터 + 스트림 목록)
 import datetime
 import json
 import re
@@ -54,9 +54,16 @@ def analyze_chzzk_clip_api(target_url):
         channel_name = owner.get("channelName") or d_data.get("channelName")
     except Exception as e:
         # [증거 남김] 세부 정보 폴백(제목=ID 표기)으로 계속 진행 — 원인은 히스토리에.
-        log_history.log(
-            f"치지직 클립 detail API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
-            "WARN",
+        import raw_log
+        from log_event import LogEvent
+        raw_log.raw(
+            "chzzk",
+            LogEvent(
+                stage="CHZ", status="WARN", platform="CHZ",
+                msg=f"치지직 클립 detail API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+                is_error=True,
+            ),
+            to_tui=False,
         )
 
     play_info_url = f"https://api.chzzk.naver.com/service/v1/play-info/clip/{clip_id}"
@@ -102,9 +109,16 @@ def analyze_chzzk_clip_api(target_url):
                 )
     except Exception as e:
         # [증거 남김] play-info 실패 → formats 비어 상위에서 RuntimeError fail-fast.
-        log_history.log(
-            f"치지직 클립 play-info API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
-            "WARN",
+        import raw_log
+        from log_event import LogEvent
+        raw_log.raw(
+            "chzzk",
+            LogEvent(
+                stage="CHZ", status="WARN", platform="CHZ",
+                msg=f"치지직 클립 play-info API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+                is_error=True,
+            ),
+            to_tui=False,
         )
 
     video_formats.sort(
@@ -188,9 +202,16 @@ def analyze_chzzk_vod_api(target_url):
                         )
     except Exception as e:
         # [증거 남김] VOD API 실패 → formats 비어 상위에서 RuntimeError fail-fast.
-        log_history.log(
-            f"치지직 VOD API 실패 (video/{video_no}): {type(e).__name__}: {e}",
-            "WARN",
+        import raw_log
+        from log_event import LogEvent
+        raw_log.raw(
+            "chzzk",
+            LogEvent(
+                stage="CHZ", status="WARN", platform="CHZ",
+                msg=f"치지직 VOD API 실패 (video/{video_no}): {type(e).__name__}: {e}",
+                is_error=True,
+            ),
+            to_tui=False,
         )
 
     video_formats.sort(
@@ -303,16 +324,30 @@ def analyze_chzzk_live_api(target_url):
             video_formats = _fetch_m3u8_streams(m3u8_url, headers)
     except Exception as e:
         # [증거 남김] live API 실패 → formats 비어 상위에서 fail-fast.
-        log_history.log(
-            f"치지직 LIVE API 실패 (live/{live_id}): {type(e).__name__}: {e}",
-            "WARN",
+        import raw_log
+        from log_event import LogEvent
+        raw_log.raw(
+            "chzzk",
+            LogEvent(
+                stage="CHZ", status="WARN", platform="CHZ",
+                msg=f"치지직 LIVE API 실패 (live/{live_id}): {type(e).__name__}: {e}",
+                is_error=True,
+            ),
+            to_tui=False,
         )
 
     if not video_formats:
         if live_status != "PROGRESS":
-            log_history.log(
-                f"치지직 LIVE 비방송 중 ({live_status}) — live/{live_id}",
-                "WARN",
+            import raw_log
+            from log_event import LogEvent
+            raw_log.raw(
+                "chzzk",
+                LogEvent(
+                    stage="CHZ", status="WARN", platform="CHZ",
+                    msg=f"치지직 LIVE 비방송 중 ({live_status}) — live/{live_id}",
+                    is_error=False,
+                ),
+                to_tui=False,
             )
 
     video_formats.sort(

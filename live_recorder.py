@@ -14,6 +14,7 @@ import time
 
 import yt_dlp
 
+import raw_log
 from media import cleanup_temp_files, format_bytes, remux_live_to_container
 from utils import get_filename_template
 from dl_platform import _dl_platform
@@ -62,7 +63,8 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
         if worker.state.get("canceled"):
             worker.live_partially_saved = True
         else:
-            worker.log_concise.emit(
+            raw_log.raw(
+                "dl",
                 emit_dl(
                     status="FAIL",
                     platform="-",
@@ -72,9 +74,9 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
                     bar_frac=None,
                     stage="LIVE",
                     msg="exit code error",
+                    is_error=True,
                 ),
-                False,
-                True,
+                to_tui=True,
             )
         cleanup_temp_files(temp_file)
         return False
@@ -82,7 +84,8 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
     out_path = remux_live_to_container(temp_file, worker.cfg.get("container", "mp4"))
     if out_path and os.path.exists(out_path):
         size = os.path.getsize(out_path)
-        worker.log_concise.emit(
+        raw_log.raw(
+            "dl",
             emit_dl(
                 status="DONE",
                 platform="-",
@@ -93,8 +96,7 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
                 stage="LIVE",
                 msg=f"saved — {os.path.basename(out_path)} ({format_bytes(size)})",
             ),
-            False,
-            False,
+            to_tui=True,
         )
         worker.log_success_info(out_path)
     cleanup_temp_files(temp_file)
@@ -128,11 +130,14 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
     last_tick = 0.0
 
     def _drain_stderr():
-        # stderr 는 별도 스레드로 실시간 상세 로그 유지
+        # stderr 는 별도 스레드로 실시간 상세 로그 유지 (버스 단일 경유)
+        from log_event import LogEvent
         for raw in iter(proc.stderr.readline, b""):
             if raw:
                 try:
-                    worker.log_full.emit(raw.decode("utf-8", "replace").strip())
+                    raw_log.raw("ffmpeg",
+                                LogEvent(stage="FFMP", status="OK",
+                                         msg=raw.decode("utf-8", "replace").strip()))
                 except Exception:
                     pass
 
@@ -155,7 +160,8 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                     last_tick = now
                     rate = worker._speed_win.speed()
                     fname = os.path.basename(out_file)
-                    worker.log_concise.emit(
+                    raw_log.raw(
+                        "dl",
                         emit_dl(
                             status="RUN",
                             platform=_dl_platform(
@@ -167,9 +173,9 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                             bar_frac=None,
                             stage="LIVE",
                             msg=f"recording — {fname}",
+                            is_status=True,  # 진행률 틱은 한 줄 덮어쓰기(갱신형)
                         ),
-                        True,   # is_status=True — 진행률 틱은 한 줄 덮어쓰기(갱신형)
-                        False,
+                        to_tui=True,
                     )
 
                 # 취소 요청 — 자식 죽이고 stdout queue drain ('truncated' 오탐 방지)
@@ -196,7 +202,8 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                 proc.kill()
             except Exception:
                 pass
-        worker.log_concise.emit(
+        raw_log.raw(
+            "dl",
             emit_dl(
                 status="FAIL",
                 platform="-",
@@ -206,9 +213,9 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                 bar_frac=None,
                 stage="LIVE",
                 msg=f"{log_tag} fail",
+                is_error=True,
             ),
-            False,
-            True,
+            to_tui=True,
         )
     finally:
         stderr_t.join(timeout=1.0)

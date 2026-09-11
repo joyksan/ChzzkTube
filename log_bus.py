@@ -1,56 +1,14 @@
-# log_bus.py — 로그 버스 단순화 (raw_log 후계자).
+# log_bus.py — [폐기됨 v3.3.0]
 #
-# [규칙]
-# - emit(msg, channel): 문자열 1개만 수용 (LogEvent 래핑은 발행자 책임 아님)
-# - concise: 사용자 행동 필요(버튼/입력) + 진행률
-# - full: 디버깅/진단/원문 (기본값)
-# - both: 상태 변화 알림(READY/ERROR)
+# raw_log로 통합됐다. 버스 불변식: "앱의 모든 행동은 raw_log.raw() 하나로
+# 수신된다" — 이중 버스는 경로 2개를 의미하므로 유지하지 않는다.
 #
-# Channel enum은 log_event.py에 유지 (하위 호환).
-from PySide6.QtCore import QObject, Signal
-import threading
-
-from log_event import Channel
-
-
-class LogBus(QObject):
-    concise = Signal(str, bool, bool)
-    full = Signal(str)
-
-    def __init__(self):
-        super().__init__()
-        self._history_buf: list[str] = []
-        self._history_cap = 5000
-
-
-bus = LogBus()
-_LOCK = threading.RLock()
-_concise_subs: list = []
-_full_subs: list = []
-
-
-def subscribe_concise(fn):
-    with _LOCK:
-        if fn not in _concise_subs:
-            _concise_subs.append(fn)
-            bus.concise.connect(fn)
-
-
-def subscribe_full(fn):
-    with _LOCK:
-        if fn not in _full_subs:
-            _full_subs.append(fn)
-            bus.full.connect(fn)
-
-
-def emit(msg: str, channel: Channel = Channel.FULL, is_status: bool = False, is_error: bool = False):
-    """단일 진입점. 문자열만 수용."""
-    import log_history
-    try:
-        log_history.log(msg)
-    except Exception:
-        pass
-    if channel & Channel.CONCISE:
-        bus.concise.emit(msg, bool(is_status), bool(is_error))
-    if channel & Channel.FULL:
-        bus.full.emit(msg)
+# [마이그레이션]
+# - emit(msg, channel=FULL)  → raw_log.raw(tag, msg)            (F12+history 전량)
+# - emit(msg, channel=BOTH)  → raw_log.raw(tag, LogEvent(...), to_tui=True)
+#
+# [삭제 예정] 사용처(startup_coordinator)가 raw_log로 전환됐으므로 본 모듈은
+# 잔존 호환 shim 없이 곧바로 폐기한다. import 시 즉시 오류로 경로 유출을 잡는다.
+raise ImportError(
+    "log_bus는 v3.3.0에서 폐기됐다 — raw_log.raw(tag, msg, to_tui=...) 단일 경로를 사용할 것."
+)
