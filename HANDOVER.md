@@ -421,7 +421,10 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 #### 검증
 - ✅ py_compile 전체 OK
-- ✅ pytest 32 passed (log_console + coordinator + dl_platform)
+- ✅ pytest 86 passed (전체) — v3.3.0 계약 불일치 테스트 7건 수리 포함:
+  `TestEmitDl`/`TestEmitErr`/`test_context_passed_to_pipeline`은 `emit_dl`/`emit_err`가 `str`이 아닌 `LogEvent`를 반환하므로 `_rendered()`(`format_log_line_for_event`) 경유로 전환,
+  `test_raw_bus_fanout`은 폐기된 병렬-분리 계약(`full_only` kwarg) 대신 포함관계 계약(to_tui 1비트)으로 전면 교체.
+  원인: `0cf6b51` v3.3.0 리팩토링이 코드 계약만 바꾸고 테스트를 안 고친 채 머지됨.
 - 행위 변화 1건: 미리 포맷된 LogEvent 문자열(pick 메뉴 등)은 wrap 대신 한 줄 유지 + `_render_clamp` `…` 절단. bare 문자열은 기존대로 wrap
 
 ### 2026-09-09 — pot_provider SRP 3-웨이 분리 + dataclass 컨텍스트 추출 + 통합 테스트 + CI

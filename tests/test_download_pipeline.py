@@ -11,7 +11,12 @@ from unittest.mock import Mock, patch
 import pytest
 
 from dl_context import DownloadContext
-from log_console import format_log_line, emit_dl, emit_err
+from log_console import format_log_line, format_log_line_for_event, emit_dl, emit_err
+
+
+def _rendered(event):
+    """LogEvent 빌더 결과 → TUI 컬럼 문자열 (v3.3.0: 빌더는 라벨링만, 렌더는 뷰 몫)."""
+    return format_log_line_for_event(event)
 
 
 @contextmanager
@@ -47,37 +52,42 @@ class TestDownloadContext:
 
 
 class TestEmitDl:
-    """emit_dl: DL 단계 진행률 라인 포맷 검증."""
+    """emit_dl: DL 단계 진행률 이벤트 라벨링 검증 (v3.3.0: LogEvent 반환 → _rendered로 컬럼화)."""
 
     def test_run_format(self):
-        line = emit_dl(status="RUN", platform="YT", spec="1080p30", speed="12.4M/s", pct=65.0, bar_frac=0.65)
+        line = _rendered(emit_dl(status="RUN", platform="YT", spec="1080p30", speed="12.4M/s", pct=65.0, bar_frac=0.65))
         assert "RUN" in line
         assert "YT" in line
         assert "1080p30" in line
         assert "12.4M/s" in line
 
     def test_done_with_title(self):
-        line = emit_dl(status="DONE", platform="YT", spec="720p60", speed="-", pct=100.0, bar_frac=1.0, msg="video title")
+        line = _rendered(emit_dl(status="DONE", platform="YT", spec="720p60", speed="-", pct=100.0, bar_frac=1.0, msg="video title"))
         assert "DONE" in line
         assert "video title" in line
 
     def test_minimal_args(self):
-        line = emit_dl(status="SKIP")
+        event = emit_dl(status="SKIP")
+        assert event.status == "SKIP"
+        line = _rendered(event)
         assert "SKIP" in line
         assert line.strip() != ""
 
 
 class TestEmitErr:
-    """emit_err: 실패 라인 포맷 검증."""
+    """emit_err: 실패 이벤트 라벨링 검증 (v3.3.0: LogEvent 반환 → _rendered로 컬럼화)."""
 
     def test_err_format(self):
-        line = emit_err("age restricted")
+        line = _rendered(emit_err("age restricted"))
         assert "FAIL" in line
         assert "age restricted" in line
 
     def test_err_truncates_long_msg(self):
         long_msg = "x" * 200
-        line = emit_err(long_msg)
+        event = emit_err(long_msg)
+        assert event.status == "FAIL"
+        assert event.msg == long_msg
+        line = _rendered(event)
         assert "FAIL" in line
 
 
@@ -261,27 +271,24 @@ class TestPotProviderFacade:
         assert any("released" in m for m in notes)
 
     def test_raw_bus_fanout(self):
-        """raw(): 병렬 채널 계약 — TUI는 concise만, non-TUI는 full만, full_only는 full 전용."""
+        """raw(): 포함관계 계약 — history/F12=전량, TUI=to_tui 선택 (v3.3.0).
+
+        구 병렬-분리 계약(full_only 존재)은 v3.3.0에서 폐기 — 채널은 to_tui 1비트.
+        """
         import raw_log
         concise_got, full_got = [], []
         raw_log.subscribe_concise(lambda m, is_status=False, is_error=False: concise_got.append(m))
         raw_log.subscribe_full(lambda m, t=None: full_got.append(m))
-        line = "[00:00:00] POT      │ OK       │ POT      │ - │ - │ staged"
-        raw_log.raw("pot-test", line)
-        # TUI 라인 → 메인(concise) 전용, F12(full)엔 실지 않는다.
-        assert concise_got and concise_got[-1] == line
-        assert not any("pot-test" in m for m in full_got), \
-            "TUI 라인은 F12 full에 실려서는 안 된다 (병렬 분리)"
-        # 비트리 메시지는 concise 제외, F12(full)로만
+        # to_tui=True → concise+TUI + full(F12) + history 전량
+        event = emit_dl(status="RUN", platform="YT", spec="1080p30", msg="staged")
+        raw_log.raw("pot-test", event, to_tui=True)
+        assert concise_got and concise_got[-1] is event
+        assert full_got and full_got[-1] is event
+        # to_tui=False → full(F12)+history만, concise 제외
         n0 = len(concise_got)
         raw_log.raw("pot-test", "plain detail message")
         assert len(concise_got) == n0
-        assert full_got and "pot-test" in full_got[-1]
-        # full_only=True → F12 전용, 메인에는 절대 안 나간다
-        n1 = len(concise_got)
-        raw_log.raw("pot-test", "full-only raw line", full_only=True)
-        assert len(concise_got) == n1
-        assert full_got and "full-only" in full_got[-1]
+        assert full_got and "plain detail message" in full_got[-1].msg
 
     def test_reexports_from_po_client(self):
         """facade가 po_client 함수들을 올리바르게 재수출하는지 확인."""
@@ -311,12 +318,12 @@ class TestContextPipelineFlow:
             v_spec={"height": 1080, "fps": 30, "vcodec": "h264"},
         )
         # progress_emitter에서 emit_dl 호출 패턴 시뮬레이션
-        line = emit_dl(
+        line = _rendered(emit_dl(
             status="RUN",
             platform="YT",
             spec=str(ctx.v_spec.get("height", "")) if ctx.v_spec else "-",
             speed="-",
             pct=50.0,
-        )
+        ))
         assert "RUN" in line
         assert "1080" in line or "-" in line  # v_spec 사용 확인
