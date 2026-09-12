@@ -1460,7 +1460,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.3.0"
+_APP_VERSION = "v3.3.1"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -3149,8 +3149,8 @@ import raw_log
 from media import cleanup_temp_files, format_bytes, remux_live_to_container
 from utils import get_filename_template
 from dl_platform import _dl_platform
-from progress_emitter import emit_dl, emit_live_final_stats
-import live_recorder as _lr
+from progress_emitter import emit_dl, emit_live_final_stats, log_success_info
+
 
 def download_youtube_live(worker, url):
     """유튜브 라이브 — yt-dlp로 통합 포맷 URL만 추출 후 ffmpeg로 녹화."""
@@ -3182,10 +3182,18 @@ def download_youtube_live(worker, url):
         worker.cfg["download_path"],
         get_filename_template(worker.cfg) % info,
     )
-    temp_ts, thumb, _ = _lr.prepare_live_paths(worker, out_file, info.get("thumbnail"))
+    temp_ts, thumb, _ = prepare_live_paths(worker, out_file, info.get("thumbnail"))
 
     cmd = ["ffmpeg", "-y", "-i", stream_url, "-c", "copy", "-f", "mpegts", temp_ts]
-    return _lr.record_live_stream(worker, cmd, temp_ts, out_file, thumb)
+    return record_live_stream(worker, cmd, temp_ts, out_file, thumb)
+
+
+def prepare_live_paths(ctx, out_file, thumb_url=None):
+    """라이브 녹화용 임시 TS 파일 및 썸네일 경로 도출."""
+    base, _ = os.path.splitext(out_file)
+    temp_ts = f"{base}_temp.ts"
+    thumb_file = f"{base}_temp_thumb.jpg" if thumb_url else None
+    return temp_ts, thumb_file, out_file
 
 
 def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
@@ -3229,7 +3237,7 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
             ),
             to_tui=True,
         )
-        worker.log_success_info(out_path)
+        log_success_info(worker, out_path)
     cleanup_temp_files(temp_file)
     return True
 
@@ -3350,7 +3358,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
         )
     finally:
         stderr_t.join(timeout=1.0)
-        return worker.handle_stream_finish(True, temp_ts_file, returncode)
+        return handle_stream_finish(worker, True, temp_ts_file, returncode)
 ```
 
 ## File: log_console.py
@@ -4351,7 +4359,7 @@ def qt_message_handler(mode, context, message):
 
 qInstallMessageHandler(qt_message_handler)
 
-from PySide6.QtCore import Qt, QThread, QTimer, QEvent
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, QEvent, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -4402,6 +4410,20 @@ CONFIG_DIR = config.CONFIG_DIR
 CONFIG_FILE = config.CONFIG_FILE
 ICON_PATH = config.ICON_PATH
 DEFAULT_CONFIG = config.default_config()
+
+
+class _GuiLogBridge(QObject):
+    """순수 raw_log 백그라운드 스레드 이벤트를 Qt GUI 루프로 안전하게 흡수하는 브리지.
+
+    raw_log의 데몬 dispatcher 스레드는 본 브리지의 Signal.emit만 호출하고,
+    슬롯은 QueuedConnection으로 메인 스레드 이벤트 루프에서 실행된다 —
+    배경 스레드의 QTextEdit 직접 접근(세그폴트/레이스 원인)을 차단한다.
+    raw_log는 표준 라이브러리 기반 순수성을 유지하고, 스레드 경계 책임은
+    GUI를 점유한 수신층(main.py)이 진다.
+    """
+
+    tui_signal = Signal(object, bool, bool)   # (event, is_status, is_error)
+    full_signal = Signal(object, bool)        # (event, is_status)
 
 
 class MainWindow(QMainWindow):
@@ -4788,11 +4810,19 @@ class MainWindow(QMainWindow):
         # ── 보조 상태 초기화 ──
         self._full_log_buf: deque[str] = deque(maxlen=4096)
         self._last_status_line = ""
-        # [버스 구독 v3.3.0] 시그널(QueuedConnection) 경유라 워커 스레드의 raw()
-        # 호출도 이 슬롯들은 항상 GUI 스레드에서 실행된다.
+        # [버스 구독 — 스레드 경계 분리] raw_log의 순수 데몬 스레드는 브리지의
+        # Signal.emit만 호출하고, 슬롯은 QueuedConnection으로 GUI 스레드 이벤트
+        # 루프에서 실행된다 — 배경 스레드의 QTextEdit 직접 접근을 차단한다.
+        self._gui_bridge = _GuiLogBridge(self)
+        self._gui_bridge.tui_signal.connect(
+            self._render_concise, Qt.ConnectionType.QueuedConnection
+        )
+        self._gui_bridge.full_signal.connect(
+            self._mirror_event_full, Qt.ConnectionType.QueuedConnection
+        )
         import raw_log
-        raw_log.subscribe_concise(self._render_concise)
-        raw_log.subscribe_full(self._mirror_event_full)
+        raw_log.subscribe_concise(self._gui_bridge.tui_signal.emit)
+        raw_log.subscribe_full(self._gui_bridge.full_signal.emit)
         self.update_ui_state()
 
     def _on_url_drop(self, mime_data):
@@ -5067,6 +5097,29 @@ class MainWindow(QMainWindow):
 
         # 비디오/오디오 포맷 로그: 별도 줄로 출력 (코덱만 표시, 채널명·제목 제외)
         self._emit_format_logs(v_list, a_list, platform)
+
+    def _emit_format_logs(self, v_list, a_list, platform):
+        """스트림 분석 완료 후 비디오/오디오 코덱 사양을 별도 로그로 출력."""
+        import raw_log
+        from log_event import LogEvent
+
+        v_codecs = list(dict.fromkeys(f.get("vcodec") for f in v_list if f.get("vcodec")))
+        a_codecs = list(dict.fromkeys(f.get("acodec") for f in a_list if f.get("acodec")))
+
+        if v_codecs:
+            msg = f"video: {', '.join(v_codecs[:4])}"
+            raw_log.raw(
+                "anal",
+                LogEvent(stage="ANAL", status="OK", platform=platform, spec="V-FMT", msg=msg),
+                to_tui=True,
+            )
+        if a_codecs:
+            msg = f"audio: {', '.join(a_codecs[:4])}"
+            raw_log.raw(
+                "anal",
+                LogEvent(stage="ANAL", status="OK", platform=platform, spec="A-FMT", msg=msg),
+                to_tui=True,
+            )
 
     def _format_analysis_summary(self):
         """분석 완료 요약 — 채널명 · 제목 등 기본 정보 (플레이리스트/치지직 공용)."""
@@ -6381,8 +6434,10 @@ def normalize_youtube_channel_url(url):
 ### po_client.py - PO Token 서버 HTTP 클라이언트 (L0 leaf)
 """bgutil PO Token 서버와의 순수 HTTP 통신 계층.
 
-[계층 규약] 서버 프로세스 수급·빌드·스폰(lifecycle)은 pot_provider(L1 worker)가
-담당하고, 본 모듈은 그 서버에 대한 **순수 HTTP 클라이언트**만 제공한다.
+[계층 규약] 서버 프로세스 수급·빌드·스폰(lifecycle)은 pot_server(L1)와
+그 수명주기 관리자(POTManager)가 담당하고, 본 모듈은 그 서버에 대한
+**순수 HTTP 클라이언트**만 제공한다 — 상위 계층 역참조(lazy import) 없이
+표준 라이브러리만으로 완결된다.
 - client_opts(L0) / updater(L0) 가 pot_provider(L1)를 역참조하던 계층 역전 해소:
   이제 옵션 빌더·버전 체커는 본 leaf만 본다.
 - 의존: 표준 라이브러리만 — Qt/워커 무의존, 어디서 import해도 안전.
@@ -6398,34 +6453,20 @@ DEFAULT_PORT = 4416
 
 
 def server_ping(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1):
-    """PO token server alive 확인. HTTP /ping으로 체크. 성공 시 True.
+    """PO token server alive 확인 (L0 순수 HTTP 핑). 성공 시 True.
 
-    [v3.1.0 변경] 타임아웃 3초→1초로 단축. DEPS 로그 표시 시간을
-    줄이기 위해. PO 서버는 로컬(127.0.0.1)이므로 1초면 충분.
-
-    [좀비 프로세스 방지] 포트 응답이 와도 PID가 죽었으면 좀비로 간주 → False.
+    [계약] L0 leaf는 표준 라이브러리만 본다 — 상위 계층(pot_server)의 락
+    파일을 들여다보던 PID 역참조는 폐기했다. TCP 연결 성공 + HTTP 200은
+    Node.js 이벤트 루프가 실제로 I/O를 처리 중이라는 증거이므로 프로토콜
+    검증만으로 생존 판정이 충분하다. 좀비 락 회수는 pot_server가 서버
+    기동 시 본인의 책임 영역에서 처리한다.
     """
     try:
         url = f"http://{host}:{port}/ping"
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            if resp.status != 200:
-                return False
+            return resp.status == 200
     except Exception:
         return False
-
-    # 포트 응답 성공 시 PID 기반 생존 확인 (크로스플랫폼)
-    # pot_server 모듈의 _pid_alive 헬퍼를 통해 락 파일의 PID 확인
-    try:
-        from pot_server import _prewarm_lock_path, _read_lock_info, _pid_alive
-        lock_path = _prewarm_lock_path()
-        if os.path.exists(lock_path):
-            pid, _ = _read_lock_info(lock_path)
-            if pid and not _pid_alive(pid):
-                return False  # 락 홀더가 죽었으면 좀비로 간주
-    except Exception:
-        pass  # 확인 실패 시 포트 응답만으로 통과 (보수적)
-
-    return True
 
 
 def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
@@ -6740,18 +6781,21 @@ POTProviderWorker = _POTWorker
 ## File: pot_provider.py
 
 ```python
-"""pot_provider — POTProviderWorker(QThread) facade (SRP 분리 결과물).
+"""pot_provider — PO Token 3개 모듈 재수출 facade.
 
 [구조]
 - node_provider.py    : Node.js 런타임 수급 (node_exe, node_ok, ensure_node_runtime 등)
 - pot_server.py       : bgutil 서버 빌드/기동 (ensure_node_server, _spawn_existing 등)
 - po_client.py        : PO Token HTTP 클라이언트 (L0 leaf, 계층 역전 방지)
-- pot_provider.py     : 위 3개 모듈을 재수출(re-export) + POTProviderWorker(QThread)
+- pot_provider.py     : 위 3개 모듈을 재수출(re-export)
 
 [호환성] 기존 `import pot_provider` 코드는 변경 없이 동작.
-- main.py        : pot_provider.POTProviderWorker (기존 호환용, 현재는 POTManager 사용)
 - update_worker.py: pot_provider.ensure_node_runtime
 - updater.py      : pot_provider.node_exe / node_major_version / npm_exe
+
+[제거 이력] POTProviderWorker(QThread)는 POTManager._POTWorker와 중복 선언된
+좀비 인터페이스였다 — 런타임 사용 0건(tests/문서 전용), 진실의 근원은
+POTManager 단독이다. 서버 수명주기 계약은 POTManager를 본다.
 """
 
 # ── 재수출 (내부 호출 + 외부 역참조 모두 1경로) ──────────────────────────
@@ -6811,113 +6855,9 @@ __all__ = [
     "latest_server_ver", "server_installed_ver", "clean_stale_plugin",
     "built_server_js", "pot_readiness", "acquire_prewarm_lock",
     "release_prewarm_lock", "_spawn_existing", "download_and_install_source",
-    "ensure_node_server", "kill_process_on_port", "POTProviderWorker",
+    "ensure_node_server", "kill_process_on_port",
 ]
 
-import os
-import raw_log
-from log_event import LogEvent
-from PySide6.QtCore import QThread, Signal
-import subprocess
-class POTProviderWorker(QThread):
-    """PO Token 서버 기동용 워커 (gate 모드만 담당, prewarm은 POTManager 담당).
-
-    [v3.3.0] 로그는 raw 버스 단일 경유 — line/log_full 시그널 폐기.
-    finished_signal(ok, msg)는 로그가 아닌 '결과 전달' 계약이므로 유지 —
-    워커 스레드 → GUI 스레드 결과 통보는 시그널이 정답이고, 로그는 버스가 정답.
-    """
-    finished_signal = Signal(bool, str)  # (ok, message) — 결과 전달용, 로그 아님
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._abort = False
-        self._child_procs = []
-        self._server_proc = None
-        self.outcome = (False, "")
-
-    def request_interruption(self):
-        """Graceful shutdown 요청."""
-        self._abort = True
-        for proc in self._child_procs:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except Exception:
-                proc.kill()
-
-    def run(self):
-        try:
-            self._run()
-        except Exception as e:
-            self.outcome = (False, f"POT worker crash: {type(e).__name__}: {e}")
-        finally:
-            self._cleanup()
-            self.finished_signal.emit(self.outcome[0], self.outcome[1])
-
-    def _cleanup(self):
-        """스레드 종료 시 무조건 실행."""
-        for proc in self._child_procs:
-            try: proc.kill()
-            except: pass
-        self._child_procs.clear()
-        if self._server_proc:
-            try:
-                from pot_server import _kill
-                _kill(self._server_proc)
-            except: pass
-            self._server_proc = None
-
-    def _run_child(self, cmd, **kwargs):
-        proc = subprocess.Popen(cmd, **kwargs)
-        self._child_procs.append(proc)
-        try:
-            return proc.wait()
-        finally:
-            if proc in self._child_procs:
-                self._child_procs.remove(proc)
-
-    def _note(self, msg, is_status=False, is_error=False):
-        """로깅 브리지 — raw 버스 단일 경유.
-
-        [발행자 결정] gate 전용 워커이므로 to_tui=True — TUI + F12 + history 전부.
-        """
-        stage = "SYS" if is_error else "POT"
-        status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        event = LogEvent(stage=stage, status=status, platform="pot",
-                         spec="-", msg=str(msg)[:120],
-                         is_status=is_status, is_error=is_error)
-        raw_log.raw("pot", event, to_tui=True)
-
-    def _dbg(self, msg):
-        """로깅 브리지 — raw 버스 단일 경유 (to_tui=True, gate 전용)."""
-        event = LogEvent(stage="POT", status="RUN", platform="pot",
-                         spec="-", msg=str(msg)[:120])
-        raw_log.raw("pot", event, to_tui=True)
-
-    def _run(self):
-        from pot_server import probe_server, built_server_js, _spawn_existing
-        from pot_server import DEFAULT_HOST, DEFAULT_PORT
-        self._dbg("POTProviderWorker starting (gate mode)")
-
-        self._note("probing server...", True)
-        state, detail = probe_server()
-        self._dbg(f"probe: state={state!r}")
-        if state == "ok":
-            self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
-            return
-
-        if built_server_js():
-            self._note("pot server starting...", True)
-            if _spawn_existing(self._dbg):
-                self._server_proc = _spawn_existing(self._dbg)
-                if self._server_proc is not None:
-                    self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
-                    return
-        self.outcome = (False, "bind fail — age-only")
-
-    def terminate(self):
-        self.request_interruption()
-        super().terminate()
 ```
 
 ## File: pot_server.py
@@ -8450,7 +8390,6 @@ MIRROR_MODULES = [
     "update_worker",
     "updater",
     "utils",
-    "worker_context",
     "yt_logger_bridge",
 ]
 
@@ -8702,7 +8641,7 @@ def _download_chzzk(ctx, url, content_type):
         ctx.cfg["download_path"], _chzzk_filename(ch_info, fmt, ctx.cfg)
     )
     real = _http_download(ctx, stream_url, out_path)
-    ctx.log_success_info(real)
+    _pe.log_success_info(ctx, real)
     ctx.speed_win.reset()
     return True
 
@@ -9895,66 +9834,6 @@ def parse_sec(time_str):
         pass
     return 0.0
 
-```
-
-## File: worker_context.py
-
-```python
-### worker_context.py - Worker 컨텍스트 데이터클래스
-"""DownloadWorker가 공유하는 상태를 타입 안전하게 캡슐화.
-
-[계층] L0.5 leaf — Qt 없음, dataclass만. Worker 구현체와 추출 파이프라인의
-계약서 역할. mypy/pyright 타입 힌트로 IDE 자동완성·정적 검증 지원.
-"""
-from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
-
-from speed_window import SpeedWindow
-from yt_logger_bridge import YtLoggerBridge
-
-
-@dataclass
-class WorkerContext:
-    """DownloadWorker가 공유하는 컨텍스트 — 불필요한 속성 전이 방지."""
-
-    # 설정 (불변에 가깝음)
-    cfg: Dict[str, Any]
-    
-    # 선택된 포맷
-    v_sel: str = "auto"
-    a_sel: str = "auto"
-    v_spec: Dict[str, Any] = field(default_factory=dict)
-    audio_desc: str = ""
-    
-    # 런타임 상태 (가변)
-    logger: Optional[YtLoggerBridge] = None
-    current_url: str = ""
-    current_file: str = ""
-    state: Dict[str, Any] = field(default_factory=dict)  # canceled, skip
-    _speed_win: SpeedWindow = field(default_factory=SpeedWindow)
-    
-    # 배치 진행
-    total_count: int = 0
-    current_idx: int = 0
-    
-    # 라이브/치즈직 특화
-    is_live_hint: bool = False
-    live_partially_saved: bool = False
-    
-    # 치즈직 메타데이터
-    chzzk_info: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self):
-        if not isinstance(self.cfg, dict):
-            raise TypeError("cfg must be dict")
-        if not isinstance(self.v_spec, dict):
-            raise TypeError("v_spec must be dict")
-        if not isinstance(self.state, dict):
-            raise TypeError("state must be dict")
-        if self.logger is not None and not isinstance(self.logger, YtLoggerBridge):
-            raise TypeError("logger must be YtLoggerBridge")
-        if not isinstance(self._speed_win, SpeedWindow):
-            raise TypeError("_speed_win must be SpeedWindow")
 ```
 
 ## File: yt_logger_bridge.py

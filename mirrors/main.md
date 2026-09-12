@@ -17,7 +17,7 @@ def qt_message_handler(mode, context, message):
 
 qInstallMessageHandler(qt_message_handler)
 
-from PySide6.QtCore import Qt, QThread, QTimer, QEvent
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, QEvent, Signal
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QApplication,
@@ -68,6 +68,20 @@ CONFIG_DIR = config.CONFIG_DIR
 CONFIG_FILE = config.CONFIG_FILE
 ICON_PATH = config.ICON_PATH
 DEFAULT_CONFIG = config.default_config()
+
+
+class _GuiLogBridge(QObject):
+    """순수 raw_log 백그라운드 스레드 이벤트를 Qt GUI 루프로 안전하게 흡수하는 브리지.
+
+    raw_log의 데몬 dispatcher 스레드는 본 브리지의 Signal.emit만 호출하고,
+    슬롯은 QueuedConnection으로 메인 스레드 이벤트 루프에서 실행된다 —
+    배경 스레드의 QTextEdit 직접 접근(세그폴트/레이스 원인)을 차단한다.
+    raw_log는 표준 라이브러리 기반 순수성을 유지하고, 스레드 경계 책임은
+    GUI를 점유한 수신층(main.py)이 진다.
+    """
+
+    tui_signal = Signal(object, bool, bool)   # (event, is_status, is_error)
+    full_signal = Signal(object, bool)        # (event, is_status)
 
 
 class MainWindow(QMainWindow):
@@ -454,11 +468,19 @@ class MainWindow(QMainWindow):
         # ── 보조 상태 초기화 ──
         self._full_log_buf: deque[str] = deque(maxlen=4096)
         self._last_status_line = ""
-        # [버스 구독 v3.3.0] 시그널(QueuedConnection) 경유라 워커 스레드의 raw()
-        # 호출도 이 슬롯들은 항상 GUI 스레드에서 실행된다.
+        # [버스 구독 — 스레드 경계 분리] raw_log의 순수 데몬 스레드는 브리지의
+        # Signal.emit만 호출하고, 슬롯은 QueuedConnection으로 GUI 스레드 이벤트
+        # 루프에서 실행된다 — 배경 스레드의 QTextEdit 직접 접근을 차단한다.
+        self._gui_bridge = _GuiLogBridge(self)
+        self._gui_bridge.tui_signal.connect(
+            self._render_concise, Qt.ConnectionType.QueuedConnection
+        )
+        self._gui_bridge.full_signal.connect(
+            self._mirror_event_full, Qt.ConnectionType.QueuedConnection
+        )
         import raw_log
-        raw_log.subscribe_concise(self._render_concise)
-        raw_log.subscribe_full(self._mirror_event_full)
+        raw_log.subscribe_concise(self._gui_bridge.tui_signal.emit)
+        raw_log.subscribe_full(self._gui_bridge.full_signal.emit)
         self.update_ui_state()
 
     def _on_url_drop(self, mime_data):
@@ -733,6 +755,29 @@ class MainWindow(QMainWindow):
 
         # 비디오/오디오 포맷 로그: 별도 줄로 출력 (코덱만 표시, 채널명·제목 제외)
         self._emit_format_logs(v_list, a_list, platform)
+
+    def _emit_format_logs(self, v_list, a_list, platform):
+        """스트림 분석 완료 후 비디오/오디오 코덱 사양을 별도 로그로 출력."""
+        import raw_log
+        from log_event import LogEvent
+
+        v_codecs = list(dict.fromkeys(f.get("vcodec") for f in v_list if f.get("vcodec")))
+        a_codecs = list(dict.fromkeys(f.get("acodec") for f in a_list if f.get("acodec")))
+
+        if v_codecs:
+            msg = f"video: {', '.join(v_codecs[:4])}"
+            raw_log.raw(
+                "anal",
+                LogEvent(stage="ANAL", status="OK", platform=platform, spec="V-FMT", msg=msg),
+                to_tui=True,
+            )
+        if a_codecs:
+            msg = f"audio: {', '.join(a_codecs[:4])}"
+            raw_log.raw(
+                "anal",
+                LogEvent(stage="ANAL", status="OK", platform=platform, spec="A-FMT", msg=msg),
+                to_tui=True,
+            )
 
     def _format_analysis_summary(self):
         """분석 완료 요약 — 채널명 · 제목 등 기본 정보 (플레이리스트/치지직 공용)."""

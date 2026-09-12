@@ -54,7 +54,6 @@ MIRROR_MODULES = [
     "update_worker",
     "updater",
     "utils",
-    "worker_context",
     "yt_logger_bridge",
 ]
 

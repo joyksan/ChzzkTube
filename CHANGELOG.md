@@ -1,3 +1,16 @@
+### 2026-09-12 — v3.3.1 : 계층 모숭 정리 — L0 순수화·좀비 제거·Qt 스레드 경계 분리
+
+- **기동 게이트 신뢰 복구**: `StartupState.pot_ready` 플래그 — READY는 prewarm/gate **실완료 토큰**으로만 개방. `POTManager.pot_finished` msg를 상태 토큰(`"staged"`/`"ready"`/`"failed"`)으로 발행(사람용 msg 발행 시 READY 미개방 결함 수정), `use_existing()` 신설(기존 서버 응답 시 `_pending_download` 영구 큐잉 방지), `_on_pot_finished`의 `is_ready()` 재확인 후 회수 재개
+- **raw 버스 백프레셔**: dispatcher bounded queue(MAX_QUEUE=2048) — 발행 스레드는 put만, 포화 시 UI mirror 드롭 + history 요약 1건, 구독자 콜백은 lock 밖에서 호출, `flush()` queue.join 연동
+- **yt-dlp `\r` 처리**: `YtLoggerBridge` 캐리지 조립 버퍼 — 청크 분할 이월·다중 `\r` 최신 스냅샷만 발행·2Hz 스로틀. F12 버퍼 `deque(maxlen=4096)`
+- **L2 수리 (live_recorder)**: 증발한 `prepare_live_paths` 모듈 함수 구현, `worker.handle_stream_finish`/`worker.log_success_info` 인스턴스 메서드 착각 호출을 모듈 함수 계약으로 교정 — 라이브 진입·종료 AttributeError 제거, `_lr` 자기 참조 별칭 제거
+- **L0 순수화 (po_client)**: `server_ping`의 pot_server lazy import(락 파일 PID 염탐) 완전 철거 — 순수 HTTP /ping만 판정(TCP+200=이벤트 루프 생존 증거), 좀비 락 회수는 pot_server 본연 책임으로 이관. `import os` 누락 NameError 은폐 결함 근원 제거
+- **좀비 제거**: `worker_context.py` 삭제(DownloadContext와 이중 계약, 런타임 사용 0건), `pot_provider.POTProviderWorker` 제거(POTManager._POTWorker 중복, facade는 재수출 단독)
+- **Qt 스레드 경계**: main `_GuiLogBridge(QObject)` + QueuedConnection — raw_log 순수 파이썬 유지(헤드리스 테스트 무수정), GUI 슬롯(`_render_concise`/`_mirror_event_full`)은 메인 스레드에서만 실행. 배경 스레드 QTextEdit 직접 접근 차단
+- **기타 수리**: pot_provider `_spawn_existing` 이중 호출 원자화(서버 2회 기동 방지), main `_emit_format_logs` 복원(분석 성공 V-FMT/A-FMT 코덱 로그), startup_coordinator 죽은 `_stage_complete` 제거, raw_log 죽은 `MAX_LINE_CHARS` 제거
+- **검증**: py_compile 전체 + pytest **111 passed** (test_live_recorder 신규 5건, overflow 타이밍 레이스 제거) + 브리지 스레드 경계 프로브(슬롯 전부 MainThread 실증)
+
+
 ### 2026-09-12 — v3.3.0 : 로그 버스 단일화 — raw 단일 경로·플래그 라우팅·레거시 제거
 
 - **버스 단일화**: `raw_log.raw(tag, msg, to_tui)` 단일 진입 확정 — `log_bus.py` 삭제, `log_history.log` 직접 호출 10곳 버스 reroute(`to_tui=False`), 워커 로그 시그널 0건 실측

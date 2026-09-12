@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: v3.3.0 — 2026-09-12 로그 버스 단일화 v3.3.0 — raw_log 단일 경로·LogEvent 발행·is_tui_line 렌더 퇴출·no_wrap 플래그·log_bus.py 삭제·append_full_log 제거 — 회귀 방지 불변식 5건 추가
+> 마지막 갱신: v3.3.1 — 2026-09-12 계층 모숭 정리 — po_client L0 순수화(pot_server 역참조 철거)·live_recorder 모듈 함수 계약 수리·worker_context/pot_provider.POTProviderWorker 좀비 제거·main _GuiLogBridge QueuedConnection 스레드 경계 분리 — 기동 게이트 신뢰 복구(pot_ready 토큰 계약·use_existing·_pending_download 회수) — §3 기동 시퀀스/POT 구동 트리 신설
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.2.3` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-10 좀비 프로세스 차단 회로 전수조사·크로스플랫폼 정리·PID 생존 확인·server_ping 강화)
+- **버전**: `v3.3.1` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-12 계층 모숭 정리·기동 게이트 신뢰 복구·Qt 스레드 경계 분리)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -128,7 +128,7 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
 | 히스토리 로그 | `logs/chzzktube_YYYY-MM-DD.log` (`log_history`, 날짜별 append, 30일 보존, thread-safe) |
 | 스모크 | `smoke_test.py` — `QT_QPA_PLATFORM=offscreen` 강제로 CI 가능 |
 
-## 3. 아키텍처 (역방향 참조 0 · 순환 import 0 — 2026-09-12 `wc -l *.py` 총 9745줄 실측)
+## 3. 아키텍처 (역방향 참조 0 · 순환 import 0 — 2026-09-12 `wc -l *.py` 총 9763줄 실측)
 
 ### 레이어별 구조 (4계층 + L0 Leaf)
 
@@ -143,46 +143,94 @@ LAYER 0.5: Pipeline Functions (ctx 기반, 비스레드)
   target_downloader.py · progress_emitter.py · live_recorder.py · finalizer.py · dl_context.py
 LAYER 0: Domain / Helpers / Infra (Leaf)
   media.py · chzzk_api.py · cookies.py · config.py · updater.py · utils.py
-  worker_context.py · yt_logger_bridge.py · dl_platform.py · speed_window.py · playlist.py
-  po_client.py(L0) · node_provider.py(L0) · pot_server.py(L1) ·
+  yt_logger_bridge.py · dl_platform.py · speed_window.py · playlist.py
+  po_client.py(L0 순수 — stdlib only, 상위 역참조 0) · node_provider.py(L0) · pot_server.py(L1) ·
   components.py · log_history.py · smoke_test.py · sync_mirrors.py
 ```
 
-### 시그널 방향 트리 (v3.3.0 실측 — 상세: [2026-09-12 시그널 방향 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거). 아래 구 트리는 역사 기록으로 유지)
+### 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.3.1 실측)
 
 ```
-StartupCoordinator._on_update_check_done → upgrade → _on_auto_upgrade_done → report_upgrade → report_ready(1회)
-POTProviderWorker.finished → coordinator.report_pot
-UpdateWorker.check_done → DEPS 5줄 출력 + upgrade 기동 + report_deps 플래그
-MediaController: analyze_result_ready → View 포워딩 (Signal-to-Signal)
-DownloadWorker: log_concise → append_concise_log (is_status=True 틱)  # v3.3.0 이전 — 현행은 raw("dl") 버스 직행, shim 경유
+[기동 시퀀스 — DEPS → upgrade → prewarm → READY]
+main.py (MainWindow)
+ └─ _start_update_check → UpdateWorker(check)
+      └─ check_done(list) ──→ Main._on_update_check_done 중계 (Coordinator 직결 금지)
+           ├─ DEPS 결론 1줄 raw("deps", emit_component) + Coord.report_deps(ok)
+           ├─ UpdateWorker(upgrade) 기동 ─→ upgrade_done(bool,str) → Coord.report_upgrade(ok)
+           └─ POTManager.ensure_ready("prewarm")   # 기동 즉시 — 디스크 스테이징, 스폰 없음
+
+[POT 서버 수명주기 — POTManager 단일 진실 (_POTWorker 유일 스폰)]
+POTManager.ensure_ready(mode)                 # 스폰 가드: 실행 중 워커 있으면 중복 스폰 없음
+ ├─ "prewarm" (기동 직후): 빌드 스테이징만 — Popen 없음, RAM 0MB·포트 미점유
+ │    └─ ok → _mode="staged" → pot_finished(True, "staged") ─→ report_pot → pot_ready=True
+ ├─ "gate" (분석/다운로드 게이트): 연령제한·프라이빗만 서버 기동
+ │    ├─ prewarm 실행 중 요청 → _pending_gate=True → 완료 후 QTimer singleShot gate 자동 재기동
+ │    ├─ probe_server()=="ok" → 기존 서버 바인드 → pot_finished(True, "ready")
+ │    └─ 실패 → _mode="failed" → pot_finished(False, "failed")
+ └─ use_existing()  # server_ping()==True(기존 서버 응답) → 스폰 없이 즉시 ready 승격
+                    # (이 경로는 pot_finished가 없으므로 대기 다운로드 영구 큐잉 방지용)
+
+[READY 게이트 — StartupState 멱등 1회]
+can_emit_ready() = deps_ok ∧ upgrade_done ∧ pot_ready ∧ ¬ready_emitted
+ ├─ 충족 시: raw("startup", READY, to_tui=True) 1건 + ui_unlocked() → 입력 잠금 해제
+ └─ 15초 폴백: Main._force_unlock_input → force_unlock() → report_ready()
+
+[다운로드 게이트 — PO 필요 영상 (연령제한·프라이빗)]
+toggle_download: needs_pot = age_limit>0 ∨ availability∈{needs_auth,premium_only,subscriber_only,private}
+ ├─ POTManager.is_busy() → _pending_download 큐잉 + "queued — waiting for POT server"
+ ├─ server_ping()==True  → use_existing() → 즉시 진행
+ ├─ is_ready()==False    → _pending_download 큐잉 → pot_finished(ok, "ready") 시 Main._on_pot_finished가
+ │                         is_ready() 재확인 후 회수 → _start_download 재개
+ └─ PO 토큰: client_opts._apply_pot_opts → po_client.fetch_po_token (게이트 완료 보장 후 워커에서 실행)
+
+[시그널 계약 — 결과/게이트만, 워커 로그 시그널 0]
+POTManager (_POTWorker 유일 스폰):
+  pot_status_changed(str) : starting/staging/staged/failed → Coordinator passthrough → View
+  pot_finished(bool,str)  : (ok, 상태 토큰 "staged"/"ready"/"failed") — 사람용 msg 발행 금지(v3.3.1)
+    → Coordinator.report_pot → READY 게이트 입력
+    → Main._on_pot_finished → is_ready() 확인 → _pending_download 회수 → _start_download
+StartupCoordinator (View행 3종):
+  ready_emitted(str,bool,str) · pot_status_changed(str) passthrough · ui_unlocked()
+  보고 진입점(함수 호출): report_deps / report_upgrade / report_pot / report_ready / force_unlock
+UpdateWorker : check_done(list)(Main 중계) · upgrade_done(bool,str)
+AnalyzeWorker: result_ready(dict) · error_occurred(str)
+DownloadWorker: finished_all(int,int) — 유일 잔존 Signal
+
+[로그 채널 — raw 버스 단일 진입 + 스레드 경계]
+워커/파이프라인/UI → raw_log.raw(tag, LogEvent, to_tui)
+  ├─ bounded queue(MAX_QUEUE=2048): 발행 스레드는 put만 — 포화 시 UI mirror 드롭 + history 요약 1건
+  └─ dispatcher 데몬 스레드: history 파일 I/O + full_events ring(4096) 적재
+스레드 경계 (v3.3.1): dispatcher ──Signal.emit──→ main._GuiLogBridge(QObject)
+  ├─ tui_signal(object,bool,bool) ─QueuedConnection─→ Main._render_concise   (GUI 스레드)
+  └─ full_signal(object,bool)     ─QueuedConnection─→ Main._mirror_event_full (GUI 스레드)
+raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책임은 GUI를 점유한 수신층(main.py).
 ```
 
-### 모듈 목록 (39개 루트 .py — 2026-09-12 `ls *.py` 실측. 일회용 패치 스크립트 8종 삭제 후. [상세 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거) 참조)
+### 모듈 목록 (38개 루트 .py — 2026-09-12 `ls *.py` 실측. worker_context v3.3.1 삭제 후. [상세 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거) 참조)
 
 | 분류 | 모듈 | 핵심 책임 |
 |------|------|----------|
-| View | main | 진입점 + MainWindow (1281) — 버스 구독 2점, append_concise_log=bus shim |
+| View | main | 진입점 + MainWindow (1366) — `_GuiLogBridge` QueuedConnection 구독, append_concise_log=bus shim |
 | View | dialogs | 6종 Dialog + ComboBox + UpdateWorker 연동 |
 | View | theme | QSS/컬러 토큰 |
-| View | log_console | ConciseLogConsole 렌더러 (832) — append(no_wrap)→_flow_lines 플래그 체인 |
+| View | log_console | ConciseLogConsole 렌더러 (833) — append(no_wrap)→_flow_lines 플래그 체인 |
 | Control | controller | MediaController — spawn_worker/spawn_analyzer + URL 파싱 (217) |
-| Control | startup_coordinator | 기동 게이트 (137) — report_* + View행 Signal 3종 + raw("startup") |
-| Control | startup_state | READY 단일 진실 (118) — `can_emit_ready()` 멱등 가드 |
-| Control | pot_manager | POT 수명주기 (199) — `ensure_ready(prewarm/gate)` + Signal 2종 |
+| Control | startup_coordinator | 기동 게이트 (124) — report_* + View행 Signal 3종 + raw("startup") |
+| Control | startup_state | READY 단일 진실 (69) — `can_emit_ready()` 멱등 가드 + pot_ready |
+| Control | pot_manager | POT 수명주기 (247) — `ensure_ready(prewarm/gate)` + `use_existing` + Signal 2종 |
 | Worker | downloader | DownloadWorker — `finished_all`만 잔존, 로그 시그널 0 (164) |
 | Worker | analyze_worker | AnalyzeWorker (354) — result_ready/error_occurred + pot-gate 판정 |
 | Worker | update_worker | UpdateWorker (201) — check_done/upgrade_done + deps raw 발행 |
-| Worker | pot_provider | POTProviderWorker facade (177) — `finished_signal(bool,str)` |
+| Worker | pot_provider | PO Token 3개 모듈 재수출 facade (76) — POTProviderWorker는 v3.3.1 제거 |
 | Pipeline | progress_emitter | LogEvent 빌더 단일 출처 (182) — emit_event/emit_dl/emit_err/… |
 | Pipeline | target_downloader | 다운로드 실행부 (318) — `raw("dl"/"ytdlp"/"live")` |
-| Pipeline | live_recorder | ffmpeg 라이브 녹화 (221) — `_live_proc` + kill |
+| Pipeline | live_recorder | ffmpeg 라이브 녹화 (229) — `prepare_live_paths`/`handle_stream_finish` 모듈 함수 계약 |
 | Pipeline | finalizer | `_finalize` 분할 — TUI 컬럼 마무리 |
-| Pipeline | dl_context | DownloadContext dataclass (86) · worker_context 공유 상태 캡슐화 |
+| Pipeline | dl_context | DownloadContext dataclass (86) — 파이프라인 명시적 계약 |
 | Pipeline | speed_window | 속도 측정 슬라이딩 윈도우 |
-| Shared | yt_logger_bridge | yt-dlp logger → `raw("ytdlp")` 어댑터 (시그널 없음) |
+| Shared | yt_logger_bridge | yt-dlp logger → `raw("ytdlp")` 어댑터 (150) — `\r` 캐리지 조립 + 2Hz 스로틀 |
 | Shared | updater | PyPI 조회+pip 업그레이드 (423, stdlib only) |
-| Infra | po_client | bgutil HTTP 순수 계층 (103) — `server_ping` PID 생존 확인 |
+| Infra | po_client | bgutil HTTP 순수 계층 (91) — 순수 HTTP 핑만, 상위 역참조 0 |
 | Infra | node_provider | Node.js 런타임 수급 (314) |
 | Infra | pot_server | bgutil 서버 수명주기 (760) — 수급/빌드/기동/락/kill |
 | Domain | media | 코덱랭크/포맷설명/remux/cleanup (350) — `import log_history` 잔재 §5-15 |
@@ -190,11 +238,11 @@ DownloadWorker: log_concise → append_concise_log (is_status=True 틱)  # v3.3.
 | Domain | cookies | 브라우저 쿠키 추출 (87) — `import log_history` 잔재 §5-15 |
 | Domain | config | `default_config()` 15키 + `_APP_VERSION` + 병합 |
 | Domain | playlist | YT 채널 URL 정규화 |
-| Domain | client_opts | player_client/쿠키 옵션 주입 (125) |
+| Domain | client_opts | player_client/쿠키/PO Token 옵션 주입 (125) |
 | Domain | dl_platform | URL 판정 + `_short_platform`/`_dl_platform` (111) |
 | Infra | components | ffmpeg 자동 수급/관리 (522) |
 | Infra | log_history | 파일 로그 단일 소유자 (95) — 직접 호출 금지, raw 경유만 |
-| Infra | smoke_test | offscreen 기동 검증 하네스 · tests/*.py 7종 · logs/ 일자 산출물 |
+| Infra | smoke_test | offscreen 기동 검증 하네스 · tests/*.py 12종 · logs/ 일자 산출물 |
 
 > 구 분류표의 `cookie.py`(단수)·`pot_manager alivede progress`·`startup_coordinator 시퀀스 스텝 실행기` 서술은 2026-09-12 실측으로 정정 — 실제 파일은 `cookies.py`, POTManager=수명주기 관리자, Coordinator=게이트+보고 중계. 구 34행 분류표는 아래 v3.3.0 실측 시그널 계약으로 대체.
 
@@ -219,14 +267,14 @@ UpdateWorker(parent, upgrade, stale_updates, channel, check_updates):  # 로그 
    로그(check): raw("deps", emit_component DEPS, to_tui=True) 결론 1줄 + raw("deps-cli"/"pip"/"pypi", str) F12+history 전용
    로그(upgrade): _provision_cb(show 플래그) → raw("deps", event, to_tui=show)
 
-POTProviderWorker(mode):                                   # 로그 시그널 없음
-    finished_signal(bool, str)   : (ok, msg) — POTManager._on_worker_finished 경유
-   로그: _note/_dbg → raw("pot", …) — prewarm은 to_tui=False (TUI 오염 방지)
-
-POTManager:                                                # 수명주기 단일 스폰 가드
+POTManager:                                                # 수명주기 단일 스폰 가드 (_POTWorker 유일 스폰)
     pot_status_changed(str)      : starting/staging/staged/failed → Coordinator._on_pot_status (passthrough)
-    pot_finished(bool, str)      : (ok, msg) → Coordinator._on_pot_finished → report_pot → READY 게이트
-    ensure_ready(mode): prewarm 실행 중 gate 요청 → _pending_gate=True, 완료 후 gate 자동 재기동
+    pot_finished(bool, str)      : (ok, 상태 토큰 "staged"/"ready"/"failed") → Coordinator._on_pot_finished
+                                   → report_pot(READY 게이트) + Main._on_pot_finished(_pending_download 회수)
+    ensure_ready(mode): prewarm 실행 중 gate 요청 → _pending_gate=True → 완료 후 QTimer singleShot gate 자동 재기동
+    use_existing()   : server_ping()==True(기존 서버) → 스폰 없이 즉시 ready 승격 (영구 큐잉 방지)
+   로그: _POTWorker._note/_dbg → raw("pot"/"pot-DEBUG", …) — prewarm은 to_tui=False (TUI 오염 방지)
+   ※ v3.3.1: pot_finished msg는 상태 토큰만 — 사람용 상세("prewarm staged" 등)는 버스 로그로 남긴다.
 
 StartupCoordinator:                                        # 기동 게이트 — View행 Signal 3종
     ready_emitted(str, bool, str): (stage, is_status, msg) — READY 1회 (StartupState 멱등 가드)
@@ -235,12 +283,15 @@ StartupCoordinator:                                        # 기동 게이트 �
     _emit(stage,status,msg): raw("startup", LogEvent SYS, to_tui=True) — 기동 라인 버스 발행
     보고 진입점(함수 호출, Signal 아님): report_deps / report_upgrade / report_pot / report_ready / force_unlock(15s 폴백)
 
-raw 버스(raw_log.py — Qt Signal 브리지 2점, 워커→GUI 스레드 전환):
-    _hub.concise(LogEvent,is_status,is_error) → Main._render_concise → console.append(no_wrap=True)
-    _hub.full(LogEvent,is_status)             → Main._mirror_event_full → _mirror_full_log(F12 버퍼+stamp)
+raw 버스(raw_log.py — 순수 파이썬 bounded-queue dispatcher, Qt 링크 없음):
+    발행 스레드: raw() → queue.put (포화 시 UI mirror 드롭 + history 요약 1건)
+    dispatcher 데몬 스레드: history 파일 I/O + full_events ring(4096) 적재 → 구독자 호출
+    스레드 경계: dispatcher → main._GuiLogBridge Signal.emit ─QueuedConnection─→ GUI 스레드
+        tui_signal(object,bool,bool) → Main._render_concise → console.append(no_wrap=True)
+        full_signal(object,bool)     → Main._mirror_event_full → _mirror_full_log(F12 버퍼+stamp)
 ```
 
-> 구 계약표의 `log_full(str)` / `log_concise(str,bool,bool)` 행은 v3.3.0에서 삭제 — 워커 로그 시그널 0건 실측. `yt_client`(분석 실증·통과 player_client) 강제 규칙은 유지 — 0% 스톨 재진입 방지.
+> 구 계약표의 `POTProviderWorker(mode)` 행은 v3.3.1에서 삭제 — POTManager._POTWorker와 중복된 좀비 인터페이스였다(런타임 사용 0건 실측). pot_provider.py는 3개 모듈 재수출 facade만 남는다. `pot_finished` msg는 상태 토큰("staged"/"ready"/"failed")만 사용 — 사람용 상세는 버스 로그로.
 
 ## 4. 핵심 데이터 구조
 ```python
@@ -303,8 +354,12 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 11. **로그 단일 진입 (v3.3.0)**: 모든 로그는 `raw_log.raw(tag, msg, is_status, is_error, to_tui)` 경유. `log_history.log` 직접 호출·`log_bus` 부활·워커 로그 시그널(`line/full/log_concise/log_full`) 신설 금지. history 적재는 raw 내부 1회가 유일 — 구독자(`_render_concise`/`_mirror_event_full`)에서 history 호출 금지.
 12. **플래그 라우팅 (v3.3.0)**: TUI 노출은 `to_tui` 비트, 줄바꿈은 `no_wrap` 플래그로만 결정. 렌더 레이어(`log_console.append`→`_insert_clamped`→`_flow_lines`→`_render_clamp`)에서 문자열 콘텐츠 판정(정규식·`is_tui_line`·`startswith` 분기) 부활 금지. `is_tui_line`은 호환 shim — 호출부 신설 금지.
 13. **신호-보고 분리 (v3.3.0)**: `check_done(list)` 등 결과 Signal은 Main이 중계 후 `report_*` 호출. Worker→Coordinator 직결 금지(시그널 교통 정리 — `check_done` 시그니처가 `(bool,str)`이 아니라 직결 시 오동작).
-14. **READY 멱등 (v3.3.0)**: READY 발산은 `StartupState.can_emit_ready()`(= `deps_ok ∧ upgrade_done ∧ pot_status∈{running,standby,staged} ∧ ¬ready_emitted`) 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지.
+14. **READY 멱등 (v3.3.1 갱신)**: READY 발산은 `StartupState.can_emit_ready()`(= `deps_ok ∧ upgrade_done ∧ pot_ready ∧ ¬ready_emitted`) 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지. `pot_ready`는 `report_pot`이 **상태 토큰**("staged"/"ready"/"standby")만 True로 세운다.
 15. **잔재 정리 (v3.3.0)**: `media/chzzk_api/cookies`의 `import log_history`는 미사용 잔재 — 직접 호출로 회귀 금지, 정리 시 import 행 삭제. `log_console`의 `import re`는 `is_tui_line` 퇴출 후 미사용이므로 제거 후보(타 용도 전수 확인 후).
+16. **L0 순수성 (v3.3.1)**: `po_client`는 표준 라이브러리만 — 상위 계층(pot_server) lazy import·락 파일 역참조 금지. 생존 판정은 순수 HTTP /ping만. 서버 수명주기/좀비 락 회수는 pot_server·POTManager 본연 책임.
+17. **상태 토큰 계약 (v3.3.1)**: `POTManager.pot_finished`의 msg는 반드시 `"staged"`/`"ready"`/`"failed"` 토큰 — `StartupCoordinator.report_pot`이 정확 일치로 READY를 판정한다. 사람용 상세 메시지("prewarm staged", "pot server bound ...")를 emit하면 **READY가 절대 열리지 않는다**(v3.3.1 이전 실제 결함).
+18. **스레드 경계 (v3.3.1)**: raw_log dispatcher(데몬 스레드)에서 GUI 슬롯을 직접 호출하는 회귀 금지 — 반드시 `main._GuiLogBridge` Signal.emit + QueuedConnection으로 GUI 스레드에 위임. raw_log에 Qt 링크 금지(순수 파이썬 유지), 스레드 경계 책임은 수신층(main.py).
+19. **POT 서버 단일 스폰 (v3.3.1)**: 서버 기동 진실의 근원은 `POTManager._POTWorker` 단독. `_spawn_existing` 등 스폰 함수는 1회만 호출(조건 평가+핸들 할당 원자화) — 이중 호출로 서버 2회 기동 방지. `pot_provider.POTProviderWorker` 재생성 금지.
 
 ## 6. 하지 말 것 (회귀 방지)
 
@@ -401,6 +456,45 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **문서 미러** | `.py`가 원본, `mirrors/*.md` + `mirrors/chzzktube_codebase.md` 합본은 `python sync_mirrors.py` 자동 생성. 손수정 금지 |
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-12 — v3.3.1 계층 모숭 정리 — L0 순수화·좀비 제거·Qt 스레드 경계 분리
+
+#### 문제 (5계층 전수조사 실측)
+- **L0 계층 사칭**: po_client가 "stdlib only L0" 주장과 달리 `server_ping`에서 pot_server lazy import(락 파일 PID 염탐) — pot_server는 최상단에서 po_client 역참조하는 상호 순환. 게다가 `import os` 누락으로 PID 검증이 `except Exception: pass`에 삼켜져 NameError로 무력화
+- **L1 이중 계약**: `WorkerContext(worker_context.py)` — DownloadContext와 동일 목적, 런타임 사용 0건 죽은 코드
+- **L2 시한폭탄**: live_recorder에 `prepare_live_paths` 부재(`_lr.prepare_live_paths` AttributeError), `worker.handle_stream_finish`/`worker.log_success_info` 인스턴스 메서드 착각 호출 — 라이브 진입·종료 즉시 크래시
+- **L3 Qt 스레드 위반**: raw_log dispatcher(데몬 스레드)가 `_render_concise`/`_mirror_event_full`을 직접 호출 — QTextEdit 배경 스레드 조작(세그폴트 위험), main 구주석은 "QueuedConnection 경유 GUI 스레드 실행" 주장과 모순
+- **L4 좀비 인터페이스**: `pot_provider.POTProviderWorker` — POTManager._POTWorker와 중복, 런타임 사용 0건. `_spawn_existing` 이중 호출로 서버 2회 기동 시도
+- **기동 게이트**: `pot_finished` msg에 사람용 상세("prewarm staged")를 담아 `report_pot` 정확 일치와 불일치 → **런타임에서 READY가 절대 열리지 않음**. 기존 서버 응답 시 `_pending_download` 영구 큐잉
+
+#### 해결
+- **L0**: po_client — 역참조 완전 철거, 순수 HTTP /ping만 판정(TCP 성공+200=이벤트 루프 생존 증거). 좀비 락 회수는 pot_server 기동 시 본연 책임
+- **L1**: worker_context.py 삭제 + sync_mirrors 대상 제거
+- **L2**: `prepare_live_paths` 모듈 함수 구현, `handle_stream_finish(worker,…)`/`log_success_info(worker,…)` 모듈 함수 계약 교정, `_lr` 자기 참조 별칭 제거, target_downloader `ctx.log_success_info` → `_pe.log_success_info(ctx, real)`
+- **L3**: main `_GuiLogBridge(QObject)` + QueuedConnection — raw_log 순수 파이썬 유지(109 헤드리스 테스트 무수정), GUI 슬롯은 메인 스레드에서만 실행. 프로브로 스레드 경계 실증(워커 emit → pre processEvents 0 → post 2, 슬롯 전부 MainThread)
+- **L4**: POTProviderWorker 클래스 제거(177→76행 facade), `_spawn_existing` 단일 호출 원자화
+- **게이트**: `pot_finished` msg를 상태 토큰("staged"/"ready"/"failed")으로, `StartupState.pot_ready` 플래그, `use_existing()` 신설, `_on_pot_finished`의 `is_ready()` 재확인 후 `_pending_download` 회수
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `po_client.py` | server_ping 순수 HTTP화(91행) — 역참조 0·import os 제거·상수 보존 |
+| `live_recorder.py` | prepare_live_paths 신설 + 모듈 함수 계약 3곳 수리 + `_lr` 별칭 제거 (229행) |
+| `target_downloader.py` | `ctx.log_success_info` → `_pe.log_success_info(ctx, real)` 1곳 |
+| `pot_provider.py` | POTProviderWorker 제거 — 재수출 facade 단독 (177→76행) |
+| `worker_context.py` | 삭제 (git rm) + mirrors 목록 제거 |
+| `main.py` | `_GuiLogBridge(QObject)` 신설 + QueuedConnection 구독 전환 (1366행) |
+| `pot_manager.py` | pot_finished 토큰 발행 + use_existing + is_ready/use_existing 계약 (247행) |
+| `startup_coordinator.py` | report_pot 상태 토큰 판정 + 죽은 `_stage_complete` 제거 |
+| `startup_state.py` | pot_ready 플래그 + can_emit_ready 갱신 |
+| `raw_log.py` | _record_overflow 요약 이벤트 + flush queue.join (bounded queue) |
+| `yt_logger_bridge.py` | \r 캐리지 조립 버퍼(이월·최신 스냅샷) + 2Hz 스로틀 |
+| `tests/` | test_live_recorder 신규 5건, overflow 타이밍 레이스 제거, 좀비 테스트 정리 |
+
+#### 검증
+- py_compile 전체 + **pytest 111 passed** (전체 스위트) + `git diff --check` 클린
+- 브리지 스레드 경계 프로브: 워커 emit → pre processEvents 0 / post 2 / 슬롯 전부 MainThread
+- facade 재수출 무결성 실측(node_exe/pot_readiness/_spawn_existing/ensure_node_server 등), `POTProviderWorker` 부재 확인
 
 ### 2026-09-12 — v3.3.0 로그 버스 단일화 — raw 단일 경로·플래그 라우팅·레거시 제거
 

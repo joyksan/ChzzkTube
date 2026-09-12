@@ -1,8 +1,10 @@
 ### po_client.py - PO Token 서버 HTTP 클라이언트 (L0 leaf)
 """bgutil PO Token 서버와의 순수 HTTP 통신 계층.
 
-[계층 규약] 서버 프로세스 수급·빌드·스폰(lifecycle)은 pot_provider(L1 worker)가
-담당하고, 본 모듈은 그 서버에 대한 **순수 HTTP 클라이언트**만 제공한다.
+[계층 규약] 서버 프로세스 수급·빌드·스폰(lifecycle)은 pot_server(L1)와
+그 수명주기 관리자(POTManager)가 담당하고, 본 모듈은 그 서버에 대한
+**순수 HTTP 클라이언트**만 제공한다 — 상위 계층 역참조(lazy import) 없이
+표준 라이브러리만으로 완결된다.
 - client_opts(L0) / updater(L0) 가 pot_provider(L1)를 역참조하던 계층 역전 해소:
   이제 옵션 빌더·버전 체커는 본 leaf만 본다.
 - 의존: 표준 라이브러리만 — Qt/워커 무의존, 어디서 import해도 안전.
@@ -18,34 +20,20 @@ DEFAULT_PORT = 4416
 
 
 def server_ping(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1):
-    """PO token server alive 확인. HTTP /ping으로 체크. 성공 시 True.
+    """PO token server alive 확인 (L0 순수 HTTP 핑). 성공 시 True.
 
-    [v3.1.0 변경] 타임아웃 3초→1초로 단축. DEPS 로그 표시 시간을
-    줄이기 위해. PO 서버는 로컬(127.0.0.1)이므로 1초면 충분.
-
-    [좀비 프로세스 방지] 포트 응답이 와도 PID가 죽었으면 좀비로 간주 → False.
+    [계약] L0 leaf는 표준 라이브러리만 본다 — 상위 계층(pot_server)의 락
+    파일을 들여다보던 PID 역참조는 폐기했다. TCP 연결 성공 + HTTP 200은
+    Node.js 이벤트 루프가 실제로 I/O를 처리 중이라는 증거이므로 프로토콜
+    검증만으로 생존 판정이 충분하다. 좀비 락 회수는 pot_server가 서버
+    기동 시 본인의 책임 영역에서 처리한다.
     """
     try:
         url = f"http://{host}:{port}/ping"
         with urllib.request.urlopen(url, timeout=timeout) as resp:
-            if resp.status != 200:
-                return False
+            return resp.status == 200
     except Exception:
         return False
-
-    # 포트 응답 성공 시 PID 기반 생존 확인 (크로스플랫폼)
-    # pot_server 모듈의 _pid_alive 헬퍼를 통해 락 파일의 PID 확인
-    try:
-        from pot_server import _prewarm_lock_path, _read_lock_info, _pid_alive
-        lock_path = _prewarm_lock_path()
-        if os.path.exists(lock_path):
-            pid, _ = _read_lock_info(lock_path)
-            if pid and not _pid_alive(pid):
-                return False  # 락 홀더가 죽었으면 좀비로 간주
-    except Exception:
-        pass  # 확인 실패 시 포트 응답만으로 통과 (보수적)
-
-    return True
 
 
 def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
