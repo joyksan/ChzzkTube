@@ -166,11 +166,13 @@ class POTProviderWorker(QThread):
 
         if built_server_js():
             self._note("pot server starting...", True)
-            if _spawn_existing(self._dbg):
-                self._server_proc = _spawn_existing(self._dbg)
-                if self._server_proc is not None:
-                    self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
-                    return
+            # [이중 스폰 방지] 조건 평가와 프로세스 핸들 할당을 단 1회 호출로 통합.
+            # 구 버그: if _spawn_existing(...) + 재호출로 포트 점유 중 두 번째 서버 기동 → 좀비 양산.
+            proc = _spawn_existing(self._dbg)
+            if proc is not None:
+                self._server_proc = proc
+                self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
+                return
         self.outcome = (False, "bind fail — age-only")
 
     def terminate(self):

@@ -734,6 +734,29 @@ class MainWindow(QMainWindow):
         # 비디오/오디오 포맷 로그: 별도 줄로 출력 (코덱만 표시, 채널명·제목 제외)
         self._emit_format_logs(v_list, a_list, platform)
 
+    def _emit_format_logs(self, v_list, a_list, platform):
+        """스트림 분석 완료 후 비디오/오디오 코덱 사양을 별도 로그로 출력."""
+        import raw_log
+        from log_event import LogEvent
+
+        v_codecs = list(dict.fromkeys(f.get("vcodec") for f in v_list if f.get("vcodec")))
+        a_codecs = list(dict.fromkeys(f.get("acodec") for f in a_list if f.get("acodec")))
+
+        if v_codecs:
+            msg = f"video: {', '.join(v_codecs[:4])}"
+            raw_log.raw(
+                "anal",
+                LogEvent(stage="ANAL", status="OK", platform=platform, spec="V-FMT", msg=msg),
+                to_tui=True,
+            )
+        if a_codecs:
+            msg = f"audio: {', '.join(a_codecs[:4])}"
+            raw_log.raw(
+                "anal",
+                LogEvent(stage="ANAL", status="OK", platform=platform, spec="A-FMT", msg=msg),
+                to_tui=True,
+            )
+
     def _format_analysis_summary(self):
         """분석 완료 요약 — 채널명 · 제목 등 기본 정보 (플레이리스트/치지직 공용)."""
         data = self.extracted_data or {}

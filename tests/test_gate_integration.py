@@ -61,3 +61,29 @@ def test_full_log_mirror_uses_structured_format():
     expected = format_log_line_for_event(ev)
     assert m.rendered and m.rendered[0][0] == expected
     assert m._last_status_line == expected
+
+
+def test_emit_format_logs_uses_bus():
+    """분석 성공 포맷 로그: _emit_format_logs가 raw 버스로 V-FMT/A-FMT LogEvent 발행."""
+    from unittest.mock import patch
+
+    import raw_log
+
+    m = _FakeMain()
+    v_list = [
+        {"vcodec": "avc1", "height": 1080},
+        {"vcodec": "avc1", "height": 720},
+        {"vcodec": "vp9", "height": 1080},
+    ]
+    a_list = [{"acodec": "opus"}, {"acodec": "opus"}, {"acodec": "aac"}]
+    sent = []
+    with patch.object(raw_log, "raw") as raw:
+        main_module.MainWindow._emit_format_logs(m, v_list, a_list, "YT")
+        for call in raw.call_args_list:
+            sent.append(call.args[1])
+
+    msgs = [ev.msg for ev in sent]
+    specs = [ev.spec for ev in sent]
+    assert "video: avc1, vp9" in msgs[0]  # 중복 코덱 제거 + 순서 보존
+    assert "audio: opus, aac" in msgs[1]
+    assert specs == ["V-FMT", "A-FMT"]

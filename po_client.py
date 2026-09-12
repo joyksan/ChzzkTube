@@ -8,6 +8,7 @@
 - 의존: 표준 라이브러리만 — Qt/워커 무의존, 어디서 import해도 안전.
 """
 import json
+import os
 import re
 import socket
 import urllib.error
