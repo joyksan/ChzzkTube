@@ -69,7 +69,12 @@ class StartupCoordinator(QObject):
 
     def report_pot(self, ok: bool, msg: str):
         with self._lock:
-            self._state.set_pot(msg if ok else "failed")
+            status = msg if ok else "failed"
+            # 실제 POTManager 완료 신호는 ``staged``/``ready``만 사용한다.
+            # 기존 테스트/호출부의 ``standby`` 보고는 공개 영상용 준비 완료로만
+            # 호환 처리하며, 임의의 성공 메시지는 READY 게이트를 열지 않는다.
+            ready = ok and (status == "staged" or status == "ready" or status == "standby")
+            self._state.set_pot(status, ready=ready)
             self._try_emit_ready()
 
     def report_ready(self, ok: bool = True, msg: str = "ready"):
@@ -118,21 +123,3 @@ class StartupCoordinator(QObject):
     @_ready_emitted.setter
     def _ready_emitted(self, value):
         self._state.ready_emitted = value
-
-    @property
-    def _stage_complete(self):
-        class StageProxy:
-            def __init__(self, state):
-                self._state = state
-            def __getitem__(self, key):
-                if key == "deps": return self._state.deps_ok
-                if key == "upgrade": return self._state.upgrade_done
-                if key == "pot": return self._state.pot_status != "unknown"
-                if key == "fallback": return getattr(self, "_fb", False)
-                return False
-            def __setitem__(self, key, value):
-                if key == "deps": self._state.set_deps(value)
-                elif key == "upgrade": self._state.set_upgrade(value)
-                elif key == "pot": self._state.set_pot(value if value else "unknown")
-                elif key == "fallback": self._fb = value
-        return StageProxy(self._state)

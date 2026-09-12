@@ -1,66 +1,150 @@
 ### yt_logger_bridge.py - yt-dlp 로거 어댑터 (Analyze/Download 공용)
-"""yt-dlp logger 콜백 인터페이스를 raw 버스로 브리징하는 공용 어댑터.
+"""yt-dlp logger 콜백을 raw_log 버스로 연결하는 공용 어댑터.
 
-- AnalyzeWorker(Analyze용)와 DownloadWorker(다운로드용)가 모두 사용한다.
-- yt-dlp는 logger 객체의 debug/info/warning/error만 호출한다 — 이 계약을
-  raw_log 버스 단일 경유로 매핑한다 (F12 원문 + TUI 이벤트).
-- [계층] L0.5 추출 파이프라인 계층의 leaf — 워커 클래스를 모른다.
-- [스레드] yt-dlp 로거는 워커 스레드에서 호출된다 — raw()는 Signal.emit으로
-  GUI 스레드에 큐잉하므로 직접 호출 안전.
-- [v3.3.0] 시그널 인자 폐기 — 버스 직행.
+- ANSI 제거는 utils.clean_ansi()만 사용한다.
+- \r progress tick은 한 청크로 조립해 최신 meaningful tick만 발행한다.
+- 일반 info/warning/error는 원문을 F12/history에 보존한다.
 """
 import os
+import re
+import threading
+import time
 
 from utils import clean_ansi
 
 
-class YtLoggerBridge:
-    """yt-dlp logger → raw_log 버스 어댑터 (시그널 없음 — 버스 직행)."""
+_PROGRESS_RE = re.compile(r"^\s*\[download\].*?(\d+(?:\.\d+)?)%(?:\s|$)")
+_MERGE_TEXT = "Merging formats into"
+_ALREADY_DOWNLOADED = "has already been downloaded"
 
-    def debug(self, msg):
-        clean_msg = clean_ansi(msg)
+
+class YtLoggerBridge:
+    """yt-dlp logger → raw_log bus adapter."""
+
+    _MAX_CARRIAGE_CHARS = 4096
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._carriage_buffer = ""
+        self._last_progress = None
+        self._last_progress_at = 0.0
+
+    @staticmethod
+    def _is_progress(msg: str) -> bool:
+        return bool(_PROGRESS_RE.match(msg))
+
+    def _emit_progress(self, msg: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            # yt-dlp progress callbacks are often far faster than 2 Hz.
+            if self._last_progress is not None and now - self._last_progress_at < 0.5:
+                return
+            self._last_progress = msg
+            self._last_progress_at = now
         import raw_log
         from log_event import LogEvent
-        if "Merging formats into" in clean_msg:
+        raw_log.raw(
+            "ytdlp",
+            LogEvent(
+                stage="YTDLP",
+                status="RUN",
+                platform="-",
+                msg=msg,
+                is_status=True,
+            ),
+            to_tui=True,
+        )
+
+    def _emit_non_progress(self, clean_msg: str, level: str) -> None:
+        import raw_log
+        from log_event import LogEvent
+        status = {
+            "warning": "WARN",
+            "error": "FAIL",
+            "info": "OK",
+            "debug": "OK",
+        }.get(level, "OK")
+        raw_log.raw(
+            "ytdlp",
+            LogEvent(
+                stage="YTDLP",
+                status=status,
+                platform="-",
+                msg=clean_msg,
+                is_error=level == "error",
+            ),
+        )
+        if _MERGE_TEXT in clean_msg:
             raw_log.raw(
                 "dl",
                 LogEvent(stage="MERG", status="RUN", platform="-", msg="merging"),
                 to_tui=True,
             )
-        if clean_msg.strip():
-            # [F12 원문] yt-dlp stdout 그대로 — TUI 오염 없음
-            raw_log.raw(
-                "ytdlp",
-                LogEvent(stage="YTDLP", status="OK", msg=clean_msg),
+        if _ALREADY_DOWNLOADED in clean_msg:
+            fname = (
+                clean_msg.replace("[download]", "")
+                .replace(_ALREADY_DOWNLOADED, "")
+                .strip()
             )
-            # [핵심] yt-dlp가 출력하는 이미 다운로드됨 안내 문구 감지!
-            if "has already been downloaded" in clean_msg:
-                # 파일명만 깔끔하게 추출해서 간결 로그에 출판
-                fname = (
-                    clean_msg.replace("[download]", "")
-                    .replace("has already been downloaded", "")
-                    .strip()
-                )
-                raw_log.raw(
-                    "dl",
-                    LogEvent(stage="DL", status="OK", platform="-",
-                             msg=f"skip — exists ({os.path.basename(fname)})"),
-                    to_tui=True,
-                )
+            raw_log.raw(
+                "dl",
+                LogEvent(
+                    stage="DL",
+                    status="OK",
+                    platform="-",
+                    msg=f"skip — exists ({os.path.basename(fname)})",
+                ),
+                to_tui=True,
+            )
+
+    def _flush_carriage(self, msg: str, level: str) -> None:
+        clean_msg = clean_ansi(msg)
+        if not clean_msg:
+            return
+
+        # warning/error는 progress buffer에 갇히지 않고 즉시 보존한다.
+        if level in {"warning", "error"}:
+            clean_msg = clean_msg.replace("\r", " ").replace("\n", " ").strip()
+            if clean_msg:
+                self._emit_non_progress(clean_msg, level)
+            return
+
+        with self._lock:
+            parts = clean_msg.replace("\n", "\r").split("\r")
+            if len(parts) > 1:
+                # 같은 콜백 안 \r 반복 = 같은 줄 덮어쓰기 스냅샷 → 마지막이 최신.
+                candidate = parts[-1] or (parts[-2] if len(parts) > 1 else "")
+                if clean_msg.endswith("\r"):
+                    # 줄이 아직 진행 중 → 다음 청크와 연결하기 위해 이월 보류.
+                    self._carriage_buffer = candidate[-self._MAX_CARRIAGE_CHARS:]
+                    return
+                self._carriage_buffer = ""
+                clean_msg = candidate
+            elif self._carriage_buffer:
+                # \r 없는 청크 = 직전 이월 조각의 이어짐 → 합쳐 한 줄로 재구성.
+                clean_msg = (
+                    self._carriage_buffer + parts[-1]
+                )[-self._MAX_CARRIAGE_CHARS:]
+                self._carriage_buffer = ""
+            else:
+                clean_msg = parts[-1]
+
+        clean_msg = clean_msg.strip()
+        if not clean_msg:
+            return
+        if self._is_progress(clean_msg):
+            self._emit_progress(clean_msg)
+            return
+        self._emit_non_progress(clean_msg, level)
+
+    def debug(self, msg):
+        self._flush_carriage(msg, "debug")
 
     def info(self, msg):
-        self.debug(msg)
+        self._flush_carriage(msg, "info")
 
     def warning(self, msg):
-        if msg.strip():
-            import raw_log
-            from log_event import LogEvent
-            raw_log.raw("ytdlp", LogEvent(stage="YTDLP", status="WARN",
-                                          msg=clean_ansi(msg)))
+        self._flush_carriage(msg, "warning")
 
     def error(self, msg):
-        if msg.strip():
-            import raw_log
-            from log_event import LogEvent
-            raw_log.raw("ytdlp", LogEvent(stage="YTDLP", status="FAIL",
-                                          msg=clean_ansi(msg), is_error=True))
+        self._flush_carriage(msg, "error")

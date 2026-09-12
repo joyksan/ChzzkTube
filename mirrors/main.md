@@ -1,4 +1,5 @@
 ﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
+from collections import deque
 import os
 import platform
 import re
@@ -92,6 +93,8 @@ class MainWindow(QMainWindow):
         # 단일 인스턴스 원칙 (HANDOVER §7): 시그널 연결 전 최초 1회만 생성
         self._pot_manager = POTManager()
         self._startup_coord = StartupCoordinator(self._pot_manager, self)
+        self._pot_manager.pot_finished.connect(self._on_pot_finished)
+        self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
 
         self.settings_dlg = None
         self.verbose_win = None
@@ -215,6 +218,9 @@ class MainWindow(QMainWindow):
                     pass
 
             log_history.session_end()
+            import raw_log
+            raw_log.flush()
+            raw_log.shutdown()
             event.accept()
 
         # [취소] 클릭 시 -> 창 닫기 취소
@@ -446,7 +452,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.console_group, stretch=1)
 
         # ── 보조 상태 초기화 ──
-        self._full_log_buf: list[str] = []
+        self._full_log_buf: deque[str] = deque(maxlen=4096)
+        self._last_status_line = ""
         # [버스 구독 v3.3.0] 시그널(QueuedConnection) 경유라 워커 스레드의 raw()
         # 호출도 이 슬롯들은 항상 GUI 스레드에서 실행된다.
         import raw_log
@@ -629,11 +636,15 @@ class MainWindow(QMainWindow):
             ):
                 needs_pot = True
 
-                import raw_log
+        import raw_log
         from log_event import LogEvent
-        event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
-                         msg=f"gated={needs_pot} age_limit={age_limit if info else '-'} "
-                             f"availability={((info or {}).get('availability') or '-')}")
+        event = LogEvent(
+            stage="POT", status="RUN", platform="pot", spec="-",
+            msg=(
+                f"gated={needs_pot} age_limit={age_limit if info else '-'} "
+                f"availability={((info or {}).get('availability') or '-')}"
+            ),
+        )
         raw_log.raw("pot-gate", event, to_tui=True)
 
         if needs_pot:
@@ -645,7 +656,7 @@ class MainWindow(QMainWindow):
             # [POTManager] gate 모드로 서버 기동 (중복 스폰 가드 내장)
             self._pot_manager.ensure_ready("gate")
 
-    
+
 
     def run_analysis(self):
         url = self.url_input.text().strip()
@@ -802,7 +813,29 @@ class MainWindow(QMainWindow):
         # 미포함 — 실패해도 기동 블록 없음. 중복 스폰은 POTManager 가드.
         self._pot_manager.ensure_ready("prewarm")
 
+    def _on_pot_finished(self, ok: bool, msg: str):
+        """POT gate 완료 시 대기 중인 다운로드를 한 번만 재개한다."""
+        pending = getattr(self, "_pending_download", None)
+        if (
+            pending is None
+            or not ok
+            or not self._pot_manager.is_ready()
+        ):
+            return
+        targets, v_id, a_id = pending
+        self._pending_download = None
+        self._start_download(targets, v_id, a_id)
 
+    def _on_startup_unlocked(self):
+        """StartupCoordinator READY 신호 수신 — 입력 잠금을 해제한다."""
+        self._startup_completed = True
+        self.update_ui_state()
+
+    def _force_unlock_input(self):
+        """15초 내 기동 체인이 완료되지 않을 경우 강제 READY 폴백."""
+        if self._startup_completed:
+            return
+        self._startup_coord.force_unlock()
 
     def _is_stale_analyze_signal(self):
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단.
@@ -941,38 +974,36 @@ class MainWindow(QMainWindow):
         else:
             line = str(event)
             no_wrap = False
+        # TUI buffer is bounded independently of the raw history.
+        if len(line) > 4096:
+            line = line[:4096] + "…"
         self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
-        """[F12 렌더러] 버스 full 구독 — 모든 행동의 원문(event.msg)을 적재한다.
-
-        [포함관계 계약] F12는 버스의 전량 수신자(⊇TUI) — 드롭 필터 없음.
-        본문이 없는 진행률 틱은 SPEC/SPEED/PCT 요약 1줄로 생성해 갱신형 유지.
-        """
+        """F12 렌더러 — 구조화 이벤트를 콘솔 포맷터로 복원한다."""
         from log_event import LogEvent
         if isinstance(event, LogEvent):
-            msg = str(event.msg)
-            if not msg.strip():
-                pct = f"{event.pct:.1f}%" if event.pct is not None else "-"
-                msg = " ".join(x for x in (event.spec, event.speed, pct) if x and x != "-") or event.stage
-            self._mirror_full_log(msg, is_status)
+            # F12는 event.msg만 추출하던 기존 경로를 탈피해 stage/status/spec 등
+            # 구조화 컨텍스트를 보존한다. rendered 이벤트는 원문 포맷을 유지한다.
+            line = log_console.format_log_line_for_event(event)
+            if is_status:
+                self._last_status_line = line
+            self._mirror_full_log(line, is_status)
         else:
-            self._mirror_full_log(str(event), is_status)
+            line = str(event)
+            if is_status:
+                self._last_status_line = line
+            self._mirror_full_log(line, is_status)
 
     def _mirror_full_log(self, msg, is_status=False):
-        """상세 로그 버퍼 누적 + F12 창 미러링 (append_*_log 공용).
-
-        [수정] 간결 로그의 TUI 포맷 메시지는 상세 로그에 포함하지 않음.
-        TUI 컬럼 포맷은 재생성하지 않는다 — event.msg 기반으로 기록.
-        [추가] 모든 raw 로그 라인에 [HH:MM:SS] 타임스탬프 자동 부착.
-        """
+        """상세 로그 버퍼 누적 + F12 창 미러링."""
+        msg = str(msg)
+        if len(msg) > 4096:
+            msg = msg[:4096] + "…"
         ts = time.strftime("%H:%M:%S")
-        # 다중 라인 메시지 모두에 동일 타임스탬프 부착
-        stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in str(msg).split("\n"))
+        stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
         if not is_status:
             self._full_log_buf.append(stamped)
-            if len(self._full_log_buf) > 5000:
-                del self._full_log_buf[: len(self._full_log_buf) - 5000]
         if (
             getattr(self, "verbose_win", None) is not None
             and self.verbose_win.isVisible()
@@ -1088,14 +1119,20 @@ class MainWindow(QMainWindow):
                 is_status=True, is_error=False
             )
             return
+        if needs_pot:
+            self._wait_pot_if_needed()
+            if not self._pot_manager.is_ready():
+                self._pending_download = (targets, "auto", "auto")
+                self.append_concise_log(
+                    log_console.emit_event("SYS", "WAIT", "pot", "queued — waiting for POT server"),
+                    is_status=True, is_error=False,
+                )
+                return
 
         self._start_download(targets, "auto", "auto")
 
     def _start_download(self, targets, v_id, a_id):
         """워커 스폰 공통 루틴 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 공용."""
-        # POT 필요 여부 확인 후 준비될 때까지 대기 (연령제한/프라이빗 영상 등)
-        self._wait_pot_if_needed()
-        
         self.ctrl.begin_download()
 
         self.append_concise_log(
@@ -1137,9 +1174,12 @@ class MainWindow(QMainWindow):
         if not needs_pot:
             return
         
-        # POT 서버가 이미 실행 중이면 바로 진행
+        # POT 서버가 이미 실행 중이면 즉시 ready 승격 — 기존 서버 재사용.
+        # 이 경로는 gate 워커를 스폰하지 않으므로 pot_finished가 발행되지 않는다.
+        # (use_existing 없이는 _pending_download가 영구 큐잉됨 — P0-4/5 회귀 방지)
         from po_client import server_ping
         if server_ping():
+            self._pot_manager.use_existing()
             return
         
         # POT 서버가 없으면 기동만 트리거 (대기는 큐가 처리)

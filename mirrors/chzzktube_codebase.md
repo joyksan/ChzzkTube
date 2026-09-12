@@ -3359,6 +3359,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
 ﻿### log_console.py - 간결 로그 콘솔 렌더러
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
+from collections import deque
 import re
 import time
 import unicodedata
@@ -3391,7 +3392,7 @@ class ConciseLogConsole:
         self._budget_key = None
         # [리플로우 대비] 원본 로그 버퍼 — msg는 잘리지 않은 전체를 보관하고,
         # 화면에는 렌더 시점 예산으로 잘라서 그린다. 창 폭 변경 시 재구성 루트.
-        self._buffer = []  # list[dict] = {msg, is_status, is_error, fg_color}
+        self._buffer = deque(maxlen=4096)  # list[dict] = {msg, is_status, is_error, fg_color}
 
     def _sync_budget(self):
         """로그를 찍는 시점 기준으로 트리 줄바꿈 예산을 재동기화한다.
@@ -4332,6 +4333,7 @@ def _prune():
 
 ```python
 ﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
+from collections import deque
 import os
 import platform
 import re
@@ -4425,6 +4427,8 @@ class MainWindow(QMainWindow):
         # 단일 인스턴스 원칙 (HANDOVER §7): 시그널 연결 전 최초 1회만 생성
         self._pot_manager = POTManager()
         self._startup_coord = StartupCoordinator(self._pot_manager, self)
+        self._pot_manager.pot_finished.connect(self._on_pot_finished)
+        self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
 
         self.settings_dlg = None
         self.verbose_win = None
@@ -4548,6 +4552,9 @@ class MainWindow(QMainWindow):
                     pass
 
             log_history.session_end()
+            import raw_log
+            raw_log.flush()
+            raw_log.shutdown()
             event.accept()
 
         # [취소] 클릭 시 -> 창 닫기 취소
@@ -4779,7 +4786,8 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.console_group, stretch=1)
 
         # ── 보조 상태 초기화 ──
-        self._full_log_buf: list[str] = []
+        self._full_log_buf: deque[str] = deque(maxlen=4096)
+        self._last_status_line = ""
         # [버스 구독 v3.3.0] 시그널(QueuedConnection) 경유라 워커 스레드의 raw()
         # 호출도 이 슬롯들은 항상 GUI 스레드에서 실행된다.
         import raw_log
@@ -4962,11 +4970,15 @@ class MainWindow(QMainWindow):
             ):
                 needs_pot = True
 
-                import raw_log
+        import raw_log
         from log_event import LogEvent
-        event = LogEvent(stage="POT", status="RUN", platform="pot", spec="-",
-                         msg=f"gated={needs_pot} age_limit={age_limit if info else '-'} "
-                             f"availability={((info or {}).get('availability') or '-')}")
+        event = LogEvent(
+            stage="POT", status="RUN", platform="pot", spec="-",
+            msg=(
+                f"gated={needs_pot} age_limit={age_limit if info else '-'} "
+                f"availability={((info or {}).get('availability') or '-')}"
+            ),
+        )
         raw_log.raw("pot-gate", event, to_tui=True)
 
         if needs_pot:
@@ -4978,7 +4990,7 @@ class MainWindow(QMainWindow):
             # [POTManager] gate 모드로 서버 기동 (중복 스폰 가드 내장)
             self._pot_manager.ensure_ready("gate")
 
-    
+
 
     def run_analysis(self):
         url = self.url_input.text().strip()
@@ -5135,7 +5147,29 @@ class MainWindow(QMainWindow):
         # 미포함 — 실패해도 기동 블록 없음. 중복 스폰은 POTManager 가드.
         self._pot_manager.ensure_ready("prewarm")
 
+    def _on_pot_finished(self, ok: bool, msg: str):
+        """POT gate 완료 시 대기 중인 다운로드를 한 번만 재개한다."""
+        pending = getattr(self, "_pending_download", None)
+        if (
+            pending is None
+            or not ok
+            or not self._pot_manager.is_ready()
+        ):
+            return
+        targets, v_id, a_id = pending
+        self._pending_download = None
+        self._start_download(targets, v_id, a_id)
 
+    def _on_startup_unlocked(self):
+        """StartupCoordinator READY 신호 수신 — 입력 잠금을 해제한다."""
+        self._startup_completed = True
+        self.update_ui_state()
+
+    def _force_unlock_input(self):
+        """15초 내 기동 체인이 완료되지 않을 경우 강제 READY 폴백."""
+        if self._startup_completed:
+            return
+        self._startup_coord.force_unlock()
 
     def _is_stale_analyze_signal(self):
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단.
@@ -5274,38 +5308,36 @@ class MainWindow(QMainWindow):
         else:
             line = str(event)
             no_wrap = False
+        # TUI buffer is bounded independently of the raw history.
+        if len(line) > 4096:
+            line = line[:4096] + "…"
         self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
-        """[F12 렌더러] 버스 full 구독 — 모든 행동의 원문(event.msg)을 적재한다.
-
-        [포함관계 계약] F12는 버스의 전량 수신자(⊇TUI) — 드롭 필터 없음.
-        본문이 없는 진행률 틱은 SPEC/SPEED/PCT 요약 1줄로 생성해 갱신형 유지.
-        """
+        """F12 렌더러 — 구조화 이벤트를 콘솔 포맷터로 복원한다."""
         from log_event import LogEvent
         if isinstance(event, LogEvent):
-            msg = str(event.msg)
-            if not msg.strip():
-                pct = f"{event.pct:.1f}%" if event.pct is not None else "-"
-                msg = " ".join(x for x in (event.spec, event.speed, pct) if x and x != "-") or event.stage
-            self._mirror_full_log(msg, is_status)
+            # F12는 event.msg만 추출하던 기존 경로를 탈피해 stage/status/spec 등
+            # 구조화 컨텍스트를 보존한다. rendered 이벤트는 원문 포맷을 유지한다.
+            line = log_console.format_log_line_for_event(event)
+            if is_status:
+                self._last_status_line = line
+            self._mirror_full_log(line, is_status)
         else:
-            self._mirror_full_log(str(event), is_status)
+            line = str(event)
+            if is_status:
+                self._last_status_line = line
+            self._mirror_full_log(line, is_status)
 
     def _mirror_full_log(self, msg, is_status=False):
-        """상세 로그 버퍼 누적 + F12 창 미러링 (append_*_log 공용).
-
-        [수정] 간결 로그의 TUI 포맷 메시지는 상세 로그에 포함하지 않음.
-        TUI 컬럼 포맷은 재생성하지 않는다 — event.msg 기반으로 기록.
-        [추가] 모든 raw 로그 라인에 [HH:MM:SS] 타임스탬프 자동 부착.
-        """
+        """상세 로그 버퍼 누적 + F12 창 미러링."""
+        msg = str(msg)
+        if len(msg) > 4096:
+            msg = msg[:4096] + "…"
         ts = time.strftime("%H:%M:%S")
-        # 다중 라인 메시지 모두에 동일 타임스탬프 부착
-        stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in str(msg).split("\n"))
+        stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
         if not is_status:
             self._full_log_buf.append(stamped)
-            if len(self._full_log_buf) > 5000:
-                del self._full_log_buf[: len(self._full_log_buf) - 5000]
         if (
             getattr(self, "verbose_win", None) is not None
             and self.verbose_win.isVisible()
@@ -5421,14 +5453,20 @@ class MainWindow(QMainWindow):
                 is_status=True, is_error=False
             )
             return
+        if needs_pot:
+            self._wait_pot_if_needed()
+            if not self._pot_manager.is_ready():
+                self._pending_download = (targets, "auto", "auto")
+                self.append_concise_log(
+                    log_console.emit_event("SYS", "WAIT", "pot", "queued — waiting for POT server"),
+                    is_status=True, is_error=False,
+                )
+                return
 
         self._start_download(targets, "auto", "auto")
 
     def _start_download(self, targets, v_id, a_id):
         """워커 스폰 공통 루틴 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 공용."""
-        # POT 필요 여부 확인 후 준비될 때까지 대기 (연령제한/프라이빗 영상 등)
-        self._wait_pot_if_needed()
-        
         self.ctrl.begin_download()
 
         self.append_concise_log(
@@ -5470,9 +5508,12 @@ class MainWindow(QMainWindow):
         if not needs_pot:
             return
         
-        # POT 서버가 이미 실행 중이면 바로 진행
+        # POT 서버가 이미 실행 중이면 즉시 ready 승격 — 기존 서버 재사용.
+        # 이 경로는 gate 워커를 스폰하지 않으므로 pot_finished가 발행되지 않는다.
+        # (use_existing 없이는 _pending_download가 영구 큐잉됨 — P0-4/5 회귀 방지)
         from po_client import server_ping
         if server_ping():
+            self._pot_manager.use_existing()
             return
         
         # POT 서버가 없으면 기동만 트리거 (대기는 큐가 처리)
@@ -6447,7 +6488,7 @@ def extract_video_id(url):
 
 ```python
 # POTManager
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 import threading
 import subprocess
 import os
@@ -6504,8 +6545,6 @@ class _POTWorker(QThread):
         - prewarm 모드: to_tui=False → F12+history 전용 (TUI 오염 방지)
         - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
         """
-        import raw_log
-        from log_event import LogEvent
         if self.mode == "prewarm":
             raw_log.raw("pot", str(msg), is_status=is_status, is_error=is_error)
             return
@@ -6515,7 +6554,7 @@ class _POTWorker(QThread):
                          spec="-", msg=str(msg)[:120],
                          is_status=is_status, is_error=is_error)
         raw_log.raw("pot", event, to_tui=True)
-    
+
     def _dbg(self, msg):
         """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지).
 
@@ -6523,8 +6562,6 @@ class _POTWorker(QThread):
         - prewarm 모드: to_tui=False → F12+history 전용
         - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
         """
-        import raw_log
-        from log_event import LogEvent
         if self.mode == "prewarm":
             raw_log.raw("pot-DEBUG", str(msg))
         else:
@@ -6586,11 +6623,11 @@ class _POTWorker(QThread):
         if built_server_js():
             self._note("pot server starting...", True)
             from pot_server import _spawn_existing
-            if _spawn_existing(self._dbg):
-                self._server_proc = _spawn_existing(self._dbg)
-                if self._server_proc is not None:
-                    self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
-                    return
+            proc = _spawn_existing(self._dbg)
+            if proc is not None:
+                self._server_proc = proc
+                self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
+                return
         self.outcome = (False, "bind fail — age-only")
     
     def terminate(self):
@@ -6601,49 +6638,101 @@ class POTManager(QObject):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 릴레이 시그널 폐기.
     pot_status_changed = Signal(str)
     pot_finished = Signal(bool, str)
-    
+
     def __init__(self):
         super().__init__()
         self._worker = None
         self._mode = "idle"
         self._pending_gate = False
         self._lock = threading.Lock()
-    
+
     def ensure_ready(self, mode="gate"):
+        if mode not in {"prewarm", "gate"}:
+            raise ValueError(f"unknown POT mode: {mode}")
         with self._lock:
-            if self._worker and self._worker.isRunning():
+            worker = self._worker
+            if worker is not None and worker.isRunning():
                 if mode == "gate" and self._mode == "prewarm":
                     self._pending_gate = True
                 return
-            self._mode = mode
-            self._worker = _POTWorker(mode=mode)
-            self._worker.finished_signal.connect(self._on_worker_finished)
-            self._worker.start()
-            self.pot_status_changed.emit("starting" if mode == "gate" else "staging")
-    
+            self._start_worker_locked(mode)
+
+    def _start_worker_locked(self, mode: str) -> None:
+        self._mode = mode
+        worker = _POTWorker(mode=mode)
+        self._worker = worker
+        worker.finished_signal.connect(self._on_worker_finished)
+        worker.start()
+        self.pot_status_changed.emit("starting" if mode == "gate" else "staging")
+
     def _on_worker_finished(self, ok: bool, msg: str):
-        with threading.Lock():
-            if self.mode == "prewarm" and self._pending_gate:
-                self._pending_gate = False
-                self.ensure_ready("gate")
+        # Qt may deliver this callback after cancel(); ignore stale workers.
+        with self._lock:
+            worker = self._worker
+            mode = self._mode
+            if worker is None or worker is not self._worker:
+                return
+            if mode == "prewarm":
+                if ok and self._pending_gate:
+                    self._pending_gate = False
+                    self._worker = None
+                    self._mode = "staged"
+                    QTimer.singleShot(0, self._start_pending_gate)
+                    return
+                self._worker = None
+                self._mode = "staged" if ok else "failed"
+            elif mode == "gate":
+                self._worker = None
+                self._mode = "ready" if ok else "failed"
             else:
-                self.pot_status_changed.emit("staged" if ok else "failed")
-                self.pot_finished.emit(ok, msg)
-                self._mode = "idle"
-    
+                return
+
+        self.pot_status_changed.emit("staged" if ok else "failed")
+        # [READY 게이트 계약] pot_finished의 msg는 상태 토큰("staged"/"ready"/"failed")으로만
+        # 발행한다 — StartupCoordinator.report_pot이 정확 일치로 READY를 판정한다.
+        # 사람이 읽는 상세 메시지("prewarm staged", "pot server bound ...")는
+        # 워커가 이미 로그 버스로 남겼으므로 여기서 중복 전달하지 않는다.
+        self.pot_finished.emit(ok, self._mode if ok else "failed")
+
+    def _start_pending_gate(self):
+        """완료된 prewarm 워커의 Signal 처리 후 gate 워커를 시작한다."""
+        with self._lock:
+            if self._mode != "staged" or self._worker is not None:
+                return
+            self._start_worker_locked("gate")
+
     @property
     def mode(self):
         return self._mode
-    
+
+    def is_ready(self):
+        with self._lock:
+            return self._mode == "ready" and self._worker is None
+
+    def use_existing(self):
+        """외부/기존 POT 서버가 이미 /ping에 응답 중일 때 ready 상태로 승격.
+
+        이 경로로는 gate 워커가 스폰되지 않으므로 pot_finished가 발행되지
+        않는다 — _pending_download가 영구 큐잉되는 것을 막기 위해 즉시 ready로
+        표시해야 한다 (Main._wait_pot_if_needed → toggle_download가 확인).
+        """
+        with self._lock:
+            self._worker = None
+            self._mode = "ready"
+
     def is_busy(self):
         return self._worker is not None and self._worker.isRunning()
-    
+
     def cancel(self):
-        if self._worker and self._worker.isRunning():
-            self._worker.request_interruption()
-            if not self._worker.wait(2000):
-                self._worker.terminate()
-                self._worker.wait(1000)
+        with self._lock:
+            worker = self._worker
+            self._worker = None
+            self._mode = "idle"
+        if worker and worker.isRunning():
+            worker.request_interruption()
+            if not worker.wait(2000):
+                worker.terminate()
+                worker.wait(1000)
 
 POTProviderWorker = _POTWorker
 ```
@@ -7797,79 +7886,192 @@ def emit_live_final_stats(ctx, total_bytes, start_time):
 - 라우팅: 채널은 발행자(raw() 호출점)가 결정한다 — 콘텐츠 정규식 판정 제로.
 - 구독 전 호출도 history에 적재되므로 유실 없다.
 
-[계층] 구독자(팬아웃 대상)는 QT SIGNAL로 연결한다. Signal.emit은 스레드
-안전이며, 수신자(MainWindow 앱렌더)가 GUI 스레드 객체이므로 QueuedConnection
-정책에 따라 슬롯은 항상 GUI 스레드에서 실행된다. 즉 워커 스레드에서 raw()를
-호출해도 UI 위젯 직접 조작이 절대 발생하지 않는다.
+[계층] 발행 스레드에서는 bounded queue 적재만 수행한다.
+파일 I/O와 구독자 호출은 단일 dispatcher 스레드에서 순차 처리하며,
+구독자 콜백은 dispatcher lock을 잡지 않은 상태에서 호출한다.
 """
-import sys
+from collections import deque
+import queue
 import threading
-
-from PySide6.QtCore import QObject, Signal
-
-
-class _RawHub(QObject):
-    """raw 버스의 시그널 브리지 — 워커 → GUI 스레드 전환 담당."""
-    concise = Signal(object, bool, bool)  # (LogEvent, is_status, is_error)
-    full = Signal(object, bool)           # (LogEvent, is_status) — True면 F12 마지막 줄 갱신
-
-
-_hub = _RawHub()
-_LOCK = threading.RLock()
-_concise_subs: list = []
-_full_subs: list = []
-
-
-def subscribe_concise(fn):
-    """메인로그(TUI) 구독 등록 (중복 방지, 시그널 연결 1회)."""
-    with _LOCK:
-        if fn not in _concise_subs:
-            _concise_subs.append(fn)
-            _hub.concise.connect(fn)
-
-
-def subscribe_full(fn):
-    """F12 상세로그 구독 등록 (중복 방지, 시그널 연결 1회)."""
-    with _LOCK:
-        if fn not in _full_subs:
-            _full_subs.append(fn)
-            _hub.full.connect(fn)
-
+import time
+from typing import Callable
 
 from log_event import LogEvent
 
 
+MAX_QUEUE = 2048
+MAX_FULL_EVENTS = 4096
+_HISTORY_SUMMARY = "raw_log queue overflow: UI mirror dropped"
+
+
+class _RawDispatcher:
+    """Single-consumer dispatcher; publishers only perform a non-blocking put."""
+
+    def __init__(self) -> None:
+        self._queue: queue.Queue[tuple] = queue.Queue(maxsize=MAX_QUEUE)
+        self._lock = threading.RLock()
+        self._stop = threading.Event()
+        self._concise_subs: list[Callable] = []
+        self._full_subs: list[Callable] = []
+        self._full_events: deque[LogEvent] = deque(maxlen=MAX_FULL_EVENTS)
+        self._overflowed = False
+        self._thread = threading.Thread(target=self._run, name="raw-log-dispatcher", daemon=True)
+        self._thread.start()
+
+    def subscribe_concise(self, fn: Callable) -> None:
+        with self._lock:
+            if fn not in self._concise_subs:
+                self._concise_subs.append(fn)
+
+    def subscribe_full(self, fn: Callable) -> None:
+        with self._lock:
+            if fn not in self._full_subs:
+                self._full_subs.append(fn)
+
+    def publish(self, event: LogEvent, to_tui: bool) -> bool:
+        try:
+            self._queue.put_nowait((event, bool(to_tui)))
+            return True
+        except queue.Full:
+            self._record_overflow()
+            return False
+
+    def _record_overflow(self) -> None:
+        with self._lock:
+            if self._overflowed:
+                return
+            self._overflowed = True
+        event = LogEvent(
+            stage="SYS",
+            status="WARN",
+            platform="raw-log",
+            spec="-",
+            msg=_HISTORY_SUMMARY,
+            is_error=True,
+        )
+        try:
+            self._queue.put_nowait((event, True))
+        except queue.Full:
+            pass
+        try:
+            import log_history
+            log_history.log(f"[raw-log] {_HISTORY_SUMMARY}", level="WARN")
+        except Exception:
+            pass
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                event, to_tui = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                self._dispatch(event, to_tui)
+            except Exception:
+                # A subscriber must never kill the log pipeline.
+                pass
+            finally:
+                self._queue.task_done()
+
+    def _dispatch(self, event: LogEvent, to_tui: bool) -> None:
+        try:
+            import log_history
+            log_history.log(
+                f"[{getattr(event, 'tag', 'raw')}] {event.msg}",
+                level="ERROR" if event.is_error else "INFO",
+            )
+        except Exception:
+            pass
+
+        with self._lock:
+            self._full_events.append(event)
+            full_subs = tuple(self._full_subs)
+            concise_subs = tuple(self._concise_subs) if to_tui else ()
+
+        for fn in full_subs:
+            try:
+                fn(event, bool(event.is_status))
+            except TypeError:
+                try:
+                    fn(event)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        for fn in concise_subs:
+            try:
+                fn(event, bool(event.is_status), bool(event.is_error))
+            except TypeError:
+                try:
+                    fn(event)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+    def shutdown(self, timeout: float = 1.0) -> None:
+        self._stop.set()
+        self._thread.join(timeout=timeout)
+
+    def flush(self, timeout: float = 1.0) -> None:
+        """현재 queue와 dispatcher가 처리 중인 이벤트를 순서대로 기다린다."""
+        self._queue.join()
+        deadline = time.monotonic() + timeout
+        while self.pending and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    @property
+    def pending(self) -> int:
+        return self._queue.qsize()
+
+    @property
+    def overflowed(self) -> bool:
+        with self._lock:
+            return self._overflowed
+
+
+_dispatcher = _RawDispatcher()
+
+
+def subscribe_concise(fn):
+    """메인로그(TUI) 구독 등록 (중복 방지)."""
+    _dispatcher.subscribe_concise(fn)
+
+
+def subscribe_full(fn):
+    """F12 상세로그 구독 등록 (중복 방지)."""
+    _dispatcher.subscribe_full(fn)
+
+
 def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
-    """단일 진입점 — 앱의 모든 행동은 여기로 수신된다.
-
-    Args:
-        tag: 발행 원점 식별자 (pot / dl / deps / ytdlp / ui ...)
-        msg: LogEvent 권장. 문자열은 즉시 LogEvent로 정규화된다 (하위 호환).
-        is_status / is_error: 문자열 정규화 시 상태 계약.
-        to_tui: True면 TUI(concise)에도 발사. history/F12는 항상 수신.
-
-    [포함관계] history ⊆ F12 ⊆ (F12+TUI). 채널은 1비트(to_tui)로 축소됐다.
-    """
+    """단일 진입점 — 앱의 모든 행동은 여기로 수신된다."""
     if not isinstance(msg, LogEvent):
         msg = LogEvent(
-            stage="SYS", status="FAIL" if is_error else "OK",
-            platform="-", spec="-", msg=str(msg),
-            is_status=is_status, is_error=is_error,
+            stage="SYS",
+            status="FAIL" if is_error else "OK",
+            platform="-",
+            spec="-",
+            msg=str(msg),
+            is_status=is_status,
+            is_error=is_error,
             rendered=True,
         )
-    try:
-        import log_history
-        log_history.log(
-            f"[{tag}] {msg.msg}",
-            level="ERROR" if msg.is_error else "INFO",
-        )
-    except Exception:
-        pass
-    # F12 = 전량 (슈퍼셋) — is_status 틱은 뷰에서 마지막 줄 갱신
-    _hub.full.emit(msg, bool(msg.is_status))
-    # TUI = 발행자 선택
-    if to_tui:
-        _hub.concise.emit(msg, bool(msg.is_status), bool(msg.is_error))
+    else:
+        if is_status:
+            msg.is_status = True
+        if is_error:
+            msg.is_error = True
+    _dispatcher.publish(msg, to_tui)
+
+
+def flush(timeout: float = 1.0) -> None:
+    """테스트/종료용: 현재 queue가 처리될 때까지 기다린다."""
+    _dispatcher.flush(timeout)
+
+
+def shutdown(timeout: float = 1.0) -> None:
+    _dispatcher.shutdown(timeout)
+
 
 ```
 
@@ -7907,6 +8109,7 @@ def test_main():
         print("[Smoke Test] MainWindow 생성 성공!")
         assert win is not None
         assert win.ctrl is not None
+        assert hasattr(win, "_force_unlock_input")
         print("[Smoke Test] dl_state 프로퍼티 확인:", win.dl_state)
         # [다이얼로그 커버] SettingsDialog 실생성 — 콤보/체크박스 초기화가
         # NameError 없이 완료되는지 검증 (QGroupBox 미import·format__flay
@@ -8057,7 +8260,12 @@ class StartupCoordinator(QObject):
 
     def report_pot(self, ok: bool, msg: str):
         with self._lock:
-            self._state.set_pot(msg if ok else "failed")
+            status = msg if ok else "failed"
+            # 실제 POTManager 완료 신호는 ``staged``/``ready``만 사용한다.
+            # 기존 테스트/호출부의 ``standby`` 보고는 공개 영상용 준비 완료로만
+            # 호환 처리하며, 임의의 성공 메시지는 READY 게이트를 열지 않는다.
+            ready = ok and (status == "staged" or status == "ready" or status == "standby")
+            self._state.set_pot(status, ready=ready)
             self._try_emit_ready()
 
     def report_ready(self, ok: bool = True, msg: str = "ready"):
@@ -8106,82 +8314,11 @@ class StartupCoordinator(QObject):
     @_ready_emitted.setter
     def _ready_emitted(self, value):
         self._state.ready_emitted = value
-
-    @property
-    def _stage_complete(self):
-        class StageProxy:
-            def __init__(self, state):
-                self._state = state
-            def __getitem__(self, key):
-                if key == "deps": return self._state.deps_ok
-                if key == "upgrade": return self._state.upgrade_done
-                if key == "pot": return self._state.pot_status != "unknown"
-                if key == "fallback": return getattr(self, "_fb", False)
-                return False
-            def __setitem__(self, key, value):
-                if key == "deps": self._state.set_deps(value)
-                elif key == "upgrade": self._state.set_upgrade(value)
-                elif key == "pot": self._state.set_pot(value if value else "unknown")
-                elif key == "fallback": self._fb = value
-        return StageProxy(self._state)
 ```
 
 ## File: startup_state.py
 
 ```python
-"""StartupState — 앱 기동 상태 단일 진실 공급원 (스레드 안전)."""
-
-from dataclasses import dataclass, field
-import threading
-
-
-@dataclass
-class StartupState:
-    """기동 시퀀스 상태를 스레드 안전하게 관리.
-
-    모든 상태 변경은 RLock 보호 하에 수행되며,
-    Coordinator가 단일 진입점으로 상태를 조작한다.
-    """
-    deps_ok: bool = False
-    upgrade_done: bool = False
-    pot_status: str = "unknown"  # unknown / running / standby / staged / failed
-    ready_emitted: bool = False
-    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
-
-    def set_deps(self, ok: bool) -> None:
-        with self._lock:
-            self.deps_ok = ok
-
-    def set_upgrade(self, done: bool) -> None:
-        with self._lock:
-            self.upgrade_done = done
-
-    def set_pot(self, status: str) -> None:
-        with self._lock:
-            self.pot_status = status
-
-    def mark_ready_emitted(self) -> None:
-        with self._lock:
-            self.ready_emitted = True
-
-    def can_emit_ready(self) -> bool:
-        """READY 발산 가능 여부 판단."""
-        with self._lock:
-            return (
-                self.deps_ok
-                and self.upgrade_done
-                and self.pot_status in ("running", "standby", "staged")
-                and not self.ready_emitted
-            )
-
-    def snapshot(self) -> dict:
-        """디버깅용 스냅샷 (락 없이 읽기)."""
-        return {
-            "deps_ok": self.deps_ok,
-            "upgrade_done": self.upgrade_done,
-            "pot_status": self.pot_status,
-            "ready_emitted": self.ready_emitted,
-        }
 """startup_state.py — 앱 시작 시퀀스 상태 단일 공급원 (SRP: 상태만 관리)
 
 [구조] StartupCoordinator, POTManager, MainWindow가 공유하는 불변 상태 컨테이너.
@@ -8200,6 +8337,7 @@ class StartupState:
     deps_ok: bool = False
     upgrade_done: bool = False
     pot_status: str = "unknown"   # unknown/running/standby/staged/failed
+    pot_ready: bool = False
     ready_emitted: bool = False
     
     # 내부 동기화
@@ -8215,9 +8353,11 @@ class StartupState:
         with self._lock:
             self.upgrade_done = done
 
-    def set_pot(self, status: str) -> None:
+    def set_pot(self, status: str, ready: bool | None = None) -> None:
         with self._lock:
             self.pot_status = status
+            if ready is not None:
+                self.pot_ready = ready
 
     def mark_ready_emitted(self) -> None:
         with self._lock:
@@ -8231,7 +8371,7 @@ class StartupState:
             return (
                 self.deps_ok
                 and self.upgrade_done
-                and self.pot_status in ("running", "standby", "staged")
+                and self.pot_ready
                 and not self.ready_emitted
             )
 
@@ -8246,6 +8386,7 @@ class StartupState:
                 "deps_ok": self.deps_ok,
                 "upgrade_done": self.upgrade_done,
                 "pot_status": self.pot_status,
+                "pot_ready": self.pot_ready,
                 "ready_emitted": self.ready_emitted,
             }
 ```
@@ -9802,71 +9943,156 @@ class WorkerContext:
 
 ```python
 ### yt_logger_bridge.py - yt-dlp 로거 어댑터 (Analyze/Download 공용)
-"""yt-dlp logger 콜백 인터페이스를 raw 버스로 브리징하는 공용 어댑터.
+"""yt-dlp logger 콜백을 raw_log 버스로 연결하는 공용 어댑터.
 
-- AnalyzeWorker(Analyze용)와 DownloadWorker(다운로드용)가 모두 사용한다.
-- yt-dlp는 logger 객체의 debug/info/warning/error만 호출한다 — 이 계약을
-  raw_log 버스 단일 경유로 매핑한다 (F12 원문 + TUI 이벤트).
-- [계층] L0.5 추출 파이프라인 계층의 leaf — 워커 클래스를 모른다.
-- [스레드] yt-dlp 로거는 워커 스레드에서 호출된다 — raw()는 Signal.emit으로
-  GUI 스레드에 큐잉하므로 직접 호출 안전.
-- [v3.3.0] 시그널 인자 폐기 — 버스 직행.
+- ANSI 제거는 utils.clean_ansi()만 사용한다.
+- \r progress tick은 한 청크로 조립해 최신 meaningful tick만 발행한다.
+- 일반 info/warning/error는 원문을 F12/history에 보존한다.
 """
 import os
+import re
+import threading
+import time
 
 from utils import clean_ansi
 
 
-class YtLoggerBridge:
-    """yt-dlp logger → raw_log 버스 어댑터 (시그널 없음 — 버스 직행)."""
+_PROGRESS_RE = re.compile(r"^\s*\[download\].*?(\d+(?:\.\d+)?)%(?:\s|$)")
+_MERGE_TEXT = "Merging formats into"
+_ALREADY_DOWNLOADED = "has already been downloaded"
 
-    def debug(self, msg):
-        clean_msg = clean_ansi(msg)
+
+class YtLoggerBridge:
+    """yt-dlp logger → raw_log bus adapter."""
+
+    _MAX_CARRIAGE_CHARS = 4096
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._carriage_buffer = ""
+        self._last_progress = None
+        self._last_progress_at = 0.0
+
+    @staticmethod
+    def _is_progress(msg: str) -> bool:
+        return bool(_PROGRESS_RE.match(msg))
+
+    def _emit_progress(self, msg: str) -> None:
+        now = time.monotonic()
+        with self._lock:
+            # yt-dlp progress callbacks are often far faster than 2 Hz.
+            if self._last_progress is not None and now - self._last_progress_at < 0.5:
+                return
+            self._last_progress = msg
+            self._last_progress_at = now
         import raw_log
         from log_event import LogEvent
-        if "Merging formats into" in clean_msg:
+        raw_log.raw(
+            "ytdlp",
+            LogEvent(
+                stage="YTDLP",
+                status="RUN",
+                platform="-",
+                msg=msg,
+                is_status=True,
+            ),
+            to_tui=True,
+        )
+
+    def _emit_non_progress(self, clean_msg: str, level: str) -> None:
+        import raw_log
+        from log_event import LogEvent
+        status = {
+            "warning": "WARN",
+            "error": "FAIL",
+            "info": "OK",
+            "debug": "OK",
+        }.get(level, "OK")
+        raw_log.raw(
+            "ytdlp",
+            LogEvent(
+                stage="YTDLP",
+                status=status,
+                platform="-",
+                msg=clean_msg,
+                is_error=level == "error",
+            ),
+        )
+        if _MERGE_TEXT in clean_msg:
             raw_log.raw(
                 "dl",
                 LogEvent(stage="MERG", status="RUN", platform="-", msg="merging"),
                 to_tui=True,
             )
-        if clean_msg.strip():
-            # [F12 원문] yt-dlp stdout 그대로 — TUI 오염 없음
-            raw_log.raw(
-                "ytdlp",
-                LogEvent(stage="YTDLP", status="OK", msg=clean_msg),
+        if _ALREADY_DOWNLOADED in clean_msg:
+            fname = (
+                clean_msg.replace("[download]", "")
+                .replace(_ALREADY_DOWNLOADED, "")
+                .strip()
             )
-            # [핵심] yt-dlp가 출력하는 이미 다운로드됨 안내 문구 감지!
-            if "has already been downloaded" in clean_msg:
-                # 파일명만 깔끔하게 추출해서 간결 로그에 출판
-                fname = (
-                    clean_msg.replace("[download]", "")
-                    .replace("has already been downloaded", "")
-                    .strip()
-                )
-                raw_log.raw(
-                    "dl",
-                    LogEvent(stage="DL", status="OK", platform="-",
-                             msg=f"skip — exists ({os.path.basename(fname)})"),
-                    to_tui=True,
-                )
+            raw_log.raw(
+                "dl",
+                LogEvent(
+                    stage="DL",
+                    status="OK",
+                    platform="-",
+                    msg=f"skip — exists ({os.path.basename(fname)})",
+                ),
+                to_tui=True,
+            )
+
+    def _flush_carriage(self, msg: str, level: str) -> None:
+        clean_msg = clean_ansi(msg)
+        if not clean_msg:
+            return
+
+        # warning/error는 progress buffer에 갇히지 않고 즉시 보존한다.
+        if level in {"warning", "error"}:
+            clean_msg = clean_msg.replace("\r", " ").replace("\n", " ").strip()
+            if clean_msg:
+                self._emit_non_progress(clean_msg, level)
+            return
+
+        with self._lock:
+            parts = clean_msg.replace("\n", "\r").split("\r")
+            if len(parts) > 1:
+                # 같은 콜백 안 \r 반복 = 같은 줄 덮어쓰기 스냅샷 → 마지막이 최신.
+                candidate = parts[-1] or (parts[-2] if len(parts) > 1 else "")
+                if clean_msg.endswith("\r"):
+                    # 줄이 아직 진행 중 → 다음 청크와 연결하기 위해 이월 보류.
+                    self._carriage_buffer = candidate[-self._MAX_CARRIAGE_CHARS:]
+                    return
+                self._carriage_buffer = ""
+                clean_msg = candidate
+            elif self._carriage_buffer:
+                # \r 없는 청크 = 직전 이월 조각의 이어짐 → 합쳐 한 줄로 재구성.
+                clean_msg = (
+                    self._carriage_buffer + parts[-1]
+                )[-self._MAX_CARRIAGE_CHARS:]
+                self._carriage_buffer = ""
+            else:
+                clean_msg = parts[-1]
+
+        clean_msg = clean_msg.strip()
+        if not clean_msg:
+            return
+        if self._is_progress(clean_msg):
+            self._emit_progress(clean_msg)
+            return
+        self._emit_non_progress(clean_msg, level)
+
+    def debug(self, msg):
+        self._flush_carriage(msg, "debug")
 
     def info(self, msg):
-        self.debug(msg)
+        self._flush_carriage(msg, "info")
 
     def warning(self, msg):
-        if msg.strip():
-            import raw_log
-            from log_event import LogEvent
-            raw_log.raw("ytdlp", LogEvent(stage="YTDLP", status="WARN",
-                                          msg=clean_ansi(msg)))
+        self._flush_carriage(msg, "warning")
 
     def error(self, msg):
-        if msg.strip():
-            import raw_log
-            from log_event import LogEvent
-            raw_log.raw("ytdlp", LogEvent(stage="YTDLP", status="FAIL",
-                                          msg=clean_ansi(msg), is_error=True))
+        self._flush_carriage(msg, "error")
+
 ```
 
 ## File: src/chzzktube/__init__.py
