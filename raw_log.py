@@ -22,7 +22,6 @@ from log_event import LogEvent
 
 MAX_QUEUE = 2048
 MAX_FULL_EVENTS = 4096
-MAX_LINE_CHARS = 4096
 _HISTORY_SUMMARY = "raw_log queue overflow: UI mirror dropped"
 
 
@@ -63,6 +62,18 @@ class _RawDispatcher:
             if self._overflowed:
                 return
             self._overflowed = True
+        event = LogEvent(
+            stage="SYS",
+            status="WARN",
+            platform="raw-log",
+            spec="-",
+            msg=_HISTORY_SUMMARY,
+            is_error=True,
+        )
+        try:
+            self._queue.put_nowait((event, True))
+        except queue.Full:
+            pass
         try:
             import log_history
             log_history.log(f"[raw-log] {_HISTORY_SUMMARY}", level="WARN")
@@ -124,6 +135,8 @@ class _RawDispatcher:
         self._thread.join(timeout=timeout)
 
     def flush(self, timeout: float = 1.0) -> None:
+        """현재 queue와 dispatcher가 처리 중인 이벤트를 순서대로 기다린다."""
+        self._queue.join()
         deadline = time.monotonic() + timeout
         while self.pending and time.monotonic() < deadline:
             time.sleep(0.01)

@@ -13,13 +13,15 @@ import time
 from utils import clean_ansi
 
 
-_PROGRESS_RE = re.compile(r"^\s*\[download\].*?(\d+(?:\.\d+)?)%\s*$")
+_PROGRESS_RE = re.compile(r"^\s*\[download\].*?(\d+(?:\.\d+)?)%(?:\s|$)")
 _MERGE_TEXT = "Merging formats into"
 _ALREADY_DOWNLOADED = "has already been downloaded"
 
 
 class YtLoggerBridge:
     """yt-dlp logger → raw_log bus adapter."""
+
+    _MAX_CARRIAGE_CHARS = 4096
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -53,26 +55,7 @@ class YtLoggerBridge:
             to_tui=True,
         )
 
-    def _flush_carriage(self, msg: str, level: str) -> None:
-        clean_msg = clean_ansi(msg)
-        if not clean_msg:
-            return
-        with self._lock:
-            if "\r" in clean_msg:
-                parts = clean_msg.split("\r")
-                self._carriage_buffer = parts[-1]
-                clean_msg = self._carriage_buffer
-            elif "\n" in clean_msg:
-                clean_msg = self._carriage_buffer + clean_msg
-                self._carriage_buffer = ""
-            else:
-                clean_msg = (self._carriage_buffer + clean_msg).strip()
-                self._carriage_buffer = ""
-        if not clean_msg.strip():
-            return
-        if self._is_progress(clean_msg):
-            self._emit_progress(clean_msg)
-            return
+    def _emit_non_progress(self, clean_msg: str, level: str) -> None:
         import raw_log
         from log_event import LogEvent
         status = {
@@ -113,6 +96,46 @@ class YtLoggerBridge:
                 ),
                 to_tui=True,
             )
+
+    def _flush_carriage(self, msg: str, level: str) -> None:
+        clean_msg = clean_ansi(msg)
+        if not clean_msg:
+            return
+
+        # warning/error는 progress buffer에 갇히지 않고 즉시 보존한다.
+        if level in {"warning", "error"}:
+            clean_msg = clean_msg.replace("\r", " ").replace("\n", " ").strip()
+            if clean_msg:
+                self._emit_non_progress(clean_msg, level)
+            return
+
+        with self._lock:
+            parts = clean_msg.replace("\n", "\r").split("\r")
+            if len(parts) > 1:
+                # 같은 콜백 안 \r 반복 = 같은 줄 덮어쓰기 스냅샷 → 마지막이 최신.
+                candidate = parts[-1] or (parts[-2] if len(parts) > 1 else "")
+                if clean_msg.endswith("\r"):
+                    # 줄이 아직 진행 중 → 다음 청크와 연결하기 위해 이월 보류.
+                    self._carriage_buffer = candidate[-self._MAX_CARRIAGE_CHARS:]
+                    return
+                self._carriage_buffer = ""
+                clean_msg = candidate
+            elif self._carriage_buffer:
+                # \r 없는 청크 = 직전 이월 조각의 이어짐 → 합쳐 한 줄로 재구성.
+                clean_msg = (
+                    self._carriage_buffer + parts[-1]
+                )[-self._MAX_CARRIAGE_CHARS:]
+                self._carriage_buffer = ""
+            else:
+                clean_msg = parts[-1]
+
+        clean_msg = clean_msg.strip()
+        if not clean_msg:
+            return
+        if self._is_progress(clean_msg):
+            self._emit_progress(clean_msg)
+            return
+        self._emit_non_progress(clean_msg, level)
 
     def debug(self, msg):
         self._flush_carriage(msg, "debug")

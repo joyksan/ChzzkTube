@@ -1,5 +1,5 @@
 # POTManager
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
 import threading
 import subprocess
 import os
@@ -56,8 +56,6 @@ class _POTWorker(QThread):
         - prewarm 모드: to_tui=False → F12+history 전용 (TUI 오염 방지)
         - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
         """
-        import raw_log
-        from log_event import LogEvent
         if self.mode == "prewarm":
             raw_log.raw("pot", str(msg), is_status=is_status, is_error=is_error)
             return
@@ -75,8 +73,6 @@ class _POTWorker(QThread):
         - prewarm 모드: to_tui=False → F12+history 전용
         - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
         """
-        import raw_log
-        from log_event import LogEvent
         if self.mode == "prewarm":
             raw_log.raw("pot-DEBUG", str(msg))
         else:
@@ -138,11 +134,11 @@ class _POTWorker(QThread):
         if built_server_js():
             self._note("pot server starting...", True)
             from pot_server import _spawn_existing
-            if _spawn_existing(self._dbg):
-                self._server_proc = _spawn_existing(self._dbg)
-                if self._server_proc is not None:
-                    self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
-                    return
+            proc = _spawn_existing(self._dbg)
+            if proc is not None:
+                self._server_proc = proc
+                self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
+                return
         self.outcome = (False, "bind fail — age-only")
     
     def terminate(self):
@@ -185,17 +181,36 @@ class POTManager(QObject):
         with self._lock:
             worker = self._worker
             mode = self._mode
-            if worker is None or worker.isFinished() and worker is not self._worker:
+            if worker is None or worker is not self._worker:
                 return
-            if mode == "prewarm" and (self._pending_gate or not ok):
-                self._pending_gate = False
-                self._start_worker_locked("gate")
+            if mode == "prewarm":
+                if ok and self._pending_gate:
+                    self._pending_gate = False
+                    self._worker = None
+                    self._mode = "staged"
+                    QTimer.singleShot(0, self._start_pending_gate)
+                    return
+                self._worker = None
+                self._mode = "staged" if ok else "failed"
+            elif mode == "gate":
+                self._worker = None
+                self._mode = "ready" if ok else "failed"
+            else:
                 return
-            self._worker = None
-            self._mode = "ready" if ok else "failed"
 
         self.pot_status_changed.emit("staged" if ok else "failed")
-        self.pot_finished.emit(ok, msg)
+        # [READY 게이트 계약] pot_finished의 msg는 상태 토큰("staged"/"ready"/"failed")으로만
+        # 발행한다 — StartupCoordinator.report_pot이 정확 일치로 READY를 판정한다.
+        # 사람이 읽는 상세 메시지("prewarm staged", "pot server bound ...")는
+        # 워커가 이미 로그 버스로 남겼으므로 여기서 중복 전달하지 않는다.
+        self.pot_finished.emit(ok, self._mode if ok else "failed")
+
+    def _start_pending_gate(self):
+        """완료된 prewarm 워커의 Signal 처리 후 gate 워커를 시작한다."""
+        with self._lock:
+            if self._mode != "staged" or self._worker is not None:
+                return
+            self._start_worker_locked("gate")
 
     @property
     def mode(self):
@@ -204,6 +219,17 @@ class POTManager(QObject):
     def is_ready(self):
         with self._lock:
             return self._mode == "ready" and self._worker is None
+
+    def use_existing(self):
+        """외부/기존 POT 서버가 이미 /ping에 응답 중일 때 ready 상태로 승격.
+
+        이 경로로는 gate 워커가 스폰되지 않으므로 pot_finished가 발행되지
+        않는다 — _pending_download가 영구 큐잉되는 것을 막기 위해 즉시 ready로
+        표시해야 한다 (Main._wait_pot_if_needed → toggle_download가 확인).
+        """
+        with self._lock:
+            self._worker = None
+            self._mode = "ready"
 
     def is_busy(self):
         return self._worker is not None and self._worker.isRunning()

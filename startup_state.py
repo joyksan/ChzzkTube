@@ -1,56 +1,3 @@
-"""StartupState — 앱 기동 상태 단일 진실 공급원 (스레드 안전)."""
-
-from dataclasses import dataclass, field
-import threading
-
-
-@dataclass
-class StartupState:
-    """기동 시퀀스 상태를 스레드 안전하게 관리.
-
-    모든 상태 변경은 RLock 보호 하에 수행되며,
-    Coordinator가 단일 진입점으로 상태를 조작한다.
-    """
-    deps_ok: bool = False
-    upgrade_done: bool = False
-    pot_status: str = "unknown"  # unknown / running / standby / staged / failed
-    ready_emitted: bool = False
-    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
-
-    def set_deps(self, ok: bool) -> None:
-        with self._lock:
-            self.deps_ok = ok
-
-    def set_upgrade(self, done: bool) -> None:
-        with self._lock:
-            self.upgrade_done = done
-
-    def set_pot(self, status: str) -> None:
-        with self._lock:
-            self.pot_status = status
-
-    def mark_ready_emitted(self) -> None:
-        with self._lock:
-            self.ready_emitted = True
-
-    def can_emit_ready(self) -> bool:
-        """READY 발산 가능 여부 판단."""
-        with self._lock:
-            return (
-                self.deps_ok
-                and self.upgrade_done
-                and self.pot_status in ("running", "standby", "staged")
-                and not self.ready_emitted
-            )
-
-    def snapshot(self) -> dict:
-        """디버깅용 스냅샷 (락 없이 읽기)."""
-        return {
-            "deps_ok": self.deps_ok,
-            "upgrade_done": self.upgrade_done,
-            "pot_status": self.pot_status,
-            "ready_emitted": self.ready_emitted,
-        }
 """startup_state.py — 앱 시작 시퀀스 상태 단일 공급원 (SRP: 상태만 관리)
 
 [구조] StartupCoordinator, POTManager, MainWindow가 공유하는 불변 상태 컨테이너.
@@ -69,6 +16,7 @@ class StartupState:
     deps_ok: bool = False
     upgrade_done: bool = False
     pot_status: str = "unknown"   # unknown/running/standby/staged/failed
+    pot_ready: bool = False
     ready_emitted: bool = False
     
     # 내부 동기화
@@ -84,9 +32,11 @@ class StartupState:
         with self._lock:
             self.upgrade_done = done
 
-    def set_pot(self, status: str) -> None:
+    def set_pot(self, status: str, ready: bool | None = None) -> None:
         with self._lock:
             self.pot_status = status
+            if ready is not None:
+                self.pot_ready = ready
 
     def mark_ready_emitted(self) -> None:
         with self._lock:
@@ -100,7 +50,7 @@ class StartupState:
             return (
                 self.deps_ok
                 and self.upgrade_done
-                and self.pot_status in ("running", "standby", "staged")
+                and self.pot_ready
                 and not self.ready_emitted
             )
 
@@ -115,5 +65,6 @@ class StartupState:
                 "deps_ok": self.deps_ok,
                 "upgrade_done": self.upgrade_done,
                 "pot_status": self.pot_status,
+                "pot_ready": self.pot_ready,
                 "ready_emitted": self.ready_emitted,
             }

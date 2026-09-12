@@ -37,6 +37,25 @@ class TestReadyEmission:
         coord.report_upgrade(True, "late")
         assert coord._ready_emitted == first  # 여전히 True, 중복 아님
 
+    def test_ready_not_emitted_for_arbitrary_pot_success_message(self, coord):
+        coord.report_deps(True, "deps ok")
+        coord.report_upgrade(True, "")
+        coord.report_pot(True, "prewarm staged")
+        assert coord._ready_emitted is False
+
+    def test_ready_after_prewarm_staged(self, coord):
+        coord.report_deps(True, "deps ok")
+        coord.report_upgrade(True, "")
+        coord.report_pot(True, "staged")
+        assert coord._ready_emitted is True
+
+    def test_ready_after_pot_gate_ready_token(self, coord):
+        # POTManager가 gate 완료 시 발행하는 "ready" 토큰으로 READY 개방
+        coord.report_deps(True, "deps ok")
+        coord.report_upgrade(True, "")
+        coord.report_pot(True, "ready")
+        assert coord._ready_emitted is True
+
 
 class TestForceUnlock:
     def test_force_unlock_emits_ready(self, coord):

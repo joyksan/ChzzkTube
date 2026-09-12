@@ -814,9 +814,13 @@ class MainWindow(QMainWindow):
         self._pot_manager.ensure_ready("prewarm")
 
     def _on_pot_finished(self, ok: bool, msg: str):
-        """POT gate/prewarm 완료 시 대기 중인 다운로드를 한 번만 재개한다."""
+        """POT gate 완료 시 대기 중인 다운로드를 한 번만 재개한다."""
         pending = getattr(self, "_pending_download", None)
-        if pending is None or not ok:
+        if (
+            pending is None
+            or not ok
+            or not self._pot_manager.is_ready()
+        ):
             return
         targets, v_id, a_id = pending
         self._pending_download = None
@@ -1129,9 +1133,6 @@ class MainWindow(QMainWindow):
 
     def _start_download(self, targets, v_id, a_id):
         """워커 스폰 공통 루틴 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 공용."""
-        # POT 필요 여부 확인 후 준비될 때까지 대기 (연령제한/프라이빗 영상 등)
-        self._wait_pot_if_needed()
-        
         self.ctrl.begin_download()
 
         self.append_concise_log(
@@ -1173,9 +1174,12 @@ class MainWindow(QMainWindow):
         if not needs_pot:
             return
         
-        # POT 서버가 이미 실행 중이면 바로 진행
+        # POT 서버가 이미 실행 중이면 즉시 ready 승격 — 기존 서버 재사용.
+        # 이 경로는 gate 워커를 스폰하지 않으므로 pot_finished가 발행되지 않는다.
+        # (use_existing 없이는 _pending_download가 영구 큐잉됨 — P0-4/5 회귀 방지)
         from po_client import server_ping
         if server_ping():
+            self._pot_manager.use_existing()
             return
         
         # POT 서버가 없으면 기동만 트리거 (대기는 큐가 처리)
