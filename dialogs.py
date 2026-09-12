@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
 )
 import theme
 import log_console
-from log_console import emit_component
 
 try:
     import winsound

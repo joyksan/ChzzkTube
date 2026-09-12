@@ -55,7 +55,7 @@ def test_pending_download_not_resumed_on_failure():
 
 def test_full_log_mirror_preserves_raw_msg():
     m = _FakeMain()
-    ev = LogEvent(stage="DL", status="RUN", platform="YT", spec="1080p30",
+    ev = LogEvent(stage="DL", status="RUN", scope="YT",
                   speed="12.4M/s", pct=50.0, bar_frac=0.5,
                   msg="video title", is_status=True)
     main_module.MainWindow._mirror_event_full(m, ev, True)
@@ -65,7 +65,7 @@ def test_full_log_mirror_preserves_raw_msg():
 
 
 def test_emit_format_logs_uses_bus():
-    """분석 성공 포맷 로그: _emit_format_logs가 raw 버스로 V-FMT/A-FMT LogEvent 발행."""
+    """분석 성공 포맷 로그: _emit_format_logs가 raw 버스로 [codec] streams isolated 1줄 발행."""
     from unittest.mock import patch
 
     import raw_log
@@ -83,8 +83,5 @@ def test_emit_format_logs_uses_bus():
         for call in raw.call_args_list:
             sent.append(call.args[1])
 
-    msgs = [ev.msg for ev in sent]
-    specs = [ev.spec for ev in sent]
-    assert "video: avc1, vp9" in msgs[0]  # 중복 코덱 제거 + 순서 보존
-    assert "audio: opus, aac" in msgs[1]
-    assert specs == ["V-FMT", "A-FMT"]
+    assert len(sent) == 1  # v/a 2줄 분리 폐지 → 1줄
+    assert "[H264/VP9/OPUS/AAC] streams isolated" in sent[0].msg

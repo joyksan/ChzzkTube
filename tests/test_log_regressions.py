@@ -27,8 +27,7 @@ def test_raw_bus_overflow_is_bounded_and_summarized_once():
                 LogEvent(
                     stage="SYS",
                     status="OK",
-                    platform="test",
-                    spec="-",
+                    scope="test",
                     msg=f"fill-{index}",
                 ),
                 False,
@@ -39,8 +38,7 @@ def test_raw_bus_overflow_is_bounded_and_summarized_once():
                 LogEvent(
                     stage="SYS",
                     status="OK",
-                    platform="test",
-                    spec="-",
+                    scope="test",
                     msg="overflow",
                 ),
                 False,
@@ -91,7 +89,7 @@ def test_threaded_publish_preserves_per_sender_order():
         for i in range(n_items):
             dispatcher.publish(
                 LogEvent(
-                    stage="SYS", status="OK", platform="test", spec="-",
+                    stage="SYS", status="OK", scope="test",
                     msg=f"{sender}-{i}",
                 ),
                 False,

@@ -46,9 +46,9 @@ class YtLoggerBridge:
         raw_log.raw(
             "ytdlp",
             LogEvent(
-                stage="YTDLP",
+                stage="DL",
                 status="RUN",
-                platform="-",
+                scope="YTDL",
                 msg=msg,
                 is_status=True,
             ),
@@ -67,9 +67,9 @@ class YtLoggerBridge:
         raw_log.raw(
             "ytdlp",
             LogEvent(
-                stage="YTDLP",
+                stage="DL",
                 status=status,
-                platform="-",
+                scope="YTDL",
                 msg=clean_msg,
                 is_error=level == "error",
             ),
@@ -77,7 +77,7 @@ class YtLoggerBridge:
         if _MERGE_TEXT in clean_msg:
             raw_log.raw(
                 "dl",
-                LogEvent(stage="MERG", status="RUN", platform="-", msg="merging"),
+                LogEvent(stage="MERG", status="RUN", scope="FFMP", msg="merging"),
                 to_tui=True,
             )
         if _ALREADY_DOWNLOADED in clean_msg:
@@ -91,8 +91,8 @@ class YtLoggerBridge:
                 LogEvent(
                     stage="DL",
                     status="OK",
-                    platform="-",
-                    msg=f"skip — exists ({os.path.basename(fname)})",
+                    scope="YTDL",
+                    msg=f"skip - exists ({os.path.basename(fname)})",
                 ),
                 to_tui=True,
             )

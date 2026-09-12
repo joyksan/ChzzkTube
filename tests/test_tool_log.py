@@ -5,17 +5,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 def test_double_timestamp_absent():
-    """이중 ts 금지 — TUI 컬럼 + F12 스탬프가 합쳐져도 ts는 1개.
-
-    컬럼 라인 자체의 '[HH:MM:SS]' 1개 + 진행 바 '[██░░]' 대괄호는 별개.
-    진짜 판정: _mirror_full_log에 컬럼 라인이 아닌 원문이 들어가므로
-    ts가 중복 스탬핑되지 않는다.
-    """
+    """이중 ts 금지 — TUI 컬럼 + F12 스탬프가 합쳐져도 ts는 1개."""
     import re
     from log_console import format_log_line
-    line = format_log_line(stage="DL", status="RUN", platform="YT",
-                           spec="1080p30", speed="12.4M/s",
-                           pct=65.0, bar_frac=0.65, msg="title")
+    line = format_log_line(stage="DL", status="RUN", scope="YT",
+                           pct=65.0, bar_frac=0.65, speed="12.4M/s", msg="title")
     ts = re.findall(r"\[\d{2}:\d{2}:\d{2}\]", line)
     assert len(ts) == 1  # 컬럼 라인 내 타임스탬프 1회
 
@@ -35,8 +29,8 @@ def test_f12_raw_msg_no_double_stamp():
             self.rendered.append((line, is_status))
 
     m = _FakeMain()
-    ev = LogEvent(stage="DL", status="RUN", platform="YT", spec="1080p30",
-                  speed="12.4M/s", pct=65.0, bar_frac=0.65, msg="raw line")
+    ev = LogEvent(stage="DL", status="RUN", scope="YT",
+                  pct=65.0, bar_frac=0.65, speed="12.4M/s", msg="raw line")
     main_module.MainWindow._mirror_event_full(m, ev, False)
     # 컬럼화 없이 원문만 — 스탬프는 _mirror_full_log 1곳에서만 찍힌다.
     assert m.rendered == [("raw line", False)]

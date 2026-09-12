@@ -55,14 +55,14 @@ class TestEmitDl:
     """emit_dl: DL 단계 진행률 이벤트 라벨링 검증 (v3.3.0: LogEvent 반환 → _rendered로 컬럼화)."""
 
     def test_run_format(self):
-        line = _rendered(emit_dl(status="RUN", platform="YT", spec="1080p30", speed="12.4M/s", pct=65.0, bar_frac=0.65))
+        line = _rendered(emit_dl(status="RUN", scope="YT", speed="12.4M/s", pct=65.0, bar_frac=0.65))
         assert "RUN" in line
         assert "YT" in line
-        assert "1080p30" in line
         assert "12.4M/s" in line
+        assert "65%" in line
 
     def test_done_with_title(self):
-        line = _rendered(emit_dl(status="DONE", platform="YT", spec="720p60", speed="-", pct=100.0, bar_frac=1.0, msg="video title"))
+        line = _rendered(emit_dl(status="DONE", scope="YT", speed="-", pct=100.0, bar_frac=1.0, msg="video title"))
         assert "DONE" in line
         assert "video title" in line
 
@@ -282,7 +282,7 @@ class TestPotProviderFacade:
         raw_log.subscribe_concise(lambda m, is_status=False, is_error=False: concise_got.append(m))
         raw_log.subscribe_full(lambda m, t=None: full_got.append(m))
         # to_tui=True → concise+TUI + full(F12) + history 전량
-        event = emit_dl(status="RUN", platform="YT", spec="1080p30", msg="staged")
+        event = emit_dl(status="RUN", scope="YT", msg="staged")
         raw_log.raw("pot-test", event, to_tui=True)
         raw_log.flush()
         assert concise_got and concise_got[-1] is event
@@ -319,10 +319,10 @@ class TestContextPipelineFlow:
         # progress_emitter에서 emit_dl 호출 패턴 시뮬레이션
         line = _rendered(emit_dl(
             status="RUN",
-            platform="YT",
-            spec=str(ctx.v_spec.get("height", "")) if ctx.v_spec else "-",
+            scope="YT",
             speed="-",
             pct=50.0,
         ))
         assert "RUN" in line
-        assert "1080" in line or "-" in line  # v_spec 사용 확인
+        assert "YT" in line  # scope propagation
+        assert "50%" in line  # pct in gauge

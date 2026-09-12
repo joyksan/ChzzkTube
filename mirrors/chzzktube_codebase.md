@@ -467,8 +467,8 @@ def analyze_chzzk_clip_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 클립 detail API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk clip detail api failed (clip {clip_id}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -522,8 +522,8 @@ def analyze_chzzk_clip_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 클립 play-info API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk clip play-info api failed (clip {clip_id}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -615,8 +615,8 @@ def analyze_chzzk_vod_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 VOD API 실패 (video/{video_no}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk vod api failed (video/{video_no}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -737,8 +737,8 @@ def analyze_chzzk_live_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 LIVE API 실패 (live/{live_id}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk live api failed (live/{live_id}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -751,8 +751,8 @@ def analyze_chzzk_live_api(target_url):
             raw_log.raw(
                 "chzzk",
                 LogEvent(
-                    stage="CHZ", status="WARN", platform="CHZ",
-                    msg=f"치지직 LIVE 비방송 중 ({live_status}) — live/{live_id}",
+                    stage="ANAL", status="WARN", scope="CHZ",
+                    msg=f"chzzk live offline ({live_status}) - live/{live_id}",
                     is_error=False,
                 ),
                 to_tui=False,
@@ -793,6 +793,55 @@ def _apply_ffmpeg_opts(opts):
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
     return opts
+
+
+def _apply_post_opts(opts, cfg):
+    """ffmpeg 후처리(postprocessors)를 cfg 가변 설정에 fit.
+
+    [fit 규칙] 모든 후처리는 cfg 키가 유일한 스위치다. 하드코딩 금지.
+    - embed_subtitles=True → writesubtitles + SRT 자동변환 병합
+    - embed_thumbnail=True → 커버 썸네일 병합
+    - embed_chapters(기본 True) → 챕터/메타데이터 병합
+    - subtitle_langs: "all"이면 allsubtitles, 아니면 subtitleslangs 목록
+    """
+    cfg = cfg or {}
+    pp = opts.setdefault("postprocessors", [])
+
+    def _has(key):
+        return any(isinstance(p, dict) and p.get("key") == key for p in pp)
+
+    if cfg.get("embed_subtitles"):
+        langs = str(cfg.get("subtitle_langs") or "all").strip() or "all"
+        if langs.lower() == "all":
+            opts["allsubtitles"] = True
+        else:
+            opts["subtitleslangs"] = [s.strip() for s in langs.split(",") if s.strip()]
+        opts["writesubtitles"] = True
+        if not _has("FFmpegSubtitlesConvertor"):
+            pp.append({"key": "FFmpegSubtitlesConvertor", "format": "srt"})
+        if not _has("FFmpegEmbedSubtitle"):
+            pp.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
+
+    if cfg.get("embed_thumbnail"):
+        if not _has("EmbedThumbnail"):
+            pp.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
+
+    if cfg.get("embed_chapters", True):
+        if not _has("FFmpegMetadata"):
+            pp.append({"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": True})
+
+    return opts
+
+
+def _concurrent_fragments(cfg):
+    """병렬 조각 수 — fast_download on이면 cfg 값(기본 4), off면 1(순차)."""
+    if not (cfg or {}).get("fast_download"):
+        return 1
+    try:
+        n = int((cfg or {}).get("concurrent_fragments", 4) or 4)
+    except (TypeError, ValueError):
+        n = 4
+    return max(1, min(n, 16))
 
 
 def _apply_client_opts(opts, cfg, forced=None):
@@ -978,7 +1027,7 @@ def _download(url, dest, log, label="", is_status=False):
     
     is_status=True 면 진행률 로그를 상태 줄로 표시 (이전 줄 덮어쓰기).
     """
-    log(emit_component("DEPS", "RUN", "-", f"{label or os.path.basename(url)} fetching..."), is_status)
+    log(emit_component("DEPS", "RUN", "DEPS", f"{label or os.path.basename(url)} fetching..."), is_status)
     tmp = dest + ".part"
     with _http_get(url, timeout=60) as resp, open(tmp, "wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
@@ -994,9 +1043,9 @@ def _download(url, dest, log, label="", is_status=False):
             if total < 8 * 1024 * 1024 or mb != last_mb and mb % 2 == 0:
                 last_mb = mb
                 pct = f" ({done * 100 // total}%)" if total else ""
-                log(emit_component("DEPS", "RUN", "-", f"{label or 'download'} {mb} MB{pct}"), is_status)
+                log(emit_component("DEPS", "RUN", "DEPS", f"{label or 'download'} {mb} MB{pct}"), is_status)
     os.replace(tmp, dest)
-    log(emit_component("DEPS", "OK", "-", f"{label or os.path.basename(dest)} done ({done / 1048576:.1f} MB)"))
+    log(emit_component("DEPS", "OK", "DEPS", f"{label or os.path.basename(dest)} done ({done / 1048576:.1f} MB)"))
     return dest
 
 
@@ -1044,7 +1093,7 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
             os.makedirs(os.path.dirname(d) or ".", exist_ok=True)
             shutil.move(s, d)
         _rmtree(tmp)
-    log(emit_component("DEPS", "OK", "-", f"{label} extracted → {os.path.relpath(dest_dir, components_root())}"))
+    log(emit_component("DEPS", "OK", "DEPS", f"{label} extracted → {os.path.relpath(dest_dir, components_root())}"))
 
 
 FFMPEG_DIRNAME = "ffmpeg"
@@ -1106,23 +1155,23 @@ def ensure_ffmpeg(log=None, force=False):
     - Linux: 시스템 ffmpeg 우선 → johnvansickle.com 정적 빌드 다운로드
     """
     log = _logcb(log)
-    log(emit_component("DEPS", "RUN", "ffmpeg", "checking..."))
+    log(emit_component("DEPS", "RUN", "FFMP", "checking..."))
     try:
         # 1. 시스템 ffmpeg 검색 (OS별 확장자 자동 처리)
         suffix = _exe_suffix()
         which = shutil.which("ffmpeg") or shutil.which(f"ffmpeg{suffix}")
         if which and not force:
             if os.access(which, os.X_OK) and _verify_ffmpeg(which):
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "ok"))
                 return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"found but not working ({which})"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"found but not working ({which})"))
 
         # 2. 로컬 캐시 확인
         cached = ffmpeg_exe()
         if cached and not force:
             _wire_ffmpeg_path(os.path.dirname(cached))
-            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+            log(emit_component("DEPS", "OK", "FFMP", "ok"))
             return None
 
         # 3. OS별 전략 호출
@@ -1155,12 +1204,12 @@ def _ensure_ffmpeg_windows(log, force):
     if not force:
         if os.path.isfile(exe_path):
             _wire_ffmpeg_path(bin_dir)
-            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+            log(emit_component("DEPS", "OK", "FFMP", "ok"))
             return None
     
     # GitHub에서 다운로드
     os.makedirs(dest, exist_ok=True)
-    log(emit_component("DEPS", "RUN", "ffmpeg", "downloading..."))
+    log(emit_component("DEPS", "RUN", "FFMP", "downloading..."))
     
     with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
         zp = _download(FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg")
@@ -1168,7 +1217,7 @@ def _ensure_ffmpeg_windows(log, force):
     
     if os.path.isfile(exe_path):
         _wire_ffmpeg_path(bin_dir)
-        log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+        log(emit_component("DEPS", "OK", "FFMP", "ok"))
         return None
     
     return "ffmpeg.exe not found after extract"
@@ -1184,10 +1233,10 @@ def _ensure_ffmpeg_macos(log, force):
             # ffmpeg가 실제로 실행 가능한지 확인
             if _verify_ffmpeg(cached):
                 _wire_ffmpeg_path(os.path.dirname(cached))
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "ok"))
                 return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", "cached not working, reinstalling"))
+                log(emit_component("DEPS", "WARN", "FFMP", "cached not working, reinstalling"))
                 # 캐시된 ffmpeg가 작동하지 않으므로 삭제
                 try:
                     if os.path.exists(dest):
@@ -1198,7 +1247,7 @@ def _ensure_ffmpeg_macos(log, force):
     # Homebrew가 설치되어 있으면 brew install ffmpeg 시도
     brew_path = shutil.which("brew")
     if brew_path:
-        log(emit_component("DEPS", "RUN", "ffmpeg", "installing via Homebrew..."))
+        log(emit_component("DEPS", "RUN", "FFMP", "installing via Homebrew..."))
         import subprocess
         try:
             result = subprocess.run(
@@ -1211,18 +1260,18 @@ def _ensure_ffmpeg_macos(log, force):
                 # 설치 성공 - 경로 확인
                 ffmpeg_path = shutil.which("ffmpeg")
                 if ffmpeg_path and _verify_ffmpeg(ffmpeg_path):
-                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                    log(emit_component("DEPS", "OK", "FFMP", "ok"))
                     return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"brew install failed: {result.stderr[:100]}"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"brew install failed: {result.stderr[:100]}"))
         except subprocess.TimeoutExpired:
-            log(emit_component("DEPS", "WARN", "ffmpeg", "brew install timed out"))
+            log(emit_component("DEPS", "WARN", "FFMP", "brew install timed out"))
         except Exception as e:
-            log(emit_component("DEPS", "WARN", "ffmpeg", f"brew install error: {e}"))
+            log(emit_component("DEPS", "WARN", "FFMP", f"brew install error: {e}"))
 
     # Homebrew 실패 시 bottle 다운로드 시도
     try:
-        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading (Homebrew bottle)..."))
+        log(emit_component("DEPS", "RUN", "FFMP", "downloading (Homebrew bottle)..."))
         with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
             data = json.load(resp)
 
@@ -1252,9 +1301,9 @@ def _ensure_ffmpeg_macos(log, force):
                 got = _sha256(tar_path)
                 if got != sha256:
                     return f"ffmpeg bottle hash mismatch ({got[:12]}…)"
-                log(emit_component("DEPS", "OK", "ffmpeg", "SHA-256 ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "SHA-256 ok"))
 
-            log(emit_component("DEPS", "RUN", "ffmpeg", "extracting..."))
+            log(emit_component("DEPS", "RUN", "FFMP", "extracting..."))
             # 기존 디렉토리를 완전히 삭제
             if os.path.exists(dest):
                 shutil.rmtree(dest, ignore_errors=True)
@@ -1287,7 +1336,7 @@ def _ensure_ffmpeg_macos(log, force):
                 _wire_ffmpeg_path(ffmpeg_bin_dir)
                 # 설치 확인
                 if _verify_ffmpeg(ffmpeg_src):
-                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                    log(emit_component("DEPS", "OK", "FFMP", "ok"))
                     return None
                 else:
                     return "ffmpeg installed but not working (verification failed)"
@@ -1327,10 +1376,10 @@ def _ensure_ffmpeg_linux(log, force):
         if cached:
             if _verify_ffmpeg(cached):
                 _wire_ffmpeg_path(os.path.dirname(cached))
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "ok"))
                 return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", "cached not working, reinstalling"))
+                log(emit_component("DEPS", "WARN", "FFMP", "cached not working, reinstalling"))
                 try:
                     if os.path.exists(dest):
                         shutil.rmtree(dest, ignore_errors=True)
@@ -1346,7 +1395,7 @@ def _ensure_ffmpeg_linux(log, force):
     ]
     for cmd, name in pkg_managers:
         if shutil.which(cmd[0]):
-            log(emit_component("DEPS", "RUN", "ffmpeg", f"installing via {name}..."))
+            log(emit_component("DEPS", "RUN", "FFMP", f"installing via {name}..."))
             try:
                 result = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=300
@@ -1354,22 +1403,22 @@ def _ensure_ffmpeg_linux(log, force):
                 if result.returncode == 0:
                     ffmpeg_path = shutil.which("ffmpeg")
                     if ffmpeg_path and _verify_ffmpeg(ffmpeg_path):
-                        log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                        log(emit_component("DEPS", "OK", "FFMP", "ok"))
                         return None
             except subprocess.TimeoutExpired:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"{name} install timed out"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"{name} install timed out"))
             except Exception as e:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"{name} install error: {e}"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"{name} install error: {e}"))
 
     # 정적 빌드 다운로드 (johnvansickle.com)
     try:
-        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading (static build)..."))
+        log(emit_component("DEPS", "RUN", "FFMP", "downloading (static build)..."))
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
         with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
             tar_path = os.path.join(td, "ffmpeg.tar.xz")
             _download(url, tar_path, log, "ffmpeg", is_status=True)
 
-            log(emit_component("DEPS", "RUN", "ffmpeg", "extracting..."))
+            log(emit_component("DEPS", "RUN", "FFMP", "extracting..."))
             if os.path.exists(dest):
                 shutil.rmtree(dest, ignore_errors=True)
             os.makedirs(dest, exist_ok=True)
@@ -1389,7 +1438,7 @@ def _ensure_ffmpeg_linux(log, force):
                 os.chmod(ffmpeg_bin, 0o755)
                 if _verify_ffmpeg(ffmpeg_bin):
                     _wire_ffmpeg_path(dest)
-                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                    log(emit_component("DEPS", "OK", "FFMP", "ok"))
                     return None
 
         return "ffmpeg binary not found after extract"
@@ -1488,6 +1537,14 @@ def default_config():
         "yt_player_client": "auto",
         "update_channel": "stable",
         "auto_update_check": True,
+        # [외부툴 가변 설정 — client_opts._apply_* 헬퍼가 yt-dlp/streamlink/ffmpeg
+        #  옵션으로 배선한다. 새 키 추가 시 (1) 아래 기본값 (2) _apply_* 헬퍼
+        #  (3) dialogs.py 체크박스/콤보 3점 세트를 함께 추가할 것.]
+        "streamlink_quality": "best",      # streamlink 화질 선택 (best/1080p,720p/…)
+        "embed_thumbnail": False,          # 커버 썸네일 병합 (ffmpeg -c copy + 썸네일 주입)
+        "embed_chapters": True,            # 챕터/메타데이터 병합 (mp4/mkv)
+        "subtitle_langs": "all",           # 자막 언어 (all/ko,en/ko 등, embed_subtitles와 연동)
+        "concurrent_fragments": 4,         # 병렬 조각 수 (fast_download와 연동)
     }
 
 def load_config():
@@ -1815,8 +1872,8 @@ def get_browser_cookies():
                 raw_log.raw(
                     "cookie",
                     LogEvent(
-                        stage="CK", status="WARN", platform="cookie",
-                        msg=f"cookie DB read failed ({os.path.basename(p)}): {type(e).__name__}: {e}",
+                        stage="SYS", status="WARN", scope="MAIN",
+                        msg=f"cookie db read failed ({os.path.basename(p)}): {type(e).__name__}: {e}",
                         is_error=False,
                     ),
                     to_tui=False,
@@ -1854,7 +1911,6 @@ from PySide6.QtWidgets import (
 )
 import theme
 import log_console
-from log_console import emit_component
 
 try:
     import winsound
@@ -2240,9 +2296,17 @@ class SettingsDialog(QDialog):
         self.chk_fast = QCheckBox()
         self.chk_auto_open = QCheckBox()
         self.chk_sound = QCheckBox()
+        self.chk_thumb = QCheckBox()
+        self.chk_chapters = QCheckBox()
 
         self.chk_sub.toggled.connect(
             lambda v: self._apply_change("embed_subtitles", v)
+        )
+        self.chk_thumb.toggled.connect(
+            lambda v: self._apply_change("embed_thumbnail", v)
+        )
+        self.chk_chapters.toggled.connect(
+            lambda v: self._apply_change("embed_chapters", v)
         )
         self.chk_audio.toggled.connect(self._on_audio_only_toggled)
         self.chk_dedup.toggled.connect(
@@ -2256,6 +2320,8 @@ class SettingsDialog(QDialog):
 
         chk_items = [
             (self.chk_sub, "Embed subtitles (SRT auto-convert + merge)"),
+            (self.chk_thumb, "Embed thumbnail (cover art)"),
+            (self.chk_chapters, "Embed chapters + metadata"),
             (self.chk_audio, "Audio only (MP3)"),
             (self.chk_dedup, "Auto-remove duplicate URLs"),
             (self.chk_fast, "Fast segmented download (5 threads)"),
@@ -2411,6 +2477,60 @@ class SettingsDialog(QDialog):
         row3.addWidget(self.chk_pick)
         layout.addWidget(_sec3)
 
+        sl_row = QHBoxLayout()
+        _sec_sl = QGroupBox("Streamlink / Post-proc")
+        _sec_sl.setProperty("class", "tui-panel")
+        _sec_sl.setLayout(sl_row)
+        sl_row.addWidget(QLabel("Streamlink 화질"))
+        sl_row.addStretch()
+        self.cb_slq = make_combo(
+            [
+                ("best", "best (auto)"),
+                ("1080p60,1080p,best", "1080p60 → 1080p → best"),
+                ("1080p,best", "1080p → best"),
+                ("720p,best", "720p → best"),
+                ("480p,best", "480p → best"),
+                ("worst", "worst (data-save)"),
+            ],
+            190,
+        )
+        self.cb_slq.currentIndexChanged.connect(
+            lambda: self._apply_change("streamlink_quality", self.cb_slq.currentData())
+        )
+        sl_row.addWidget(self.cb_slq)
+        sl_row.addSpacing(12)
+        sl_row.addWidget(QLabel("자막 언어"))
+        self.cb_sublangs = make_combo(
+            [
+                ("all", "all"),
+                ("ko,en", "ko + en"),
+                ("ko", "ko"),
+                ("en", "en"),
+            ],
+            110,
+        )
+        self.cb_sublangs.currentIndexChanged.connect(
+            lambda: self._apply_change("subtitle_langs", self.cb_sublangs.currentData())
+        )
+        sl_row.addWidget(self.cb_sublangs)
+        sl_row.addSpacing(12)
+        sl_row.addWidget(QLabel("병렬 조각"))
+        self.cb_frags = make_combo(
+            [
+                (4, "4 (default)"),
+                (1, "1 (sequential)"),
+                (2, "2"),
+                (8, "8"),
+                (16, "16"),
+            ],
+            110,
+        )
+        self.cb_frags.currentIndexChanged.connect(
+            lambda: self._apply_change("concurrent_fragments", self.cb_frags.currentData())
+        )
+        sl_row.addWidget(self.cb_frags)
+        layout.addWidget(_sec_sl)
+
         format_layout = QHBoxLayout()
         _sec_filename = QGroupBox("Filename")
         _sec_filename.setProperty("class", "tui-panel")
@@ -2533,9 +2653,14 @@ class SettingsDialog(QDialog):
         set_combo(self.cb_yt_client, self.cfg.get("yt_player_client", "auto"))
         set_combo(self.cb_update_channel, self.cfg.get("update_channel", "stable"))
         set_combo(self.cb_max_res, self.cfg.get("max_video_res", "none"))
+        set_combo(self.cb_slq, self.cfg.get("streamlink_quality", "best"))
+        set_combo(self.cb_sublangs, self.cfg.get("subtitle_langs", "all"))
+        set_combo(self.cb_frags, self.cfg.get("concurrent_fragments", 4))
         self.chk_pick.setChecked(self.cfg.get("pick_format", False))
 
         self.chk_sub.setChecked(self.cfg.get("embed_subtitles", False))
+        self.chk_thumb.setChecked(self.cfg.get("embed_thumbnail", False))
+        self.chk_chapters.setChecked(self.cfg.get("embed_chapters", True))
         self.chk_audio.setChecked(self.cfg.get("audio_only", False))
         self.chk_dedup.setChecked(self.cfg.get("remove_duplicates", True))
         self.chk_fast.setChecked(self.cfg.get("fast_download", True))
@@ -3006,8 +3131,7 @@ class DownloadWorker(QThread):
                     self.state["skip"] = False
                     raw_log.raw(
                         "dl",
-                        _pe.emit_dl("SKIP", "-", spec="-", speed="-", pct=None, bar_frac=None,
-                                    msg=f"skipped ({idx}/{self.total_count})"),
+                        _pe.emit_dl("SKIP", scope=_dl_platform(url), msg=f"skipped ({idx}/{self.total_count})"),
                         to_tui=True,
                     )
                     continue
@@ -3034,22 +3158,6 @@ class DownloadWorker(QThread):
                     "dl",
                     _pe.emit_event("DL", "WARN", "FFMP",
                                    "killed live recorder on worker terminate", is_error=True),
-                    to_tui=True,
-                )
-            except Exception:
-                pass
-            self._live_proc = None
-        super().terminate()
-
-    def kill_live_process(self):
-        """외부에서 라이브 녹화 프로세스만 강제 종료 (워커 스레드는 유지)."""
-        if self._live_proc is not None:
-            try:
-                self._live_proc.kill()
-                raw_log.raw(
-                    "dl",
-                    _pe.emit_event("DL", "WARN", "FFMP",
-                                   "killed live recorder externally", is_error=True),
                     to_tui=True,
                 )
             except Exception:
@@ -3087,8 +3195,7 @@ def finalize(ctx, total, failed_targets, success_count):
         else:
             raw_log.raw(
                 "dl",
-                emit_dl("ABORT", "-", spec="-", speed="-", pct=0, bar_frac=0,
-                        msg="download canceled by user"),
+                emit_dl("ABORT", scope=_dl_platform(ctx.current_url or ""), msg="download canceled by user"),
                 to_tui=True,
             )
 
@@ -3110,9 +3217,7 @@ def finalize(ctx, total, failed_targets, success_count):
         "dl",
         emit_dl(
             status="DONE" if fail_count == 0 else "WARN",
-            platform="-",
-            spec="-",
-            speed="-",
+            scope=_dl_platform(ctx.current_url or ""),
             pct=100,
             bar_frac=1.0,
             msg=f"batch finished (success: {success_count}, fail: {fail_count})",
@@ -3206,11 +3311,7 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
                 "dl",
                 emit_dl(
                     status="FAIL",
-                    platform="-",
-                    spec="-",
-                    speed="-",
-                    pct=None,
-                    bar_frac=None,
+                    scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                     stage="LIVE",
                     msg="exit code error",
                     is_error=True,
@@ -3227,13 +3328,11 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
             "dl",
             emit_dl(
                 status="DONE",
-                platform="-",
-                spec="-",
-                speed="-",
+                scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                 pct=100,
                 bar_frac=1.0,
                 stage="LIVE",
-                msg=f"saved — {os.path.basename(out_path)} ({format_bytes(size)})",
+                msg=f"saved · {os.path.basename(out_path)} ({format_bytes(size)})",
             ),
             to_tui=True,
         )
@@ -3275,7 +3374,8 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
             if raw:
                 try:
                     raw_log.raw("ffmpeg",
-                                LogEvent(stage="FFMP", status="OK",
+                                LogEvent(stage="LIVE", status="RUN",
+                                         scope="FFMP",
                                          msg=raw.decode("utf-8", "replace").strip()))
                 except Exception:
                     pass
@@ -3303,15 +3403,12 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                         "dl",
                         emit_dl(
                             status="RUN",
-                            platform=_dl_platform(
+                            scope=_dl_platform(
                                 getattr(worker, "current_url", "") or ""
                             ),
-                            spec="-",
                             speed=f"{format_bytes(rate)}/s" if rate else "-",
-                            pct=None,
-                            bar_frac=None,
                             stage="LIVE",
-                            msg=f"recording — {fname}",
+                            msg=f"recording · {fname}",
                             is_status=True,  # 진행률 틱은 한 줄 덮어쓰기(갱신형)
                         ),
                         to_tui=True,
@@ -3345,11 +3442,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
             "dl",
             emit_dl(
                 status="FAIL",
-                platform="-",
-                spec="-",
-                speed="-",
-                pct=None,
-                bar_frac=None,
+                scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                 stage="LIVE",
                 msg=f"{log_tag} fail",
                 is_error=True,
@@ -3372,6 +3465,7 @@ import re
 import time
 import unicodedata
 import theme
+from log_event import STAGES, STATUSES
 from dl_platform import _short_platform
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
@@ -3975,12 +4069,14 @@ def format_pick_menu(v_list, a_list, max_rows=40):
     return lines
 
 ### ──────────────────────────────────────────────────────────────
-### 컬럼 로그 라인 — TUI 스타일 고정 칼럼 포맷
+### 컬럼 로그 라인 — TUI 스타일 고정 칼럼 포맷 (v3.4.0 4칸 미니멀)
 ### ──────────────────────────────────────────────────────────────
-# 포맷: [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ PERCENT │ [BAR] │ MSG
-#   STAGE   : SYS / ANAL / DL / MERG / BATCH
-#   STATUS  : OK / READY / RUN / DONE / ABORT / FAIL / END
-#   BAR     : 텍스트 진행 바 (bar_frac 0.0~1.0)
+# 포맷: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG
+#   STAGE   : SYS / DEPS / ANAL / DL / LIVE / MERG / BATCH / POT (5폭)
+#   STATUS  : READY / RUN / OK / DONE / SKIP / WARN / FAIL / ABORT / END (5폭)
+#   SCOPE   : 발생지·대상 (엔진 YTDL/STRE/FFMP/NODE/POT, 플랫폼 YT/CHZ/TW/TIKT…,
+#             시스템 MAIN — 5폭, media.platform_short 실측값)
+#   MSG     : [tag] 전두 + 진행률 고정형(PCT 3폭우측 · SPEED 8폭우측 + GAUGE 10블록)
 
 def _log_ts():
     """현재 시각 — [HH:MM:SS] 형식."""
@@ -4003,22 +4099,37 @@ def is_tui_line(msg):
     return idx > 11 and idx < len(s) - 1
 
 def _log_pct(pct):
-    """퍼센트 컬럼 — None 이면 '-', 아니면 '42.1%'."""
+    """진행률 — None이면 빈 문자열, 아니면 3폭 우측 정렬 (' 65%', '100%').
+
+    지터링 방지: 게이지 시작 인덱스 고정을 위해 항상 동일한 폭을 차지한다.
+    """
     if pct is None:
-        return "-"
+        return ""
     try:
-        return f"{float(pct):5.1f}%"
+        return f"{min(max(float(pct), 0.0), 100.0):3.0f}%"
     except (TypeError, ValueError):
-        return "-"
+        return ""
+
+
+def _log_speed(speed):
+    """속도 — '-'·빈 값이면 빈 문자열, 아니면 8폭 우측 정렬 (' 12.4M/s').
+
+    지터링 방지: '9.1M/s'와 '12.4M/s'가 같은 폭을 차지해 게이지가 흔들리지 않는다.
+    """
+    s = str(speed or "").strip()
+    if not s or s == "-":
+        return ""
+    return s[-8:].rjust(8)
+
 
 def _log_bar(bar_frac, width=10):
-    """텍스트 진행 바 — None 이면 '-', 아니면 '[████░░░░░░]'."""
+    """텍스트 진행 바 — None이면 빈 문자열, 아니면 고정 10블록 '[████░░░░░░]'."""
     if bar_frac is None:
-        return "-"
+        return ""
     try:
         frac = min(max(float(bar_frac), 0.0), 1.0)
     except (TypeError, ValueError):
-        return "-"
+        return ""
     filled = int(round(frac * width))
     return f"[{'█' * filled}{'░' * (width - filled)}]"
 
@@ -4057,52 +4168,71 @@ def _truncate_by_pixels(msg, budget_px, fm):
     return result
 
 
-def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar_frac=None, msg=""):
-    """TUI 스타일 컬럼 로그 라인 — 단일 라인, 고정 칼럼 정렬.
+def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None,
+                    bar_frac=None):
+    """TUI 스타일 컬럼 로그 라인 — v3.4.0 4칸 미니멀 고정 정렬.
 
     표준 포맷:
-        [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ MSG
+        [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG
 
     특징:
-    - SPEC: 순수 미디어 스펙만 (1080p30, h264, opus 등). 파일명·채널명 금지.
-    - MSG: 제목·파일명·속도·진행률·바 등 가변 정보.
-    - PCT/BAR는 SPEC 오른쪽에 MSG로 통합해 세로 정렬 안정화.
+    - 고정 4칸: STAGE(5) · STATUS(5) · SCOPE(5) · MSG(가변). SPEC 컬럼 폐지.
+    - spec(deprecated): 비어 있지 않으면 MSG 전두부 태그로 흡수 — "[1080p30] msg".
+      '-'·빈 값은 버린다. 새 발행점에서 spec= 전달 금지.
+    - 진행률 고정형: "[tag]  65% ·  12.4M/s [██████░░░░] · msg" —
+      PCT 3폭 우측 · SPEED 8폭 우측 · GAUGE 10블록 고정으로 지터링 방지.
+      extra가 비어 있으면 구분자 '·'도 찍지 않는다.
+    - Zero Redundancy: msg 비어 있으면 꼬리 구분자(│) 미출력.
 
     인자:
-        stage    : SYS / ANAL / DL / LIVE / MERG / BATCH / DEPS / POT ...
-        status   : OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP ...
-        platform : yt / chzzk / ytdlp / streamlink / pot / deps 등 (8자 축약)
-        spec     : 스트림 속성 전용 (예: 1080p30, h264) — 파일명·통계 금지
-        speed    : 네트워크 속도 전용 (예: 12.4M/s) — 카운터·기타 금지
-        pct      : 진행률 (0~100, None 가능)
-        bar_frac : 진행 바 (0.0~1.0, None 가능)
-        msg      : 제목·파일명·시스템 메시지 (예산 초과 시 자동 절단)
+        stage    : SYS / DEPS / ANAL / DL / LIVE / MERG / BATCH / POT (8종)
+        status   : READY / RUN / OK / DONE / SKIP / WARN / FAIL / ABORT / END (9종)
+        scope    : 발생지·대상 (엔진/플랫폼/MAIN — 5폭, media.platform_short 실측값)
+        msg      : 영문 소문자 CLI 태그 (제목 등 데이터 제외하고 영문화)
+        spec     : deprecated — [tag] 흡수용으로만 사용, 신규 전달 금지
+        speed    : 네트워크 속도 (예: 12.4M/s) — MSG 고정형으로 통합
+        pct      : 진행률 (0~100, None 가능) — MSG 고정형으로 통합
+        bar_frac : 진행 바 (0.0~1.0, None 가능) — MSG 고정형으로 통합
     """
-    stage_s = str(stage).upper()[:8].ljust(8)
-    status_s = str(status).upper()[:8].ljust(8)
-    plat_s = _short_platform(platform)[:8].ljust(8)
-    spec_s = str(spec or "-")
-    speed_s = str(speed or "-")
+    stage_s = str(stage).upper()[:5].ljust(5)
+    status_s = str(status).upper()[:5].ljust(5)
+    scope_raw = str(scope or "").strip()
+    if scope_raw in ("", "-", "NONE"):
+        scope_s = "     "
+    else:
+        scope_upper = scope_raw.upper()
+        # v3.4.0 표준 약자(YTDL/FFMP/NODE/POT/YT/CHZ/TW/TIKT 등)는 재축약 금지.
+        # 플랫폼 이름(youtube/chzzk 등)만 media.platform_short로 축약한다.
+        scope_s = (scope_upper if scope_upper in STAGES or scope_upper in STATUSES or scope_upper in {
+            "YTDL", "STRE", "FFMP", "NODE", "POT", "MAIN", "RAW", "QUEUE", "DISK"
+        } else _short_platform(scope_raw))[:5].ljust(5)
+
+    # [SPEC 흡수] deprecated spec → MSG 전두부 [tag]. '-'·빈 값은 버린다.
+    tag = ""
+    spec_clean = str(spec or "").strip()
+    if spec_clean and spec_clean != "-":
+        tag = f"[{spec_clean[:24]}]"
+
+    # [진행률 고정형] PCT(3폭) · SPEED(8폭) + GAUGE(10블록) — 지터링 방지.
+    gauge_parts = []
     pct_s = _log_pct(pct)
+    speed_s = _log_speed(speed)
     bar_s = _log_bar(bar_frac)
+    if pct_s:
+        gauge_parts.append(pct_s)
+    if speed_s:
+        gauge_parts.append(speed_s)
+    gauge = " · ".join(gauge_parts)
+    if bar_s:
+        gauge = f"{gauge} {bar_s}" if gauge else bar_s
 
-    # [핵심] PCT와 BAR를 MSG에 통합해 고정 5칸 구조 유지
-    extra = ""
-    if pct is not None:
-        extra = f"{pct_s} · {bar_s}"
-
+    msg_clean = str(msg or "").strip()
+    head_parts = [p for p in (tag, gauge, msg_clean) if p]
     head = _log_ts() + " " + stage_s
-    rest = [status_s, plat_s, spec_s, speed_s]
-    fixed = head + " │ " + " │ ".join(rest)
-
-    if msg:
-        # MSG가 비어있으면 extra만, 있으면 extra · msg 형태
-        if msg.strip():
-            full_msg = f"{extra} · {msg}" if extra else msg
-        else:
-            full_msg = extra
-        return fixed + " │ " + full_msg
-    return fixed
+    fixed = head + " │ " + " │ ".join((status_s, scope_s))
+    if not head_parts:
+        return fixed
+    return fixed + " │ " + " · ".join(head_parts)
 
 
 def format_log_line_for_event(event):
@@ -4110,37 +4240,39 @@ def format_log_line_for_event(event):
 
     렌더링 책임은 View(메인로그 모듈)에 있고, LogEvent는 모델이다.
     rendered=True면 msg가 이미 표시 완성형이므로 재포맷하지 않는다.
+    scope는 event.scope를 그대로 사용한다 (v3.4.0).
     """
     from log_event import LogEvent  # lazy import (순환 참조 방지)
     if not isinstance(event, LogEvent):
         return str(event)
     if event.rendered:
         return event.msg
+    scope = event.scope
     return format_log_line(
         stage=event.stage,
         status=event.status,
-        platform=event.platform,
+        scope=scope,
+        msg=event.msg,
         spec=event.spec,
         speed=event.speed,
         pct=event.pct,
         bar_frac=event.bar_frac,
-        msg=event.msg,
     )
 
 
 def _log_line_segments(line):
-    """컬럼 로그 라인의 색상 — STATUS 기반 단색 분기."""
-    if " │ FAIL" in line:
+    """컬럼 로그 라인의 색상 — STATUS 기반 단색 분기 (v3.4.0 5폭)."""
+    if " │ FAIL " in line or " │ FAIL│" in line or line.rstrip().endswith(" │ FAIL"):
         return [(line, theme.LOG_COLOR_ERROR)]
-    if " │ WARN" in line:
+    if " │ WARN " in line or line.rstrip().endswith(" │ WARN"):
         return [(line, theme.LOG_COLOR_WARN)]
     if " │ ABORT" in line:
         return [(line, theme.LOG_COLOR_WARN)]
-    if " │ DONE" in line or " │ OK " in line or " │ END" in line or " │ READY" in line:
+    if " │ DONE " in line or " │ OK   " in line or " │ END  " in line or " │ READY" in line:
         return [(line, theme.LOG_COLOR_SUCCESS)]
-    if " │ SKIP" in line:
+    if " │ SKIP " in line:
         return [(line, theme.LOG_COLOR_DIM)]
-    if " │ RUN" in line:
+    if " │ RUN  " in line:
         return [(line, theme.LOG_COLOR_ACCENT)]
     return [(line, theme.LOG_COLOR_INFO)]
 
@@ -4150,51 +4282,48 @@ def _log_line_segments(line):
 # 행동 근원에서 라벨링을 동봉한 LogEvent를 생성한다. 뷰 렌더링은 구독자 몫.
 # ════════════════════════════════════════════════════════════════════════
 
-def emit_event(stage, status, platform="-", msg="", is_status=False, is_error=False):
-    """단순 이벤트 1건 — POT/Update/사용자 액션/에러 모두 공통."""
-    from log_event import LogEvent  # lazy import (순환 참조 방지)
+def emit_event(stage, status, scope="-", msg="", is_status=False, is_error=False):
+    """단순 이벤트 1건."""
+    from log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, platform=platform, msg=msg,
+        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         is_status=is_status, is_error=is_error,
     )
 
 
-def emit_dl(status, platform="", spec="", speed="", pct=None, bar_frac=None, msg="", stage="DL",
-            is_status=False, is_error=False):
-    """다운로드 진행률/완료 이벤트 — SPEC(스트림 속성)과 SPEED(네트워크) 분리.
-
-    예: [12:00:01] DL │ RUN │ YT  │ 1080p30 │ 12.4M/s │ 65.0% │ [█⋯░] │ 제목
-    """
-    from log_event import LogEvent  # lazy import (순환 참조 방지)
+def emit_dl(status, scope="", msg="", speed="", pct=None, bar_frac=None,
+            stage="DL", is_status=False, is_error=False):
+    """DL 진행률/완료 이벤트."""
+    from log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, platform=platform, spec=spec,
-        speed=speed, pct=pct, bar_frac=bar_frac, msg=msg,
+        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        speed=speed, pct=pct, bar_frac=bar_frac,
         is_status=is_status, is_error=is_error,
     )
 
 
 def emit_err(msg):
-    """에러 1건 — FAIL 상태, 플랫폼 '-'."""
+    """에러 1건 — FAIL 상태, 스코프 빈칸."""
     from log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(stage="DL", status="FAIL", msg=msg, is_error=True)
 
 
-def emit_progress(stage, status, platform="-", spec="-", speed="-", pct=None, bar_frac=None, msg="",
-                  is_status=False, is_error=False):
+def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
+                  bar_frac=None, is_status=False, is_error=False):
     """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
-    from log_event import LogEvent  # lazy import (순환 참조 방지)
+    from log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, platform=platform, spec=spec, speed=speed,
-        pct=pct, bar_frac=bar_frac, msg=msg,
+        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        speed=speed, pct=pct, bar_frac=bar_frac,
         is_status=is_status, is_error=is_error,
     )
 
 
-def emit_component(stage, status, platform, msg="", is_status=False, is_error=False):
-    """컴포넌트/워커 결과 — DEPS / POT / READY 등 system 단계."""
-    from log_event import LogEvent  # lazy import (순환 참조 방지)
+def emit_component(stage, status, scope, msg="", is_status=False, is_error=False):
+    """컴포넌트/워커 결과 — DEPS / POT / READY 등."""
+    from log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, platform=platform, msg=msg,
+        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         is_status=is_status, is_error=is_error,
     )
 
@@ -4203,18 +4332,25 @@ def emit_component(stage, status, platform, msg="", is_status=False, is_error=Fa
 ## File: log_event.py
 
 ```python
-##### log_event.py - 구조화된 로그 이벤트 (v3.3.0)
+##### log_event.py - 구조화된 로그 이벤트 (v3.4.0)
 """raw_log 버스의 단일 진실 데이터 구조.
 
-[계약 v3.3.0 — 포함관계 모델]
+[계약 v3.4.0 — 4칸 미니멀 포맷]
 - 발행자는 행동 근원(raw() 호출점)에서 LogEvent를 동봉해 전송한다.
-  라벨링(stage/status/platform/spec)은 태어난 곳에서 결정된다.
+  라벨링(stage/status/scope)은 태어난 곳에서 결정된다.
+- SPEC 컬럼 폐지: spec 필드는 deprecated — 렌더러가 [spec] 태그로 MSG에 흡수.
+  새 발행점에서 spec= 전달 금지.
 - 채널 포함관계: history=전량, F12(full)=전량(⊇TUI), TUI(concise)=to_tui 선택.
-  → "F12가 안 받는 로그"는 존재하지 않는다. (Channel 3비트 플래그 폐기)
+  → "F12가 안 받는 로그"는 존재하지 않는다.
 - 콘텐츠 정규식(is_tui_line) 라우팅 제로 — 렌더링 책임은 구독자(View)에게.
 """
 from dataclasses import dataclass, field
 import time
+
+
+# v3.4.0 허용 STAGE 8종 / STATUS 9종 — 이외 값 발행 금지.
+STAGES = ("SYS", "DEPS", "ANAL", "DL", "LIVE", "MERG", "BATCH", "POT")
+STATUSES = ("READY", "RUN", "OK", "DONE", "SKIP", "WARN", "FAIL", "ABORT", "END")
 
 
 @dataclass(slots=True)
@@ -4222,7 +4358,10 @@ class LogEvent:
     """구조화된 로그 이벤트."""
     stage: str = "SYS"
     status: str = "OK"
-    platform: str = "-"
+    # v3.4.0: platform → scope 개명. platform은 호환 별칭(읽기 전용 X, 쓰기 허용).
+    scope: str = "-"
+    platform: str = field(default="-", repr=False, compare=False)  # deprecated
+    # v3.4.0 deprecated: SPEC 컬럼 폐지. 전달 시 [spec] 태그로 MSG 흡수된다.
     spec: str = "-"
     speed: str = "-"
     pct: float = None
@@ -5003,7 +5142,7 @@ class MainWindow(QMainWindow):
         import raw_log
         from log_event import LogEvent
         event = LogEvent(
-            stage="POT", status="RUN", platform="pot", spec="-",
+            stage="POT", status="RUN", scope="POT",
             msg=(
                 f"gated={needs_pot} age_limit={age_limit if info else '-'} "
                 f"availability={((info or {}).get('availability') or '-')}"
@@ -5013,7 +5152,7 @@ class MainWindow(QMainWindow):
 
         if needs_pot:
             self.append_concise_log(
-                log_console.emit_event("POT", "RUN", "pot", "starting..."),
+                log_console.emit_event("POT", "RUN", "POT", "starting..."),
                 is_status=True,
                 is_error=False,
             )
@@ -5027,7 +5166,7 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "-", "analyzing..."),
+            log_console.emit_event("ANAL", "RUN", "", "analyzing..."),
             is_status=True,
             is_error=False,
         )
@@ -5072,23 +5211,25 @@ class MainWindow(QMainWindow):
             if h:
                 res = f"{h}p{fps}" if fps else f"{h}p"
 
-        # ANAL OK 메인 라인: Platform=사이트, Spec=해상도, Msg=stream analyzed · channel · title
-        counts = log_console.format_analysis_counts(len(v_list), len(a_list))
-        base_msg = f"stream analyzed{counts}"
-        if meta:
-            base_msg += f" · {meta[:80]}"
-        # [버스 v3.3.0] 분석 성공 -> 논리 LogEvent(근원 라벨링). _render_concise가 컬럼화,
-        # _mirror_event_full이 F12에 원본 msg 기록. format_log_line 직접 호출 제거.
-        import raw_log
-        from log_event import LogEvent
-        raw_log.raw(
-            "anal",
-            LogEvent(
-                stage="ANAL", status="OK", platform=platform, spec=res,
-                msg=base_msg, is_status=True, is_error=False,
-            ),
-            to_tui=True,
-        )
+            # ANAL OK 메인 라인: scope=사이트, [해상도] 태그, msg=analyzed · channel · title
+            counts = log_console.format_analysis_counts(len(v_list), len(a_list))
+            base_msg = f"analyzed{counts}"
+            if meta:
+                base_msg += f" · {meta[:80]}"
+            # [버스 v3.3.0] 분석 성공 -> 논리 LogEvent(근원 라벨링). _render_concise가 컬럼화,
+            # _mirror_event_full이 F12에 원본 msg 기록. format_log_line 직접 호출 제거.
+            # [v3.4.0] SPEC 컬럼 폐지 — 해상도는 [tag]로 MSG에 흡수된다.
+            import raw_log
+            from log_event import LogEvent
+            anal_msg = f"[{res}] {base_msg}" if res else base_msg
+            raw_log.raw(
+                "anal",
+                LogEvent(
+                    stage="ANAL", status="OK", scope=platform,
+                    msg=anal_msg, is_status=True, is_error=False,
+                ),
+                to_tui=True,
+            )
 
         # 마지막 블록 철회 가드
         self._analysis_block_active = True
@@ -5099,27 +5240,28 @@ class MainWindow(QMainWindow):
         self._emit_format_logs(v_list, a_list, platform)
 
     def _emit_format_logs(self, v_list, a_list, platform):
-        """스트림 분석 완료 후 비디오/오디오 코덱 사양을 별도 로그로 출력."""
+        """스트림 분석 완료 후 비디오/오디오 코덱 사양을 1줄 태그 로그로 출력.
+
+        [v3.4.0] V-FMT/A-FMT 2줄 분리(SPEC 컬럼 시절 산물)를 폐기하고
+        '[vcodec/acodec] streams isolated' 1줄로 합친다.
+        """
         import raw_log
         from log_event import LogEvent
+        from media import short_codec
 
-        v_codecs = list(dict.fromkeys(f.get("vcodec") for f in v_list if f.get("vcodec")))
-        a_codecs = list(dict.fromkeys(f.get("acodec") for f in a_list if f.get("acodec")))
-
-        if v_codecs:
-            msg = f"video: {', '.join(v_codecs[:4])}"
-            raw_log.raw(
-                "anal",
-                LogEvent(stage="ANAL", status="OK", platform=platform, spec="V-FMT", msg=msg),
-                to_tui=True,
-            )
-        if a_codecs:
-            msg = f"audio: {', '.join(a_codecs[:4])}"
-            raw_log.raw(
-                "anal",
-                LogEvent(stage="ANAL", status="OK", platform=platform, spec="A-FMT", msg=msg),
-                to_tui=True,
-            )
+        v_seen = list(dict.fromkeys(
+            short_codec(f.get("vcodec")) for f in v_list if f.get("vcodec")))
+        a_seen = list(dict.fromkeys(
+            short_codec(f.get("acodec")) for f in a_list if f.get("acodec")))
+        codecs = "/".join([c for c in ("/".join(v_seen[:2]), "/".join(a_seen[:2])) if c])
+        if not codecs:
+            return
+        raw_log.raw(
+            "anal",
+            LogEvent(stage="ANAL", status="OK", scope=platform,
+                     msg=f"[{codecs}] streams isolated"),
+            to_tui=True,
+        )
 
     def _format_analysis_summary(self):
         """분석 완료 요약 — 채널명 · 제목 등 기본 정보 (플레이리스트/치지직 공용)."""
@@ -5367,12 +5509,16 @@ class MainWindow(QMainWindow):
         self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
-        """F12 렌더러 — 구조화 이벤트를 콘솔 포맷터로 복원한다."""
+        """F12 렌더러 — 원문 보관소. 컬럼화하지 않고 event.msg 원문을 적재한다.
+
+        컬럼화는 TUI 말단(_render_concise)의 책임이다. F12가 컬럼 문자열을
+        적재하면 (1) 원문이 영구 소실되고 (2) _log_ts + _mirror_full_log의
+        이중 타임스탬프가 발생한다. 스탬핑은 _mirror_full_log 1곳에서만.
+        """
         from log_event import LogEvent
         if isinstance(event, LogEvent):
-            # F12는 event.msg만 추출하던 기존 경로를 탈피해 stage/status/spec 등
-            # 구조화 컨텍스트를 보존한다. rendered 이벤트는 원문 포맷을 유지한다.
-            line = log_console.format_log_line_for_event(event)
+            # rendered 이벤트든 아니든 msg 원문을 그대로 보존한다.
+            line = event.msg if event.msg else ""
             if is_status:
                 self._last_status_line = line
             self._mirror_full_log(line, is_status)
@@ -5502,7 +5648,7 @@ class MainWindow(QMainWindow):
             # POT 기동 중이면 큐에 넣고 사용자 알림
             self._pending_download = (targets, "auto", "auto")
             self.append_concise_log(
-                log_console.emit_event("SYS", "WAIT", "pot", "queued — waiting for POT server"),
+                log_console.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
                 is_status=True, is_error=False
             )
             return
@@ -5511,7 +5657,7 @@ class MainWindow(QMainWindow):
             if not self._pot_manager.is_ready():
                 self._pending_download = (targets, "auto", "auto")
                 self.append_concise_log(
-                    log_console.emit_event("SYS", "WAIT", "pot", "queued — waiting for POT server"),
+                    log_console.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
                     is_status=True, is_error=False,
                 )
                 return
@@ -5523,7 +5669,7 @@ class MainWindow(QMainWindow):
         self.ctrl.begin_download()
 
         self.append_concise_log(
-            log_console.emit_event("DL", "RUN", "-", "downloading..."),
+            log_console.emit_event("DL", "RUN", "", "downloading..."),
             is_status=True,
             is_error=False,
         )
@@ -5571,7 +5717,7 @@ class MainWindow(QMainWindow):
         
         # POT 서버가 없으면 기동만 트리거 (대기는 큐가 처리)
         self.append_concise_log(
-            log_console.emit_event("POT", "RUN", "pot", "starting server..."),
+            log_console.emit_event("POT", "RUN", "POT", "starting server..."),
             is_status=True,
             is_error=False,
         )
@@ -5584,7 +5730,7 @@ class MainWindow(QMainWindow):
         self._pick_targets = [url]
         self._pick_pending = True
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "-", "format list analyzing..."),
+            log_console.emit_event("ANAL", "RUN", "", "analyzing formats..."),
             is_status=True,
             is_error=False,
         )
@@ -5659,7 +5805,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_skip()
             self.append_concise_log(
-                log_console.emit_event("DL", "SKIP", "-", "skip request"),
+                log_console.emit_event("DL", "SKIP", "", "skip requested"),
                 is_status=False,
                 is_error=False,
             )
@@ -6053,9 +6199,9 @@ def remux_live_to_container(ts_path, container_setting="mp4"):
         raw_log.raw(
             "media",
             LogEvent(
-                stage="MEDIA", status="FAIL", platform="-",
-                msg=f"라이브 리먹싱 실패 — 원본 ts 보존됨 ({os.path.basename(ts_path)}): "
-                    f"{type(e).__name__}: {e}",
+                stage="MERG", status="FAIL", scope="FFMP",
+                msg=f"live remux failed - ts kept ({os.path.basename(ts_path)}): "
+                f"{type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -6591,8 +6737,8 @@ class _POTWorker(QThread):
             return
         stage = "SYS" if is_error else "POT"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        event = LogEvent(stage=stage, status=status, platform="pot",
-                         spec="-", msg=str(msg)[:120],
+        event = LogEvent(stage=stage, status=status, scope="POT",
+                         msg=str(msg)[:120],
                          is_status=is_status, is_error=is_error)
         raw_log.raw("pot", event, to_tui=True)
 
@@ -6606,8 +6752,8 @@ class _POTWorker(QThread):
         if self.mode == "prewarm":
             raw_log.raw("pot-DEBUG", str(msg))
         else:
-            event = LogEvent(stage="POT", status="RUN", platform="pot",
-                             spec="-", msg=str(msg)[:120])
+            event = LogEvent(stage="POT", status="RUN", scope="POT",
+                             msg=str(msg)[:120])
             raw_log.raw("pot", event, to_tui=True)
     
     def _run(self):
@@ -7714,13 +7860,12 @@ def emit_progress_tick(ctx, d):
         "dl",
         emit_dl(
             status="RUN",
-            platform=_dl_platform(ctx.current_url or ""),
-            spec=_dl_spec(ctx),
+            scope=_dl_platform(ctx.current_url or ""),
+            msg="",
             speed=speed_s,
             pct=pct,
             bar_frac=min(pct / 100.0, 1.0),
-            msg=title,
-            is_status=True,   # 진행률 틱은 새 줄 금지, 한 줄 덮어쓰기(갱신형)
+            is_status=True,
         ),
         to_tui=True,
     )
@@ -7767,8 +7912,8 @@ def emit_live_header(ctx, info, res_label=""):
     if res_label:
         raw_log.raw(
             "dl",
-            emit_dl("RUN", _dl_platform(ctx.current_url or ""),
-                    spec=res_label, stage="LIVE", msg=title),
+            emit_dl("RUN", scope=_dl_platform(ctx.current_url or ""),
+                    stage="LIVE", msg=title),
             to_tui=True,
         )
     else:
@@ -7785,10 +7930,10 @@ def emit_chzzk_header(ctx, ch_info, fmt):
     """치지직(클립/VOD) 헤더 — 컬럼 포맷 통일."""
     title = ch_info.get("videoTitle") or ch_info.get("title") or "untitled"
     fmt_desc = cli_format_desc(fmt) if fmt else ""
-    msg = f"chzzk — {title}"
+    msg = f"chzzk - {title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
-    raw_log.raw("dl", emit_event("DL", "RUN", "chzzk", msg), to_tui=True)
+    raw_log.raw("dl", emit_event("DL", "RUN", "CHZ", msg), to_tui=True)
     ctx._meta_logged = True
 
 
@@ -7800,8 +7945,7 @@ def emit_live_final_stats(ctx, total_bytes, start_time):
         "dl",
         emit_dl(
             status="DONE",
-            platform="-",
-            spec="-",
+            scope=_dl_platform(ctx.current_url or ""),
             speed=f"{format_bytes(rate)}/s",
             pct=100,
             bar_frac=1.0,
@@ -7884,8 +8028,7 @@ class _RawDispatcher:
         event = LogEvent(
             stage="SYS",
             status="WARN",
-            platform="raw-log",
-            spec="-",
+            scope="RAW",
             msg=_HISTORY_SUMMARY,
             is_error=True,
         )
@@ -7989,8 +8132,7 @@ def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
         msg = LogEvent(
             stage="SYS",
             status="FAIL" if is_error else "OK",
-            platform="-",
-            spec="-",
+            scope="-",
             msg=str(msg),
             is_status=is_status,
             is_error=is_error,
@@ -8178,7 +8320,7 @@ class StartupCoordinator(QObject):
         from log_event import LogEvent
         raw_log.raw(
             "startup",
-            LogEvent(stage=stage, status=status, platform="SYS", msg=msg,
+            LogEvent(stage=stage, status=status, scope="MAIN", msg=msg,
                      is_status=is_status, is_error=is_error),
             to_tui=True,
         )
@@ -8208,7 +8350,7 @@ class StartupCoordinator(QObject):
             self._state.set_pot(status, ready=ready)
             self._try_emit_ready()
 
-    def report_ready(self, ok: bool = True, msg: str = "ready"):
+    def report_ready(self, ok: bool = True, msg: str = "ready — input unlocked"):
         with self._lock:
             if self._state.ready_emitted:
                 return
@@ -8233,7 +8375,7 @@ class StartupCoordinator(QObject):
                 return
             self._fallback_done = True
         self._pot.cancel()
-        self.report_ready(True, "ready (fallback timeout)")
+        self.report_ready(True, "ready — input unlocked (fallback timeout)")
 
     # ── READY 발산 게이트 ────────────────────────────────────
 
@@ -8241,8 +8383,8 @@ class StartupCoordinator(QObject):
         with self._lock:
             if self._state.can_emit_ready():
                 self._state.mark_ready_emitted()
-                self._emit("SYS", "READY", "ready")
-                self.ready_emitted.emit("SYS", False, "ready")
+                self._emit("SYS", "READY", "ready — input unlocked")
+                self.ready_emitted.emit("SYS", False, "ready — input unlocked")
                 self.ui_unlocked.emit()
 
     # ── 테스트 호환 프로퍼티 ──────────────────────────────────
@@ -8533,7 +8675,9 @@ from client_opts import (
     _apply_ejs_opts,
     _apply_ffmpeg_opts,
     _apply_light_analysis_opts,
+    _apply_post_opts,
     _apply_pot_opts,
+    _concurrent_fragments,
 )
 from log_console import emit_err as _emit_err
 import raw_log
@@ -8563,14 +8707,16 @@ def _make_ytdl_opts(ctx, fmt, url):
         # 100KB/s → 50KB/s로 완화: 초기 버퍼링 구간에서 오탐 방지
         "throttledratelimit": 50_000,
     }
-    if ctx.cfg.get("fast_download"):
-        opts["concurrent_fragment_downloads"] = 4
+    frags = _concurrent_fragments(ctx.cfg)
+    if frags > 1:
+        opts["concurrent_fragment_downloads"] = frags
     _apply_cookie_opts(opts, ctx.cfg)
     _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
     _apply_ejs_opts(opts)
     _apply_pot_opts(opts, _extract_yt_id(url),
                     client=(ctx.yt_client if ctx.yt_client != "auto" else "web_embedded"))
     _apply_ffmpeg_opts(opts)
+    _apply_post_opts(opts, ctx.cfg)
     return opts
 
 
@@ -8652,12 +8798,13 @@ def _download_youtube_live(ctx, url):
 
 
 def _download_streamlink(ctx, url):
-    """streamlink 대상 — 자식 프로세스 녹화 파이프라인."""
+    """streamlink 대상 — 자식 프로세스 녹화 파이프라인 (화질은 cfg fit)."""
     out_file = os.path.join(
         ctx.cfg["download_path"], "streamlink_live.mp4"
     )
     temp_ts, thumb, _ = _lr.prepare_live_paths(ctx, out_file, None)
-    cmd = ["streamlink", url, "best", "-O"]
+    quality = str(ctx.cfg.get("streamlink_quality") or "best").strip() or "best"
+    cmd = ["streamlink", url, quality, "-O"]
     return _lr.record_live_stream(ctx, cmd, temp_ts, out_file, thumb)
 
 
@@ -9126,6 +9273,136 @@ BTN_GRID_QSS = BTN_NEUTRAL_QSS          # 쿠키 소스 그리드
 BTN_CLOSE_QSS = BTN_NEUTRAL_QSS         # 다이얼로그 닫기
 ```
 
+## File: tool_log.py
+
+```python
+"""tool_log — 외부툴 출력 흡수 단일 래퍼 (v3.3.2).
+
+[원칙] 새 기능이 외부툴(yt-dlp/streamlink/ffmpeg/bgutil)을 호출할 때는
+이 모듈 경유만 허용한다. 직접 subprocess 파싱·로거 세팅 코드의 중복 작성을
+금지한다 — 파싱 로직은 여기서 한 번만, 기능은 호출만.
+
+[채널]
+- yt-dlp Python API   : logger=YtLoggerBridge 주입 (Injection) — 기존 브리지 재사용
+- subprocess(stderr)  : pump() — reader 스레드로 라인 흡수 → LogEvent(rendered=True)
+                        원문 보존 → raw 버스. TUI 요약 1줄(상태 틱)은 progress_tick.
+- CLI 일괄 실행       : run_cli() — updater.cli_raw 래핑 + F12 절취 분리 계약 유지.
+
+[프로토콜] 무거운 추상화 없이 얇은 Protocol 3종만 선언한다.
+새 어댑터는 아래 형상만 만족하면 된다 (덕타이핑 + 정적 검사 양립).
+"""
+import subprocess
+import threading
+from typing import Iterable, Optional, Protocol
+
+
+class ToolLogger(Protocol):
+    """yt-dlp logger 형상 — debug/info/warning/error 4메서드."""
+
+    def debug(self, msg: str) -> None: ...
+    def info(self, msg: str) -> None: ...
+    def warning(self, msg: str) -> None: ...
+    def error(self, msg: str) -> None: ...
+
+
+class LineRunner(Protocol):
+    """subprocess 라인 펌프 형상 — cmd 실행 → stdout+stderr 원문 라인 스트림."""
+
+    def run(self, cmd: list, **kw) -> Iterable[str]: ...
+
+
+class TokenProvider(Protocol):
+    """PO 토큰 공급 형상 — video_id → 토큰 또는 None."""
+
+    def fetch(self, video_id: str) -> Optional[str]: ...
+
+
+def make_ytdlp_logger():
+    """yt-dlp Python API 주입용 로거 — YtLoggerBridge 단일 출처.
+
+    새 기능에서 yt-dlp logger 파라미터가 필요하면 이 팩토리만 호출할 것.
+    YtLoggerBridge 클래스 직접 import·인스턴스화의 산발을 금지한다.
+    """
+    from yt_logger_bridge import YtLoggerBridge
+
+    return YtLoggerBridge()
+
+
+def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
+         line_budget=4096, encoding="utf-8"):
+    """subprocess stderr 실시간 흡수 — ffmpeg/streamlink/bgutil 공용.
+
+    - reader 스레드로 stderr를 라인 단위 흡수, LogEvent(rendered=True) 원문
+      보존으로 raw 버스에 적재한다 (F12+history, to_tui면 TUI도).
+    - stdout은 호출부가 소비(파이프/파일)하도록 proc을 반환한다.
+    - cancel(): 호출 시 True면 자식을 kill하고 drain한다.
+    - 종료 코드가 0이 아니면 FAIL 1줄을 TUI에 남긴다.
+
+    반환: (proc, stderr_thread) — 호출부는 stdout 처리 후 proc.wait() +
+    stderr_thread.join()으로 마감할 것.
+    """
+    import os
+
+    import raw_log
+    from log_event import LogEvent
+
+    creationflags = 0
+    if os.name == "nt":
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creationflags,
+    )
+
+    def _drain():
+        try:
+            for raw in iter(proc.stderr.readline, b""):
+                if not raw:
+                    break
+                try:
+                    line = raw.decode(encoding, "replace").strip()
+                except Exception:
+                    continue
+                if not line:
+                    continue
+                if len(line) > line_budget:
+                    line = line[:line_budget] + "…"
+                try:
+                    raw_log.raw(
+                        tag,
+                                                LogEvent(stage=stage, status="OK", scope=scope,
+                                 msg=line, rendered=True),
+                        to_tui=bool(to_tui),
+                    )
+                except Exception:
+                    pass
+                if cancel is not None:
+                    try:
+                        if cancel():
+                            break
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_drain, daemon=True)
+    t.start()
+    return proc, t
+
+
+def run_cli(label, *args, timeout=15):
+    """CLI 일괄 실행 — updater.cli_raw 래핑 (수집 원문 전량 반환).
+
+    절취는 호출부가 updater.truncate_for_full_log로 적재 시점에 수행할 것.
+    """
+    import updater
+
+    return updater.cli_raw(label, *args, timeout=timeout)
+
+```
+
 ## File: update_worker.py
 
 ```python
@@ -9180,7 +9457,7 @@ class UpdateWorker(QThread):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            raw_log.raw("deps", LogEvent(stage="SYS", status="FAIL", platform="deps",
+            raw_log.raw("deps", LogEvent(stage="DEPS", status="FAIL", scope="DEPS",
                                          msg=f"worker crash: {e}", is_error=True), to_tui=True)
             self.check_done.emit([])
 
@@ -9197,17 +9474,17 @@ class UpdateWorker(QThread):
         for label, status, ver in updater.check_deps(
             log_func=lambda m: raw_log.raw(
                 "pot-readiness",
-                LogEvent(stage="POT", status="RUN", platform="pot", spec="-", msg=str(m)),
+                LogEvent(stage="POT", status="RUN", scope="POT", msg=str(m)),
             )
         ):
-            raw_log.raw("deps", emit_component("DEPS", status, label, ver), to_tui=True)
-        # [raw] 실제 CLI 실행 — 터미널에서 직접 친 것과 동일한 원문을 F12에 기록.
-        # ffmpeg -version 원문은 configuration: 1줄이 500자 — 6줄+160자 절단.
+            raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "streamlink": "STRE", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
+        # [raw] 실제 CLI 실행 — 수집은 원문 전량(history), F12 적재 시 절취(뷰).
+        # ffmpeg -version 원문은 configuration: 1줄이 500자 — 적재 시 6줄+160자 절단.
         for label, args in _RAW_VERSION_CMDS:
-            cmdline, out = updater.cli_raw(label, *args, max_lines=6, max_width=160)
+            cmdline, out = updater.cli_raw(label, *args)
             if cmdline and out:
                 raw_log.raw("deps-cli", f"$ {cmdline}")
-                for line in out.splitlines():
+                for line in updater.truncate_for_full_log(out).splitlines():
                     raw_log.raw("deps-cli", line)
         # 수동 체크용 stale 생성 (outdated_packages) — 사용자 채널 반영.
         # auto_update_check off 면 PyPI 폴링 스킵 (stale 미생성 → upgrade 워커는 수급만)
@@ -9236,7 +9513,7 @@ class UpdateWorker(QThread):
             event = LogEvent(
                 stage="DEPS",
                 status="FAIL" if is_error else ("RUN" if is_status else "OK"),
-                platform="deps", msg=str(msg),
+                scope="DEPS", msg=str(msg),
                 is_status=is_status, is_error=is_error,
             )
         show = bool(event.is_status or event.is_error
@@ -9288,7 +9565,7 @@ class UpdateWorker(QThread):
         if ff_err:
             ok_overall = False
             summaries.append(f"ffmpeg: {ff_err}")
-            raw_log.raw("deps", emit_component("DEPS", "FAIL", "ffmpeg", ff_err, is_error=True),
+            raw_log.raw("deps", emit_component("DEPS", "FAIL", "FFMP", ff_err, is_error=True),
                         to_tui=True)
         elif ffmpeg_acted[0]:
             summaries.append("ffmpeg provisioned")
@@ -9306,7 +9583,7 @@ class UpdateWorker(QThread):
             else:
                 raw_log.raw(
                     "deps",
-                    LogEvent(stage="DEPS", status="RUN", platform="node", msg=str(msg),
+                    LogEvent(stage="DEPS", status="RUN", scope="NODE", msg=str(msg),
                              is_status=is_status, is_error=is_error),
                     to_tui=True,
                 )
@@ -9321,12 +9598,12 @@ class UpdateWorker(QThread):
             else:
                 ok_overall = False
                 summaries.append("node setup failed")
-                raw_log.raw("deps", emit_component("DEPS", "FAIL", "node", "setup failed", is_error=True),
+                raw_log.raw("deps", emit_component("DEPS", "FAIL", "NODE", "setup failed", is_error=True),
                             to_tui=True)
         except Exception as e:
             ok_overall = False
             summaries.append(f"node: {e}")
-            raw_log.raw("deps", emit_component("DEPS", "FAIL", "node", str(e), is_error=True),
+            raw_log.raw("deps", emit_component("DEPS", "FAIL", "NODE", str(e), is_error=True),
                         to_tui=True)
 
         summary = "; ".join(summaries) if summaries else ""
@@ -9580,14 +9857,15 @@ def _cli_env(label):
     return env
 
 
-def cli_raw(label, *args, timeout=15, max_lines=0, max_width=160):
+def cli_raw(label, *args, timeout=15):
     """실제 CLI를 실행해 '터미널에서 친 것과 동일한 원문 출력'을 반환.
 
     반환: (cmdline, output) — 도구 없으면 (None, None), 실행 예외면
-    (cmdline, "[Type] msg"). 출력은 stdout+stderr 합본 원문.
-    호출부(F12 상세 로그)가 '$ <cmd>' + 원문 라인을 그대로 적재한다.
-    max_lines>0 → 앞 N줄만 + '… (M lines truncated)' 꼬리.
-    over-long 단일 줄은 max_width로 절단 (ffmpeg configuration: 대책).
+    (cmdline, "[Type] msg"). 출력은 stdout+stderr 합본 원문 전체.
+
+    [레이어 원칙] 수집층은 절대 절단하지 않는다. 원문은 history에 전량
+    기록되며, F12 적재 시점의 절취는 호출부(truncate_for_full_log)가 담당.
+    수집에서 자르면 원본이 영구 소실되어 복원 불가.
     """
     cmd = _cli_base(label)
     if not cmd:
@@ -9610,15 +9888,26 @@ def cli_raw(label, *args, timeout=15, max_lines=0, max_width=160):
     out = ((proc.stdout or "") + (proc.stderr or "")).strip()
     if not out:
         return " ".join(full_cmd), None
-    lines = out.splitlines()
-    # [F12 가독성] 장문 단일 줄 절단 (ffmpeg 'configuration:' 500자 대책)
+    return " ".join(full_cmd), out
+
+
+def truncate_for_full_log(out, max_lines=6, max_width=160):
+    """F12 적재 시점 절취 — history는 원문 전량을 이미 기록했으므로 뷰만 자른다.
+
+    max_lines>0 → 앞 N줄만 + '… (M lines truncated)' 꼬리.
+    over-long 단일 줄은 max_width로 절단 (ffmpeg configuration: 500자 대책).
+    """
+    text = str(out or "")
+    if not text:
+        return ""
+    lines = text.splitlines()
     if max_width and max_width > 0:
         lines = [l if len(l) <= max_width else l[:max_width] + "…" for l in lines]
     if max_lines and max_lines > 0 and len(lines) > max_lines:
         kept = lines[:max_lines]
         kept.append(f"… ({len(lines) - max_lines} lines truncated)")
-        return " ".join(full_cmd), "\n".join(kept)
-    return " ".join(full_cmd), "\n".join(lines)
+        return "\n".join(kept)
+    return "\n".join(lines)
 
 
 def _ffmpeg_version(path, timeout=3):
@@ -9887,9 +10176,9 @@ class YtLoggerBridge:
         raw_log.raw(
             "ytdlp",
             LogEvent(
-                stage="YTDLP",
+                stage="DL",
                 status="RUN",
-                platform="-",
+                scope="YTDL",
                 msg=msg,
                 is_status=True,
             ),
@@ -9908,9 +10197,9 @@ class YtLoggerBridge:
         raw_log.raw(
             "ytdlp",
             LogEvent(
-                stage="YTDLP",
+                stage="DL",
                 status=status,
-                platform="-",
+                scope="YTDL",
                 msg=clean_msg,
                 is_error=level == "error",
             ),
@@ -9918,7 +10207,7 @@ class YtLoggerBridge:
         if _MERGE_TEXT in clean_msg:
             raw_log.raw(
                 "dl",
-                LogEvent(stage="MERG", status="RUN", platform="-", msg="merging"),
+                LogEvent(stage="MERG", status="RUN", scope="FFMP", msg="merging"),
                 to_tui=True,
             )
         if _ALREADY_DOWNLOADED in clean_msg:
@@ -9932,8 +10221,8 @@ class YtLoggerBridge:
                 LogEvent(
                     stage="DL",
                     status="OK",
-                    platform="-",
-                    msg=f"skip — exists ({os.path.basename(fname)})",
+                    scope="YTDL",
+                    msg=f"skip - exists ({os.path.basename(fname)})",
                 ),
                 to_tui=True,
             )

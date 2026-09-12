@@ -65,8 +65,7 @@ class _RawDispatcher:
         event = LogEvent(
             stage="SYS",
             status="WARN",
-            platform="raw-log",
-            spec="-",
+            scope="RAW",
             msg=_HISTORY_SUMMARY,
             is_error=True,
         )
@@ -170,8 +169,7 @@ def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
         msg = LogEvent(
             stage="SYS",
             status="FAIL" if is_error else "OK",
-            platform="-",
-            spec="-",
+            scope="-",
             msg=str(msg),
             is_status=is_status,
             is_error=is_error,

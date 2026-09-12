@@ -59,8 +59,8 @@ def analyze_chzzk_clip_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 클립 detail API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk clip detail api failed (clip {clip_id}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -114,8 +114,8 @@ def analyze_chzzk_clip_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 클립 play-info API 실패 (clip {clip_id}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk clip play-info api failed (clip {clip_id}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -207,8 +207,8 @@ def analyze_chzzk_vod_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 VOD API 실패 (video/{video_no}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk vod api failed (video/{video_no}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -329,8 +329,8 @@ def analyze_chzzk_live_api(target_url):
         raw_log.raw(
             "chzzk",
             LogEvent(
-                stage="CHZ", status="WARN", platform="CHZ",
-                msg=f"치지직 LIVE API 실패 (live/{live_id}): {type(e).__name__}: {e}",
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk live api failed (live/{live_id}): {type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,
@@ -343,8 +343,8 @@ def analyze_chzzk_live_api(target_url):
             raw_log.raw(
                 "chzzk",
                 LogEvent(
-                    stage="CHZ", status="WARN", platform="CHZ",
-                    msg=f"치지직 LIVE 비방송 중 ({live_status}) — live/{live_id}",
+                    stage="ANAL", status="WARN", scope="CHZ",
+                    msg=f"chzzk live offline ({live_status}) - live/{live_id}",
                     is_error=False,
                 ),
                 to_tui=False,

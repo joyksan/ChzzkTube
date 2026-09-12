@@ -61,8 +61,8 @@ class _POTWorker(QThread):
             return
         stage = "SYS" if is_error else "POT"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        event = LogEvent(stage=stage, status=status, platform="pot",
-                         spec="-", msg=str(msg)[:120],
+        event = LogEvent(stage=stage, status=status, scope="POT",
+                         msg=str(msg)[:120],
                          is_status=is_status, is_error=is_error)
         raw_log.raw("pot", event, to_tui=True)
 
@@ -76,8 +76,8 @@ class _POTWorker(QThread):
         if self.mode == "prewarm":
             raw_log.raw("pot-DEBUG", str(msg))
         else:
-            event = LogEvent(stage="POT", status="RUN", platform="pot",
-                             spec="-", msg=str(msg)[:120])
+            event = LogEvent(stage="POT", status="RUN", scope="POT",
+                             msg=str(msg)[:120])
             raw_log.raw("pot", event, to_tui=True)
     
     def _run(self):

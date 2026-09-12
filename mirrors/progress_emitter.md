@@ -83,13 +83,12 @@ def emit_progress_tick(ctx, d):
         "dl",
         emit_dl(
             status="RUN",
-            platform=_dl_platform(ctx.current_url or ""),
-            spec=_dl_spec(ctx),
+            scope=_dl_platform(ctx.current_url or ""),
+            msg="",
             speed=speed_s,
             pct=pct,
             bar_frac=min(pct / 100.0, 1.0),
-            msg=title,
-            is_status=True,   # 진행률 틱은 새 줄 금지, 한 줄 덮어쓰기(갱신형)
+            is_status=True,
         ),
         to_tui=True,
     )
@@ -136,8 +135,8 @@ def emit_live_header(ctx, info, res_label=""):
     if res_label:
         raw_log.raw(
             "dl",
-            emit_dl("RUN", _dl_platform(ctx.current_url or ""),
-                    spec=res_label, stage="LIVE", msg=title),
+            emit_dl("RUN", scope=_dl_platform(ctx.current_url or ""),
+                    stage="LIVE", msg=title),
             to_tui=True,
         )
     else:
@@ -154,10 +153,10 @@ def emit_chzzk_header(ctx, ch_info, fmt):
     """치지직(클립/VOD) 헤더 — 컬럼 포맷 통일."""
     title = ch_info.get("videoTitle") or ch_info.get("title") or "untitled"
     fmt_desc = cli_format_desc(fmt) if fmt else ""
-    msg = f"chzzk — {title}"
+    msg = f"chzzk - {title}"
     if fmt_desc:
         msg += f" ({fmt_desc})"
-    raw_log.raw("dl", emit_event("DL", "RUN", "chzzk", msg), to_tui=True)
+    raw_log.raw("dl", emit_event("DL", "RUN", "CHZ", msg), to_tui=True)
     ctx._meta_logged = True
 
 
@@ -169,8 +168,7 @@ def emit_live_final_stats(ctx, total_bytes, start_time):
         "dl",
         emit_dl(
             status="DONE",
-            platform="-",
-            spec="-",
+            scope=_dl_platform(ctx.current_url or ""),
             speed=f"{format_bytes(rate)}/s",
             pct=100,
             bar_frac=1.0,

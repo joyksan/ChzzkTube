@@ -112,8 +112,7 @@ class DownloadWorker(QThread):
                     self.state["skip"] = False
                     raw_log.raw(
                         "dl",
-                        _pe.emit_dl("SKIP", "-", spec="-", speed="-", pct=None, bar_frac=None,
-                                    msg=f"skipped ({idx}/{self.total_count})"),
+                        _pe.emit_dl("SKIP", scope=_dl_platform(url), msg=f"skipped ({idx}/{self.total_count})"),
                         to_tui=True,
                     )
                     continue
@@ -140,22 +139,6 @@ class DownloadWorker(QThread):
                     "dl",
                     _pe.emit_event("DL", "WARN", "FFMP",
                                    "killed live recorder on worker terminate", is_error=True),
-                    to_tui=True,
-                )
-            except Exception:
-                pass
-            self._live_proc = None
-        super().terminate()
-
-    def kill_live_process(self):
-        """외부에서 라이브 녹화 프로세스만 강제 종료 (워커 스레드는 유지)."""
-        if self._live_proc is not None:
-            try:
-                self._live_proc.kill()
-                raw_log.raw(
-                    "dl",
-                    _pe.emit_event("DL", "WARN", "FFMP",
-                                   "killed live recorder externally", is_error=True),
                     to_tui=True,
                 )
             except Exception:

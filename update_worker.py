@@ -49,7 +49,7 @@ class UpdateWorker(QThread):
         except Exception as e:
             import traceback
             traceback.print_exc()
-            raw_log.raw("deps", LogEvent(stage="SYS", status="FAIL", platform="deps",
+            raw_log.raw("deps", LogEvent(stage="DEPS", status="FAIL", scope="DEPS",
                                          msg=f"worker crash: {e}", is_error=True), to_tui=True)
             self.check_done.emit([])
 
@@ -66,10 +66,10 @@ class UpdateWorker(QThread):
         for label, status, ver in updater.check_deps(
             log_func=lambda m: raw_log.raw(
                 "pot-readiness",
-                LogEvent(stage="POT", status="RUN", platform="pot", spec="-", msg=str(m)),
+                LogEvent(stage="POT", status="RUN", scope="POT", msg=str(m)),
             )
         ):
-            raw_log.raw("deps", emit_component("DEPS", status, label, ver), to_tui=True)
+            raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "streamlink": "STRE", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
         # [raw] 실제 CLI 실행 — 수집은 원문 전량(history), F12 적재 시 절취(뷰).
         # ffmpeg -version 원문은 configuration: 1줄이 500자 — 적재 시 6줄+160자 절단.
         for label, args in _RAW_VERSION_CMDS:
@@ -105,7 +105,7 @@ class UpdateWorker(QThread):
             event = LogEvent(
                 stage="DEPS",
                 status="FAIL" if is_error else ("RUN" if is_status else "OK"),
-                platform="deps", msg=str(msg),
+                scope="DEPS", msg=str(msg),
                 is_status=is_status, is_error=is_error,
             )
         show = bool(event.is_status or event.is_error
@@ -157,7 +157,7 @@ class UpdateWorker(QThread):
         if ff_err:
             ok_overall = False
             summaries.append(f"ffmpeg: {ff_err}")
-            raw_log.raw("deps", emit_component("DEPS", "FAIL", "ffmpeg", ff_err, is_error=True),
+            raw_log.raw("deps", emit_component("DEPS", "FAIL", "FFMP", ff_err, is_error=True),
                         to_tui=True)
         elif ffmpeg_acted[0]:
             summaries.append("ffmpeg provisioned")
@@ -175,7 +175,7 @@ class UpdateWorker(QThread):
             else:
                 raw_log.raw(
                     "deps",
-                    LogEvent(stage="DEPS", status="RUN", platform="node", msg=str(msg),
+                    LogEvent(stage="DEPS", status="RUN", scope="NODE", msg=str(msg),
                              is_status=is_status, is_error=is_error),
                     to_tui=True,
                 )
@@ -190,12 +190,12 @@ class UpdateWorker(QThread):
             else:
                 ok_overall = False
                 summaries.append("node setup failed")
-                raw_log.raw("deps", emit_component("DEPS", "FAIL", "node", "setup failed", is_error=True),
+                raw_log.raw("deps", emit_component("DEPS", "FAIL", "NODE", "setup failed", is_error=True),
                             to_tui=True)
         except Exception as e:
             ok_overall = False
             summaries.append(f"node: {e}")
-            raw_log.raw("deps", emit_component("DEPS", "FAIL", "node", str(e), is_error=True),
+            raw_log.raw("deps", emit_component("DEPS", "FAIL", "NODE", str(e), is_error=True),
                         to_tui=True)
 
         summary = "; ".join(summaries) if summaries else ""

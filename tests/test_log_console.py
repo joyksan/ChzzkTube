@@ -15,13 +15,12 @@ def _parts(line):
 
 class TestFormatLogLine:
     def test_basic_structure(self):
-        line = format_log_line(stage="DL", status="OK", platform="YT", msg="done")
+        line = format_log_line(stage="DL", status="OK", scope="YT", msg="done")
         parts = _parts(line)
-        # 고정 5칸: parts[0]="[ts] DL", [1]=STATUS, [2]=PLATFORM, [3]=SPEC(12폭), [4]=MSG
-        assert len(parts) == 5
+        # 고정 4칸: parts[0]="[ts] DL", [1]=STATUS, [2]=SCOPE, [3]=MSG
+        assert len(parts) == 4
         assert parts[1] == "OK"
         assert parts[2] == "YT"
-        assert parts[3] == "-"  # 빈 SPEC은 '-' 패딩
         assert parts[-1] == "done"
 
     def test_timestamp_present(self):
@@ -29,62 +28,38 @@ class TestFormatLogLine:
         assert line.startswith("[")
         assert "]" in line
 
-    def test_spec_fixed_width(self):
-        line = format_log_line(stage="DEPS", status="OK", platform="YTDL")
+    def test_scope_5width(self):
+        line = format_log_line(stage="DEPS", status="OK", scope="YTDL")
         parts = _parts(line)
-        assert parts[3] == "-"
-        line2 = format_log_line(stage="DL", status="RUN", platform="YT", spec="1080p30")
+        assert parts[2] == "YTDL"
+        line2 = format_log_line(stage="DL", status="RUN", scope="YT")
         parts2 = _parts(line2)
-        assert parts2[3] == "1080p30"
-        # SPEC 컬럼 폭은 12자로 고정 — 세로줄 정렬 유지
-        assert len(parts[3]) == 1 or True  # strip 후 값이므로 폭은 원문에서 확인
-        raw_spec = line2.split("│")[3]
-        assert len(raw_spec.strip()) <= 12
-        assert raw_spec == " 1080p30     " or len(raw_spec) == 14  # 양옆 공백+12폭
+        assert parts2[2] == "YT"
 
-    def test_spec_omitted_when_empty(self):
-        line = format_log_line(stage="DEPS", status="OK", platform="YTDL")
+    def test_progress_fixed_width(self):
+        """PCT 3폭 · SPEED 8폭 고정 — 지터링 방지."""
+        line = format_log_line(stage="DL", status="RUN", scope="YT",
+                               pct=65.0, bar_frac=0.65, speed="12.4M/s", msg="title")
         parts = _parts(line)
-        assert parts[3] == "-"
-
-    def test_spec_included_when_present(self):
-        line = format_log_line(stage="DL", status="RUN", platform="YT", spec="1080p30")
-        parts = _parts(line)
-        assert parts[3] == "1080p30"
-
-    def test_progress_bar_in_msg(self):
-        line = format_log_line(
-            stage="DL", status="RUN", platform="YT",
-            spec="1080p30", pct=50.0, bar_frac=0.5, msg="downloading"
-        )
-        parts = _parts(line)
-        assert len(parts) == 5  # SPEED/PCT/BAR 컬럼 없음 — MSG 통합
-        assert "50.0%" in parts[-1]
-        assert "downloading" in parts[-1]
-
-    def test_speed_in_msg_not_column(self):
-        line = format_log_line(
-            stage="DL", status="RUN", platform="YT",
-            spec="1080p30", speed="12.4M/s", pct=65.0, bar_frac=0.65, msg="title"
-        )
-        parts = _parts(line)
-        assert len(parts) == 5
+        assert len(parts) == 4
+        assert "65%" in parts[-1]
         assert "12.4M/s" in parts[-1]
-        assert "65.0%" in parts[-1]
-        assert "title" in parts[-1]
+        # ' 65%'와 '100%' 모두 3폭 — 폭 고정 확인
+        line100 = format_log_line(stage="DL", status="RUN", scope="YT",
+                                  pct=100.0, bar_frac=1.0, speed="9.1M/s", msg="t")
+        assert "100%" in line100
 
-    def test_speed_dash_omitted(self):
-        line = format_log_line(stage="DL", status="RUN", platform="YT", msg="done")
-        parts = _parts(line)
-        assert parts[-1] == "done"  # speed='-'·pct=None이면 extra 없음
+    def test_no_trailing_separator_when_no_msg(self):
+        line = format_log_line(stage="DEPS", status="OK", scope="YTDL")
+        assert not line.endswith("│")
 
-    def test_short_platform(self):
-        line = format_log_line(stage="DEPS", status="OK", platform="youtube")
+    def test_short_scope(self):
+        line = format_log_line(stage="DEPS", status="OK", scope="youtube")
         parts = _parts(line)
         assert parts[2] == "YT"
 
-    def test_no_trailing_separator_when_no_msg(self):
-        line = format_log_line(stage="DEPS", status="OK", platform="YTDL")
+    def test_no_trailing_separator_empty_scope(self):
+        line = format_log_line(stage="DEPS", status="OK", scope="")
         assert not line.endswith("│")
 
 
@@ -111,7 +86,7 @@ class TestFlowLinesNoWrapFlag:
         assert len(_flow_lines(plain, False)) > 1
 
     def test_legacy_is_tui_line_still_structural(self):
-        column = "[12:00:01] DL │ RUN │ YT │ 1080p30 │ - │ msg"
+        column = "[12:00:01] DL    │ RUN   │ YT    │ msg"
         assert is_tui_line(column) is True
         assert is_tui_line("[download] Destination: /tmp/foo.mp4") is False
 

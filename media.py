@@ -339,9 +339,9 @@ def remux_live_to_container(ts_path, container_setting="mp4"):
         raw_log.raw(
             "media",
             LogEvent(
-                stage="MEDIA", status="FAIL", platform="-",
-                msg=f"라이브 리먹싱 실패 — 원본 ts 보존됨 ({os.path.basename(ts_path)}): "
-                    f"{type(e).__name__}: {e}",
+                stage="MERG", status="FAIL", scope="FFMP",
+                msg=f"live remux failed - ts kept ({os.path.basename(ts_path)}): "
+                f"{type(e).__name__}: {e}",
                 is_error=True,
             ),
             to_tui=False,

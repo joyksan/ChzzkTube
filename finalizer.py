@@ -23,8 +23,7 @@ def finalize(ctx, total, failed_targets, success_count):
         else:
             raw_log.raw(
                 "dl",
-                emit_dl("ABORT", "-", spec="-", speed="-", pct=0, bar_frac=0,
-                        msg="download canceled by user"),
+                emit_dl("ABORT", scope=_dl_platform(ctx.current_url or ""), msg="download canceled by user"),
                 to_tui=True,
             )
 
@@ -46,9 +45,7 @@ def finalize(ctx, total, failed_targets, success_count):
         "dl",
         emit_dl(
             status="DONE" if fail_count == 0 else "WARN",
-            platform="-",
-            spec="-",
-            speed="-",
+            scope=_dl_platform(ctx.current_url or ""),
             pct=100,
             bar_frac=1.0,
             msg=f"batch finished (success: {success_count}, fail: {fail_count})",

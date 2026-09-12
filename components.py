@@ -68,7 +68,7 @@ def _download(url, dest, log, label="", is_status=False):
     
     is_status=True 면 진행률 로그를 상태 줄로 표시 (이전 줄 덮어쓰기).
     """
-    log(emit_component("DEPS", "RUN", "-", f"{label or os.path.basename(url)} fetching..."), is_status)
+    log(emit_component("DEPS", "RUN", "DEPS", f"{label or os.path.basename(url)} fetching..."), is_status)
     tmp = dest + ".part"
     with _http_get(url, timeout=60) as resp, open(tmp, "wb") as f:
         total = int(resp.headers.get("Content-Length") or 0)
@@ -84,9 +84,9 @@ def _download(url, dest, log, label="", is_status=False):
             if total < 8 * 1024 * 1024 or mb != last_mb and mb % 2 == 0:
                 last_mb = mb
                 pct = f" ({done * 100 // total}%)" if total else ""
-                log(emit_component("DEPS", "RUN", "-", f"{label or 'download'} {mb} MB{pct}"), is_status)
+                log(emit_component("DEPS", "RUN", "DEPS", f"{label or 'download'} {mb} MB{pct}"), is_status)
     os.replace(tmp, dest)
-    log(emit_component("DEPS", "OK", "-", f"{label or os.path.basename(dest)} done ({done / 1048576:.1f} MB)"))
+    log(emit_component("DEPS", "OK", "DEPS", f"{label or os.path.basename(dest)} done ({done / 1048576:.1f} MB)"))
     return dest
 
 
@@ -134,7 +134,7 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
             os.makedirs(os.path.dirname(d) or ".", exist_ok=True)
             shutil.move(s, d)
         _rmtree(tmp)
-    log(emit_component("DEPS", "OK", "-", f"{label} extracted → {os.path.relpath(dest_dir, components_root())}"))
+    log(emit_component("DEPS", "OK", "DEPS", f"{label} extracted → {os.path.relpath(dest_dir, components_root())}"))
 
 
 FFMPEG_DIRNAME = "ffmpeg"
@@ -196,23 +196,23 @@ def ensure_ffmpeg(log=None, force=False):
     - Linux: 시스템 ffmpeg 우선 → johnvansickle.com 정적 빌드 다운로드
     """
     log = _logcb(log)
-    log(emit_component("DEPS", "RUN", "ffmpeg", "checking..."))
+    log(emit_component("DEPS", "RUN", "FFMP", "checking..."))
     try:
         # 1. 시스템 ffmpeg 검색 (OS별 확장자 자동 처리)
         suffix = _exe_suffix()
         which = shutil.which("ffmpeg") or shutil.which(f"ffmpeg{suffix}")
         if which and not force:
             if os.access(which, os.X_OK) and _verify_ffmpeg(which):
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "ok"))
                 return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"found but not working ({which})"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"found but not working ({which})"))
 
         # 2. 로컬 캐시 확인
         cached = ffmpeg_exe()
         if cached and not force:
             _wire_ffmpeg_path(os.path.dirname(cached))
-            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+            log(emit_component("DEPS", "OK", "FFMP", "ok"))
             return None
 
         # 3. OS별 전략 호출
@@ -245,12 +245,12 @@ def _ensure_ffmpeg_windows(log, force):
     if not force:
         if os.path.isfile(exe_path):
             _wire_ffmpeg_path(bin_dir)
-            log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+            log(emit_component("DEPS", "OK", "FFMP", "ok"))
             return None
     
     # GitHub에서 다운로드
     os.makedirs(dest, exist_ok=True)
-    log(emit_component("DEPS", "RUN", "ffmpeg", "downloading..."))
+    log(emit_component("DEPS", "RUN", "FFMP", "downloading..."))
     
     with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
         zp = _download(FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg")
@@ -258,7 +258,7 @@ def _ensure_ffmpeg_windows(log, force):
     
     if os.path.isfile(exe_path):
         _wire_ffmpeg_path(bin_dir)
-        log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+        log(emit_component("DEPS", "OK", "FFMP", "ok"))
         return None
     
     return "ffmpeg.exe not found after extract"
@@ -274,10 +274,10 @@ def _ensure_ffmpeg_macos(log, force):
             # ffmpeg가 실제로 실행 가능한지 확인
             if _verify_ffmpeg(cached):
                 _wire_ffmpeg_path(os.path.dirname(cached))
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "ok"))
                 return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", "cached not working, reinstalling"))
+                log(emit_component("DEPS", "WARN", "FFMP", "cached not working, reinstalling"))
                 # 캐시된 ffmpeg가 작동하지 않으므로 삭제
                 try:
                     if os.path.exists(dest):
@@ -288,7 +288,7 @@ def _ensure_ffmpeg_macos(log, force):
     # Homebrew가 설치되어 있으면 brew install ffmpeg 시도
     brew_path = shutil.which("brew")
     if brew_path:
-        log(emit_component("DEPS", "RUN", "ffmpeg", "installing via Homebrew..."))
+        log(emit_component("DEPS", "RUN", "FFMP", "installing via Homebrew..."))
         import subprocess
         try:
             result = subprocess.run(
@@ -301,18 +301,18 @@ def _ensure_ffmpeg_macos(log, force):
                 # 설치 성공 - 경로 확인
                 ffmpeg_path = shutil.which("ffmpeg")
                 if ffmpeg_path and _verify_ffmpeg(ffmpeg_path):
-                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                    log(emit_component("DEPS", "OK", "FFMP", "ok"))
                     return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"brew install failed: {result.stderr[:100]}"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"brew install failed: {result.stderr[:100]}"))
         except subprocess.TimeoutExpired:
-            log(emit_component("DEPS", "WARN", "ffmpeg", "brew install timed out"))
+            log(emit_component("DEPS", "WARN", "FFMP", "brew install timed out"))
         except Exception as e:
-            log(emit_component("DEPS", "WARN", "ffmpeg", f"brew install error: {e}"))
+            log(emit_component("DEPS", "WARN", "FFMP", f"brew install error: {e}"))
 
     # Homebrew 실패 시 bottle 다운로드 시도
     try:
-        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading (Homebrew bottle)..."))
+        log(emit_component("DEPS", "RUN", "FFMP", "downloading (Homebrew bottle)..."))
         with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
             data = json.load(resp)
 
@@ -342,9 +342,9 @@ def _ensure_ffmpeg_macos(log, force):
                 got = _sha256(tar_path)
                 if got != sha256:
                     return f"ffmpeg bottle hash mismatch ({got[:12]}…)"
-                log(emit_component("DEPS", "OK", "ffmpeg", "SHA-256 ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "SHA-256 ok"))
 
-            log(emit_component("DEPS", "RUN", "ffmpeg", "extracting..."))
+            log(emit_component("DEPS", "RUN", "FFMP", "extracting..."))
             # 기존 디렉토리를 완전히 삭제
             if os.path.exists(dest):
                 shutil.rmtree(dest, ignore_errors=True)
@@ -377,7 +377,7 @@ def _ensure_ffmpeg_macos(log, force):
                 _wire_ffmpeg_path(ffmpeg_bin_dir)
                 # 설치 확인
                 if _verify_ffmpeg(ffmpeg_src):
-                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                    log(emit_component("DEPS", "OK", "FFMP", "ok"))
                     return None
                 else:
                     return "ffmpeg installed but not working (verification failed)"
@@ -417,10 +417,10 @@ def _ensure_ffmpeg_linux(log, force):
         if cached:
             if _verify_ffmpeg(cached):
                 _wire_ffmpeg_path(os.path.dirname(cached))
-                log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                log(emit_component("DEPS", "OK", "FFMP", "ok"))
                 return None
             else:
-                log(emit_component("DEPS", "WARN", "ffmpeg", "cached not working, reinstalling"))
+                log(emit_component("DEPS", "WARN", "FFMP", "cached not working, reinstalling"))
                 try:
                     if os.path.exists(dest):
                         shutil.rmtree(dest, ignore_errors=True)
@@ -436,7 +436,7 @@ def _ensure_ffmpeg_linux(log, force):
     ]
     for cmd, name in pkg_managers:
         if shutil.which(cmd[0]):
-            log(emit_component("DEPS", "RUN", "ffmpeg", f"installing via {name}..."))
+            log(emit_component("DEPS", "RUN", "FFMP", f"installing via {name}..."))
             try:
                 result = subprocess.run(
                     cmd, capture_output=True, text=True, timeout=300
@@ -444,22 +444,22 @@ def _ensure_ffmpeg_linux(log, force):
                 if result.returncode == 0:
                     ffmpeg_path = shutil.which("ffmpeg")
                     if ffmpeg_path and _verify_ffmpeg(ffmpeg_path):
-                        log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                        log(emit_component("DEPS", "OK", "FFMP", "ok"))
                         return None
             except subprocess.TimeoutExpired:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"{name} install timed out"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"{name} install timed out"))
             except Exception as e:
-                log(emit_component("DEPS", "WARN", "ffmpeg", f"{name} install error: {e}"))
+                log(emit_component("DEPS", "WARN", "FFMP", f"{name} install error: {e}"))
 
     # 정적 빌드 다운로드 (johnvansickle.com)
     try:
-        log(emit_component("DEPS", "RUN", "ffmpeg", "downloading (static build)..."))
+        log(emit_component("DEPS", "RUN", "FFMP", "downloading (static build)..."))
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
         with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
             tar_path = os.path.join(td, "ffmpeg.tar.xz")
             _download(url, tar_path, log, "ffmpeg", is_status=True)
 
-            log(emit_component("DEPS", "RUN", "ffmpeg", "extracting..."))
+            log(emit_component("DEPS", "RUN", "FFMP", "extracting..."))
             if os.path.exists(dest):
                 shutil.rmtree(dest, ignore_errors=True)
             os.makedirs(dest, exist_ok=True)
@@ -479,7 +479,7 @@ def _ensure_ffmpeg_linux(log, force):
                 os.chmod(ffmpeg_bin, 0o755)
                 if _verify_ffmpeg(ffmpeg_bin):
                     _wire_ffmpeg_path(dest)
-                    log(emit_component("DEPS", "OK", "ffmpeg", "ok"))
+                    log(emit_component("DEPS", "OK", "FFMP", "ok"))
                     return None
 
         return "ffmpeg binary not found after extract"

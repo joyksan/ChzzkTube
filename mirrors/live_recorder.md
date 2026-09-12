@@ -75,11 +75,7 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
                 "dl",
                 emit_dl(
                     status="FAIL",
-                    platform="-",
-                    spec="-",
-                    speed="-",
-                    pct=None,
-                    bar_frac=None,
+                    scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                     stage="LIVE",
                     msg="exit code error",
                     is_error=True,
@@ -96,13 +92,11 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
             "dl",
             emit_dl(
                 status="DONE",
-                platform="-",
-                spec="-",
-                speed="-",
+                scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                 pct=100,
                 bar_frac=1.0,
                 stage="LIVE",
-                msg=f"saved — {os.path.basename(out_path)} ({format_bytes(size)})",
+                msg=f"saved · {os.path.basename(out_path)} ({format_bytes(size)})",
             ),
             to_tui=True,
         )
@@ -144,7 +138,8 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
             if raw:
                 try:
                     raw_log.raw("ffmpeg",
-                                LogEvent(stage="FFMP", status="OK",
+                                LogEvent(stage="LIVE", status="RUN",
+                                         scope="FFMP",
                                          msg=raw.decode("utf-8", "replace").strip()))
                 except Exception:
                     pass
@@ -172,15 +167,12 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                         "dl",
                         emit_dl(
                             status="RUN",
-                            platform=_dl_platform(
+                            scope=_dl_platform(
                                 getattr(worker, "current_url", "") or ""
                             ),
-                            spec="-",
                             speed=f"{format_bytes(rate)}/s" if rate else "-",
-                            pct=None,
-                            bar_frac=None,
                             stage="LIVE",
-                            msg=f"recording — {fname}",
+                            msg=f"recording · {fname}",
                             is_status=True,  # 진행률 틱은 한 줄 덮어쓰기(갱신형)
                         ),
                         to_tui=True,
@@ -214,11 +206,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
             "dl",
             emit_dl(
                 status="FAIL",
-                platform="-",
-                spec="-",
-                speed="-",
-                pct=None,
-                bar_frac=None,
+                scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                 stage="LIVE",
                 msg=f"{log_tag} fail",
                 is_error=True,

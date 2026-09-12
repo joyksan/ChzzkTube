@@ -22,72 +22,106 @@
 
 ---
 
-## 1.1 개발 방향성 및 TUI 표준 (v3.1.0+)
+## 1.1 개발 방향성 및 TUI 표준 (v3.4.0+)
 
 ### 1. 핵심 철학 (Core Philosophy)
-- **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 위젯을 완전히 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃으로 전면 전환.
-- **도구의 순수성**: 개인용·비상업적 듀얼유즈 툴로서 미디어 추출 본연의 안정성과 속도에 집중. 외부 우회 로직은 아래 "단계적 우회 계층화" 원칙에 따라 기본을 안전 경로로 고정하고, 차단 시에만 점진적 폴백.
+- **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 요소를 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃을 유지한다.
+- **도구의 순수성**: 미디어 추출 본연의 안정성과 속도에 집중한다. 우회 로직은 단계적 폴백 원칙을 따른다.
+- **Zero Redundancy & Clean Termination**:
+  - 단일 라인 내 같은 의미의 단어/상태를 중복 출력하지 않는다.
+  - 내용 없는 빈 컬럼(`-`)과 행 말단의 방치된 구분자(`│`)를 배제한다.
+  - 타임스탬프와 컬럼 조판은 말단 렌더러(TUI/F12)에서 1회만 수행한다.
 
 ### 2. UI 레이아웃 & 폰트 표준
-- **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인 및 높낮이 튐 현상을 근본적으로 차단.
+- **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인과 높낮이 튐을 차단한다.
 - **Flat TUI 3-Layer 구조**:
-  - **Configuration Bar (상단)**: 저장 경로 및 클릭 가능한 ASCII 버튼 태그 (`[ F1: Change ]`, `[ F2: Open ]`, `[ F12: Full Log ]`, `[ F3: Settings ]`).
-  - **Input & Action Bar (중간)**: 프롬프트(`>`) 기반 URL 입력창. 레거시 `(x)` GUI 버튼을 제거하고 `[ ESC: Clear │ ENTER: Start ]` 단축키 중심 연동.
-  - **Live Console Monitor (하단, `stretch=1`)**: 메인 윈도우 면적을 100% 모니터링 로그에 할당. Raw 디버그 로그는 `F12` 독립 서브 윈도우(`QDialog`)로 완전 격리.
+  - **Configuration Bar (상단)**: 저장 경로와 단축키 배지 (`[ F1: Change ]`, `[ F2: Open ]`, `[ F3: Settings ]`, `[ F12: Full Log ]`).
+  - **Input & Action Bar (중간)**: 프롬프트(`>`) 기반 URL 입력창. `[ ESC: Clear │ ENTER: Start ]` 단축키를 사용한다.
+  - **Live Console Monitor (하단, `stretch=1`)**: 메인 로그를 표시한다. Raw 디버그 로그는 `F12` 독립 서브 윈도우로 격리한다.
 
-### 3. 고정 칼럼 로그 규격 (Column-Aligned Monitor Standard)
+### 3. 고정 칼럼 로그 규격 (v3.4.0+)
 
-#### 3.1 기본 포맷 (v3.1.0+)
-- **표준 출력 포맷**:
-  `[HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ MSG`
-  
-- **컬럼 역할 분리**:
-  - `SPEC`: 순수 미디어 스펙만 출력 (`1080p30`, `h264`, `opus`, `4K`, `2026.8.19` 등) — **채널명·제목·파일명·통계 금지**
-  - `MSG`: 가변 정보 (`제목`, `파일명`, `크기`, `속도`, `진행률` 등) — 길이 초과 시 `log_console._render_clamp` 픽셀 단위 절단 적용
+#### 3.1 기본 포맷
+```text
+[HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG
+```
 
-#### 3.2 STAGE 값
-- `SYS`: 시스템/시작 작업 (DEPS, POT, 업데이트, READY 등)
-- `ANAL`: 분석 단계 (비디오/오디오 포맷 분석)
-- `DL`: 다운로드 진행
-- `LIVE`: 라이브 스트리밍 녹화
-- `MERG`: 포맷 병합
-- `BATCH`: 배치 작업 완료
-- `DEPS`: 의존성 체크 (yt-dlp, streamlink, ffmpeg, node, pot)
-- `POT`: PO Token 서버 관련
+- `TIMESTAMP`: `[HH:MM:SS]` 10자 고정, 단일 스탬프
+- `STAGE`: 5자 고정 좌측 정렬
+- `STATUS`: 5자 고정 좌측 정렬
+- `SCOPE`: 5자 고정 좌측 정렬
+- `MSG`: 가변 텍스트, 초과 시 픽셀 단위 절단
+- `SPEC` 컬럼 폐지: 미디어/버전 메타데이터는 MSG 전두부 태그(`[1080p30]`, `[v2026.8.19]`)로 흡수
+- 빈 MSG에는 꼬리 구분자(`│`)를 출력하지 않는다
 
-#### 3.3 STATUS 값
-- `OK`: 작업 성공
-- `READY`: 시스템 준비 완료 (시작 신호)
-- `RUN`: 작업 중 (진행률 표시)
-- `DONE`: 작업 완료
-- `ABORT`: 사용자 취소
+#### 3.2 STAGE 값 (5자 규격)
+- `SYS`: 시스템 생명주기
+- `DEPS`: 의존성 검증 및 무결성 체크
+- `ANAL`: 메타데이터/스트림 분석
+- `DL`: 다운로드 파이프라인
+- `LIVE`: 실시간 녹화
+- `MERG`: 스트림 믹싱/컨테이너 변환
+- `BATCH`: 배치 처리
+- `POT`: PO Token 서버
+
+`MEDIA`, `CHZ`, `CK`, `API`는 독립 STAGE로 추가하지 않는다.
+- `media.remux` 실패 → `MERG`
+- `chzzk_api` 경고 → `ANAL`
+- 쿠키 오류 → `SYS`
+- API는 작업 단계가 아니라 발생 수단이므로 STAGE가 아닌 SCOPE/MSG로 표현
+
+#### 3.3 STATUS 값 (5자 규격)
+- `READY`: 준비 완료/입력 대기
+- `RUN`: 진행 중(대기/큐잉 포함)
+- `OK`: 단위 작업 성공
+- `DONE`: 전체 시퀀스 정상 종료
+- `SKIP`: 건너뛰기
+- `WARN`: 비치명적 경고
 - `FAIL`: 작업 실패
-- `WARN`: 경고
-- `SKIP`: 작업 건너뛰기
-- `END`: 스트림 종료 (라이브)
+- `ABORT`: 사용자 취소
+- `END`: 스트림 세션 종료
 
-#### 3.4 PLATFORM 값 (3-8자 축약)
-- 외부 의존성: `YTDL`, `STRE`, `FFMP`, `NODE`, `POT`
-- 영상 플랫폼: `YT`, `CHZK`, `NFX`, `TIKT` 등 (media.py `_EXTRACTOR_SHORT_STATIC` 참조)
-- 내부 구분: `VIDEO`, `AUDIO`, `SYS`
+`WAIT`는 독립 STATUS로 추가하지 않고 `RUN`으로 통합한다.
 
-#### 3.5 예시 로그
+#### 3.4 SCOPE 값 (발생지/대상, 5자 규격)
+- 외부 엔진: `YTDL`, `STRE`, `FFMP`, `NODE`, `POT`
+- 미디어 플랫폼: `YT`, `CHZ`, `TW`, `TIKT`, `IG`, `X`, `BILI`, `AFTV`
+- 시스템 도메인: `MAIN`, `RAW`, `QUEUE`, `DISK`
+- 미지원 값은 확장 예약이며 신규 발행점을 만들지 않는다.
+- 스트림 코덱/미디어 속성은 SCOPE가 아닌 MSG 내부 태그로 위임한다.
 
-[13:34:23] DEPS  │ OK   │ YTDL  │ 2026.8.19 │ 
-[13:34:23] DEPS  │ OK   │ STRE  │ 8.5.0     │ 
-[13:34:23] DEPS  │ OK   │ FFMP  │ 9.0.1     │ 
-[13:34:23] DEPS  │ OK   │ NODE  │ v22       │ 
-[13:34:23] DEPS  │ OK   │ POT   │ running   │ 
-[13:34:23] SYS   │ READY│ SYS   │     -     │ ready
-[13:34:24] ANAL  │ OK   │ YT    │ 1080p30   │ stream analyzed · YTN · "제목"
-[13:34:25] ANAL  │ OK   │ VIDEO │ h264      │ 
-[13:34:25] ANAL  │ OK   │ AUDIO │ opus      │ 
-[13:34:26] DL    │ RUN  │ YT    │ 1080p30   │ 12.4M/s · 65% · [█⋯░]
-[13:34:30] DL    │ OK   │ YT    │     -     │ video.mp4 (11.56 MB) · YTN
+#### 3.5 진행률 바 지터링 방지 규격
+```text
+[tag] <PCT>% · <SPEED> <GAUGE> · <MSG>
+```
+
+- `PCT`: 3자리 우측 정렬(` 65%`, `100%`)
+- `SPEED`: 8자리 우측 정렬(` 12.4M/s`, ` 980.2K/s`)
+- `GAUGE`: 고정 10블록(`[██████░░░░]`)
+- 순서: `PCT → SPEED → GAUGE → MSG`
+
+#### 3.6 예시 로그
+```text
+[03:17:20] DEPS │ OK   │ YTDL │ [v2026.8.19] verified
+[03:17:20] DEPS │ OK   │ STRE │ [v8.5.0] verified
+[03:17:20] DEPS │ OK   │ FFMP │ [v9.0.1] verified
+[03:17:20] DEPS │ OK   │ NODE │ [v22.23.2] verified
+[03:17:20] DEPS │ OK   │ POT  │ [running] port 4416
+[03:17:21] SYS  │ READY│ MAIN │ ready - input unlocked
+[03:17:22] ANAL │ RUN  │ YT   │ probing stream manifest...
+[03:17:22] ANAL │ OK   │ YT   │ [1080p30] analyzed · YTN · "news"
+[03:17:22] ANAL │ OK   │ YT   │ [H264/VP9/OPUS/AAC] streams isolated
+[03:17:23] DL   │ RUN  │ YT   │ [1080p30]  65% ·  12.4M/s [██████░░░░]
+[03:17:23] DL   │ RUN  │ YT   │ [1080p30] 100% ·   4.1M/s [██████████]
+[03:17:24] MERG │ RUN  │ FFMP │ muxing audio and video streams...
+[03:17:25] DL   │ OK   │ YT   │ saved · video.mp4 (11.56MB)
+```
 
 ### 4. 시각적 디테일 및 영문 미니멀화
-- **파스텔 톤 에러 컬러**: 눈 피로도를 높이는 원색 Red(`#FF0000`)를 Soft Pastel Red(`#E06C75` / `#F87171`)로 교체.
-- **MSG 영문 미니멀화**: 서술형 한글 문장을 배제하고 1~3단어 수준의 소문자 영문 CLI 태그로 축소 (`deps ok`, `pot server bound`, `stream analyzed`, `download canceled by user`).
+- **파스텔 팔레트는 현행 유지**: `SUCCESS #6a9955`, `ERROR #e06c75`, `WARN #e5c07b`.
+- `MSG`는 영문 소문자 CLI 태그를 원칙으로 한다.
+- 채널명/영상 제목 같은 사용자 데이터는 번역하지 않는다.
+- TUI와 F12 모두 발행된 원문을 동일하게 보존한다.
 
 ### 5. 단계적 우회 계층화 (Tiered Bypass Architecture)
 YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.

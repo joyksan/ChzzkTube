@@ -47,7 +47,7 @@ class StartupCoordinator(QObject):
         from log_event import LogEvent
         raw_log.raw(
             "startup",
-            LogEvent(stage=stage, status=status, platform="SYS", msg=msg,
+            LogEvent(stage=stage, status=status, scope="MAIN", msg=msg,
                      is_status=is_status, is_error=is_error),
             to_tui=True,
         )
@@ -77,7 +77,7 @@ class StartupCoordinator(QObject):
             self._state.set_pot(status, ready=ready)
             self._try_emit_ready()
 
-    def report_ready(self, ok: bool = True, msg: str = "ready"):
+    def report_ready(self, ok: bool = True, msg: str = "ready — input unlocked"):
         with self._lock:
             if self._state.ready_emitted:
                 return
@@ -102,7 +102,7 @@ class StartupCoordinator(QObject):
                 return
             self._fallback_done = True
         self._pot.cancel()
-        self.report_ready(True, "ready (fallback timeout)")
+        self.report_ready(True, "ready — input unlocked (fallback timeout)")
 
     # ── READY 발산 게이트 ────────────────────────────────────
 
@@ -110,8 +110,8 @@ class StartupCoordinator(QObject):
         with self._lock:
             if self._state.can_emit_ready():
                 self._state.mark_ready_emitted()
-                self._emit("SYS", "READY", "ready")
-                self.ready_emitted.emit("SYS", False, "ready")
+                self._emit("SYS", "READY", "ready — input unlocked")
+                self.ready_emitted.emit("SYS", False, "ready — input unlocked")
                 self.ui_unlocked.emit()
 
     # ── 테스트 호환 프로퍼티 ──────────────────────────────────
