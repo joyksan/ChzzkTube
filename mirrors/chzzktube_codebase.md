@@ -8435,6 +8435,7 @@ MIRROR_MODULES = [
     "node_provider",
     "playlist",
     "po_client",
+    "pot_manager",
     "pot_provider",
     "pot_server",
     "progress_emitter",
@@ -8442,6 +8443,7 @@ MIRROR_MODULES = [
     "smoke_test",
     "speed_window",
     "startup_coordinator",
+    "startup_state",
     "sync_mirrors",
     "target_downloader",
     "theme",
@@ -8470,7 +8472,9 @@ def sync_module(name: str, dry_run: bool = False) -> int:
         return 0
 
     action = "확인" if dry_run else "갱신"
-    print(f"[{action}] {clean_name}.py -> mirrors/{clean_name}.md ({len(content)} bytes)")
+    print(
+        f"[{action}] {clean_name}.py -> mirrors/{clean_name}.md ({len(content)} bytes)"
+    )
     if not dry_run:
         MIRRORS_DIR.mkdir(parents=True, exist_ok=True)
         dst.write_bytes(content)
@@ -8480,7 +8484,18 @@ def sync_module(name: str, dry_run: bool = False) -> int:
 def build_codebase_bundle():
     """모든 .py 소스를 mirrors/chzzktube_codebase.md 단일 합본으로 번들링한다."""
     bundle_path = MIRRORS_DIR / "chzzktube_codebase.md"
-    exclude_dirs = {".git", ".github", ".venv", "venv", "__pycache__", ".pytest_cache", "build", "dist", "tests", "mirrors"}
+    exclude_dirs = {
+        ".git",
+        ".github",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        "build",
+        "dist",
+        "tests",
+        "mirrors",
+    }
 
     MIRRORS_DIR.mkdir(parents=True, exist_ok=True)
     with open(bundle_path, "w", encoding="utf-8") as outfile:
@@ -8491,7 +8506,9 @@ def build_codebase_bundle():
                 if file.endswith(".py"):
                     rel = os.path.relpath(os.path.join(root, file), ROOT)
                     outfile.write(f"\n## File: {rel}\n\n```python\n")
-                    with open(os.path.join(root, file), "r", encoding="utf-8", errors="ignore") as infile:
+                    with open(
+                        os.path.join(root, file), "r", encoding="utf-8", errors="ignore"
+                    ) as infile:
                         outfile.write(infile.read())
                     outfile.write("\n```\n")
     print(f"[생성] mirrors/{bundle_path.name} 합본 생성 완료")
@@ -8531,6 +8548,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
 ```
 
 ## File: target_downloader.py
