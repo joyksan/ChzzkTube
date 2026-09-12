@@ -698,35 +698,44 @@ def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar
         [HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ MSG
 
     특징:
+    - 고정 5칸 구조: STAGE(8) · STATUS(8) · PLATFORM(8) · SPEC(12) · MSG(가변).
     - SPEC: 순수 미디어 스펙만 (1080p30, h264, opus 등). 파일명·채널명 금지.
-    - MSG: 제목·파일명·속도·진행률·바 등 가변 정보.
-    - PCT/BAR는 SPEC 오른쪽에 MSG로 통합해 세로 정렬 안정화.
+      비어 있으면 '-' 1글자를 12칸으로 패딩해 세로 정렬을 유지한다
+      (collapse 대신 고정폭 — 스냅샷 호환).
+    - SPEED/PCT/BAR는 별도 컬럼이 아니라 MSG 선두(extra)로 통합한다.
+      가변 통계가 컬럼 폭을 흔들어 세로줄이 어긋나는 것을 방지한다.
+      예: "12.4M/s · 65.0% · [████░░░░░░] · 제목".
 
     인자:
         stage    : SYS / ANAL / DL / LIVE / MERG / BATCH / DEPS / POT ...
         status   : OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP ...
         platform : yt / chzzk / ytdlp / streamlink / pot / deps 등 (8자 축약)
         spec     : 스트림 속성 전용 (예: 1080p30, h264) — 파일명·통계 금지
-        speed    : 네트워크 속도 전용 (예: 12.4M/s) — 카운터·기타 금지
-        pct      : 진행률 (0~100, None 가능)
-        bar_frac : 진행 바 (0.0~1.0, None 가능)
+        speed    : 네트워크 속도 전용 (예: 12.4M/s) — MSG 선두로 통합, 컬럼 없음
+        pct      : 진행률 (0~100, None 가능) — MSG 선두로 통합, 컬럼 없음
+        bar_frac : 진행 바 (0.0~1.0, None 가능) — MSG 선두로 통합, 컬럼 없음
         msg      : 제목·파일명·시스템 메시지 (예산 초과 시 자동 절단)
     """
     stage_s = str(stage).upper()[:8].ljust(8)
     status_s = str(status).upper()[:8].ljust(8)
     plat_s = _short_platform(platform)[:8].ljust(8)
-    spec_s = str(spec or "-")
-    speed_s = str(speed or "-")
+    spec_raw = str(spec or "-").strip() or "-"
+    spec_s = spec_raw[:12].ljust(12)
     pct_s = _log_pct(pct)
     bar_s = _log_bar(bar_frac)
 
-    # [핵심] PCT와 BAR를 MSG에 통합해 고정 5칸 구조 유지
-    extra = ""
+    # [핵심] SPEED/PCT/BAR를 MSG 선두(extra)에 통합해 고정 5칸 구조 유지.
+    # speed는 '-'·빈 값이면 생략, pct는 None이면 생략한다.
+    extra_parts = []
+    speed_clean = str(speed or "").strip()
+    if speed_clean and speed_clean != "-":
+        extra_parts.append(speed_clean)
     if pct is not None:
-        extra = f"{pct_s} · {bar_s}"
+        extra_parts.append(f"{pct_s} · {bar_s}")
+    extra = " · ".join(extra_parts)
 
     head = _log_ts() + " " + stage_s
-    rest = [status_s, plat_s, spec_s, speed_s]
+    rest = [status_s, plat_s, spec_s]
     fixed = head + " │ " + " │ ".join(rest)
 
     if msg:
@@ -735,8 +744,8 @@ def format_log_line(stage, status, platform="", spec="", speed="", pct=None, bar
             full_msg = f"{extra} · {msg}" if extra else msg
         else:
             full_msg = extra
-        return fixed + " │ " + full_msg
-    return fixed
+        return fixed + " │ " + full_msg if full_msg else fixed
+    return fixed + " │ " + extra if extra else fixed
 
 
 def format_log_line_for_event(event):

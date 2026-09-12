@@ -1025,12 +1025,16 @@ class MainWindow(QMainWindow):
         self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
-        """F12 렌더러 — 구조화 이벤트를 콘솔 포맷터로 복원한다."""
+        """F12 렌더러 — 원문 보관소. 컬럼화하지 않고 event.msg 원문을 적재한다.
+
+        컬럼화는 TUI 말단(_render_concise)의 책임이다. F12가 컬럼 문자열을
+        적재하면 (1) 원문이 영구 소실되고 (2) _log_ts + _mirror_full_log의
+        이중 타임스탬프가 발생한다. 스탬핑은 _mirror_full_log 1곳에서만.
+        """
         from log_event import LogEvent
         if isinstance(event, LogEvent):
-            # F12는 event.msg만 추출하던 기존 경로를 탈피해 stage/status/spec 등
-            # 구조화 컨텍스트를 보존한다. rendered 이벤트는 원문 포맷을 유지한다.
-            line = log_console.format_log_line_for_event(event)
+            # rendered 이벤트든 아니든 msg 원문을 그대로 보존한다.
+            line = event.msg if event.msg else ""
             if is_status:
                 self._last_status_line = line
             self._mirror_full_log(line, is_status)

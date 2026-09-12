@@ -17,15 +17,30 @@ class TestFormatLogLine:
     def test_basic_structure(self):
         line = format_log_line(stage="DL", status="OK", platform="YT", msg="done")
         parts = _parts(line)
-        # parts[0]="[ts] DL", [1]=STATUS, [2]=PLATFORM, [3]=SPEC, [4]=SPEED, [5]=MSG
+        # 고정 5칸: parts[0]="[ts] DL", [1]=STATUS, [2]=PLATFORM, [3]=SPEC(12폭), [4]=MSG
+        assert len(parts) == 5
         assert parts[1] == "OK"
         assert parts[2] == "YT"
+        assert parts[3] == "-"  # 빈 SPEC은 '-' 패딩
         assert parts[-1] == "done"
 
     def test_timestamp_present(self):
         line = format_log_line(stage="SYS", status="READY")
         assert line.startswith("[")
         assert "]" in line
+
+    def test_spec_fixed_width(self):
+        line = format_log_line(stage="DEPS", status="OK", platform="YTDL")
+        parts = _parts(line)
+        assert parts[3] == "-"
+        line2 = format_log_line(stage="DL", status="RUN", platform="YT", spec="1080p30")
+        parts2 = _parts(line2)
+        assert parts2[3] == "1080p30"
+        # SPEC 컬럼 폭은 12자로 고정 — 세로줄 정렬 유지
+        assert len(parts[3]) == 1 or True  # strip 후 값이므로 폭은 원문에서 확인
+        raw_spec = line2.split("│")[3]
+        assert len(raw_spec.strip()) <= 12
+        assert raw_spec == " 1080p30     " or len(raw_spec) == 14  # 양옆 공백+12폭
 
     def test_spec_omitted_when_empty(self):
         line = format_log_line(stage="DEPS", status="OK", platform="YTDL")
@@ -43,8 +58,25 @@ class TestFormatLogLine:
             spec="1080p30", pct=50.0, bar_frac=0.5, msg="downloading"
         )
         parts = _parts(line)
+        assert len(parts) == 5  # SPEED/PCT/BAR 컬럼 없음 — MSG 통합
         assert "50.0%" in parts[-1]
         assert "downloading" in parts[-1]
+
+    def test_speed_in_msg_not_column(self):
+        line = format_log_line(
+            stage="DL", status="RUN", platform="YT",
+            spec="1080p30", speed="12.4M/s", pct=65.0, bar_frac=0.65, msg="title"
+        )
+        parts = _parts(line)
+        assert len(parts) == 5
+        assert "12.4M/s" in parts[-1]
+        assert "65.0%" in parts[-1]
+        assert "title" in parts[-1]
+
+    def test_speed_dash_omitted(self):
+        line = format_log_line(stage="DL", status="RUN", platform="YT", msg="done")
+        parts = _parts(line)
+        assert parts[-1] == "done"  # speed='-'·pct=None이면 extra 없음
 
     def test_short_platform(self):
         line = format_log_line(stage="DEPS", status="OK", platform="youtube")

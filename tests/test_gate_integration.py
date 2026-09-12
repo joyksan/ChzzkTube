@@ -53,14 +53,15 @@ def test_pending_download_not_resumed_on_failure():
     assert m.started == []
 
 
-def test_full_log_mirror_uses_structured_format():
+def test_full_log_mirror_preserves_raw_msg():
     m = _FakeMain()
     ev = LogEvent(stage="DL", status="RUN", platform="YT", spec="1080p30",
+                  speed="12.4M/s", pct=50.0, bar_frac=0.5,
                   msg="video title", is_status=True)
     main_module.MainWindow._mirror_event_full(m, ev, True)
-    expected = format_log_line_for_event(ev)
-    assert m.rendered and m.rendered[0][0] == expected
-    assert m._last_status_line == expected
+    # F12는 원문 보관소 — 컬럼화하지 않고 msg 원문을 적재한다 (이중 ts 방지).
+    assert m.rendered and m.rendered[0][0] == "video title"
+    assert m._last_status_line == "video title"
 
 
 def test_emit_format_logs_uses_bus():

@@ -207,16 +207,26 @@ class TestPotProviderFacade:
         assert results["pot"][0] == "SKIP"
         assert len(notes) == 1, f"readiness log must fire once, got {len(notes)}"
 
-    def test_cli_raw_truncation(self):
-        """cli_raw: 장문 줄 절단 + max_lines 꼬리."""
+    def test_cli_raw_returns_full_output(self):
+        """cli_raw: 수집층은 원문 전량 반환 (절취는 truncate_for_full_log가 담당)."""
         import updater
         long_line = "configuration: " + "x" * 500
         with patch_cli_raw_output(long_line + "\nline2\nline3"):
-            cmdline, out = updater.cli_raw("ffmpeg", "-version", max_lines=2, max_width=160)
+            cmdline, out = updater.cli_raw("ffmpeg", "-version")
         assert cmdline is not None
         out_lines = out.splitlines()
-        assert len(out_lines[0]) <= 161  # 160 + …
-        assert out_lines[-1].endswith("lines truncated)")
+        assert len(out_lines) == 3  # 수집층 절단 없음
+        assert len(out_lines[0]) == len(long_line)
+
+    def test_truncate_for_full_log(self):
+        """truncate_for_full_log: F12 적재 시 장문 줄 절단 + max_lines 꼬리."""
+        import updater
+        long_line = "configuration: " + "x" * 500
+        cut = updater.truncate_for_full_log(long_line + "\nline2\nline3",
+                                            max_lines=2, max_width=160)
+        cut_lines = cut.splitlines()
+        assert len(cut_lines[0]) <= 161  # 160 + …
+        assert cut_lines[-1].endswith("lines truncated)")
 
     def test_pid_alive_self(self):
         """_pid_alive: 자기 PID는 살아있음, 존재 불가 PID는 죽음."""
