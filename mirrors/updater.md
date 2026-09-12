@@ -242,14 +242,15 @@ def _cli_env(label):
     return env
 
 
-def cli_raw(label, *args, timeout=15, max_lines=0, max_width=160):
+def cli_raw(label, *args, timeout=15):
     """실제 CLI를 실행해 '터미널에서 친 것과 동일한 원문 출력'을 반환.
 
     반환: (cmdline, output) — 도구 없으면 (None, None), 실행 예외면
-    (cmdline, "[Type] msg"). 출력은 stdout+stderr 합본 원문.
-    호출부(F12 상세 로그)가 '$ <cmd>' + 원문 라인을 그대로 적재한다.
-    max_lines>0 → 앞 N줄만 + '… (M lines truncated)' 꼬리.
-    over-long 단일 줄은 max_width로 절단 (ffmpeg configuration: 대책).
+    (cmdline, "[Type] msg"). 출력은 stdout+stderr 합본 원문 전체.
+
+    [레이어 원칙] 수집층은 절대 절단하지 않는다. 원문은 history에 전량
+    기록되며, F12 적재 시점의 절취는 호출부(truncate_for_full_log)가 담당.
+    수집에서 자르면 원본이 영구 소실되어 복원 불가.
     """
     cmd = _cli_base(label)
     if not cmd:
@@ -272,15 +273,26 @@ def cli_raw(label, *args, timeout=15, max_lines=0, max_width=160):
     out = ((proc.stdout or "") + (proc.stderr or "")).strip()
     if not out:
         return " ".join(full_cmd), None
-    lines = out.splitlines()
-    # [F12 가독성] 장문 단일 줄 절단 (ffmpeg 'configuration:' 500자 대책)
+    return " ".join(full_cmd), out
+
+
+def truncate_for_full_log(out, max_lines=6, max_width=160):
+    """F12 적재 시점 절취 — history는 원문 전량을 이미 기록했으므로 뷰만 자른다.
+
+    max_lines>0 → 앞 N줄만 + '… (M lines truncated)' 꼬리.
+    over-long 단일 줄은 max_width로 절단 (ffmpeg configuration: 500자 대책).
+    """
+    text = str(out or "")
+    if not text:
+        return ""
+    lines = text.splitlines()
     if max_width and max_width > 0:
         lines = [l if len(l) <= max_width else l[:max_width] + "…" for l in lines]
     if max_lines and max_lines > 0 and len(lines) > max_lines:
         kept = lines[:max_lines]
         kept.append(f"… ({len(lines) - max_lines} lines truncated)")
-        return " ".join(full_cmd), "\n".join(kept)
-    return " ".join(full_cmd), "\n".join(lines)
+        return "\n".join(kept)
+    return "\n".join(lines)
 
 
 def _ffmpeg_version(path, timeout=3):

@@ -1,15 +1,15 @@
 # HANDOVER.md — ChzzkTube 인수인계서
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
-> 코드 수정 전 반드시 **§1.1 개발 방향성**과 **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: v3.3.1 — 2026-09-12 계층 모숭 정리 — po_client L0 순수화(pot_server 역참조 철거)·live_recorder 모듈 함수 계약 수리·worker_context/pot_provider.POTProviderWorker 좀비 제거·main _GuiLogBridge QueuedConnection 스레드 경계 분리 — 기동 게이트 신뢰 복구(pot_ready 토큰 계약·use_existing·_pending_download 회수) — §3 기동 시퀀스/POT 구동 트리 신설
+> 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
+> 마지막 갱신: v3.4.0 — 2026-09-13 4컬럼 로그 규격 — SPEC/PLATFORM 컬럼 폐지·SCOPE 통합·미디어/버전 MSG 태그화·고정 폭 진행률·문서/미러 정합성
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.3.1` — 정의 위치 `config._APP_VERSION` (최신: 2026-09-12 계층 모숭 정리·기동 게이트 신뢰 복구·Qt 스레드 경계 분리)
+- **버전**: `v3.4.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.4.0"` (최신: 2026-09-13 4컬럼 로그 규격·문서/미러 정합성)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -22,7 +22,80 @@
 
 ---
 
-## 1.1 개발 방향성 및 TUI 표준 (v3.4.0+)
+## 1.1 버전 관리 절차
+
+### 1.1.1 버전 진실 공급원과 정책
+
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.4.0`이다.
+- `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
+- 비공개 개발은 semver-lite를 따른다.
+  - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
+  - `minor`: 기능 추가, 대형 리팩토링, 아키텍처 재편 등 사용자/호출부 관점의 기능 지평이 바뀔 때
+  - `patch`: 버그 수정, 로그·색상·판정 문구, 성능 다듬기 등 기능 지평 변화 없는 안정 작업
+- 비공개 개발은 patch 단위로 커밋/중간 상태를 구분하고, 외부 공개 또는 배포 마일스톤에서 major/minor 레이블을 의미에 맞게 붙인다.
+- 버전 변경 사유는 `HANDOVER.md` §9 변경 테이블과 `CHANGELOG.md` 최신 엔트리에 함께 기록한다.
+
+### 1.1.2 버전 증가 절차
+
+1. 변경 성격에 따라 `major`/`minor`/`patch` 증가를 결정한다.
+2. `config.py`의 `_APP_VERSION`를 먼저 수정한다. 앱 화면, 부트 로그, 히스토리 세션 마커는 이 값을 사용한다.
+3. `pyproject.toml`의 `version`과 `uv.lock`의 루트 `[[package]] name = "chzzktube"` 버전을 같은 숫자로 맞춘다.
+4. `HANDOVER.md` 머리글/개요/최신 변경 이력과 `CHANGELOG.md` 최신 엔트리를 갱신한다.
+5. `python sync_mirrors.py`로 `mirrors/config.md`와 `mirrors/chzzktube_codebase.md`를 재생성한다.
+6. 다음 정합성 조건을 확인한다.
+   - `config._APP_VERSION == "v" + pyproject.toml version`
+   - `uv.lock` 루트 프로젝트 버전이 `pyproject.toml`과 동일
+   - `HANDOVER.md`, `CHANGELOG.md`, README의 현재 버전 표기가 동일
+   - `python sync_mirrors.py --check`가 변경 0건/누락 0건을 반환
+
+### 1.1.3 `bump_version.py` 제한
+
+- `bump_version.py`는 `config.py`의 `_APP_VERSION`에서 patch 숫자만 `+1`하는 보조 스크립트다.
+- `major`/`minor` 증가는 지원하지 않으며, `pyproject.toml`, `uv.lock`, `HANDOVER.md`, `CHANGELOG.md`, `README.md`, Python 미러는 자동 갱신하지 않는다.
+- 따라서 릴리스/배포 버전 변경 시에는 위 §1.1.2 절차를 수동으로 완수해야 하며, `python bump_version.py` 실행 후 `config.py`만 바뀌었다고 완료 처리하면 안 된다.
+
+## 1.2 경로 계약
+
+### 1.2.1 기본 디렉터리
+
+| 경로/상수 | 소스(Dev) | PyInstaller(frozen/onedir) | 용도 |
+|---|---|---|---|
+| `BASE_DIR` | 프로젝트 루트 | `sys._MEIPASS` | 번들 리소스·파이썬 모듈 탐색 |
+| `CONFIG_DIR` | 프로젝트 루트 | 실행 파일(`sys.executable`) 디렉터리 | `dl_config.json`과 설정 저장 |
+| `CONFIG_FILE` | `<repo>/dl_config.json` | `<exe-dir>/dl_config.json` | UTF-8, indent=4 설정 파일 |
+| `LOG_DIR` | `<repo>/logs/` | `<exe-dir>/logs/` | `chzzktube_YYYY-MM-DD.log`, 30일 보존 |
+| `ICON_PATH` | `<BASE_DIR>/icon.ico` | `<BASE_DIR>/icon.ico` | 창 아이콘 |
+| `writable_base()` | `$HOME/.chzzktube` | Windows는 `%LOCALAPPDATA%/ChzzkTube`, 그 외는 `$HOME/.chzzktube` | 쓰기 보장 사용자 데이터/캐시 루트 |
+
+- `CONFIG_DIR`는 설정 저장 위치이며, `download_path`의 기본값으로도 사용된다. 사용자는 `dl_config.json`에서 별도 다운로드 경로를 지정할 수 있다.
+- `CHZZKTUBE_COMPONENTS_DIR` 환경 변수가 설정되면 `components.components_root()`가 그 경로를 최우선으로 사용한다. 미설정 시 소스는 `<repo>/components`, frozen은 `<exe-dir>/components`다.
+
+### 1.2.2 런타임 캐시·외부 구성요소
+
+`writable_base()` 아래의 주요 경로는 다음 계약을 따른다.
+
+| 경로 | 소유/용도 |
+|---|---|
+| `ffmpeg/` | `components.py`의 ffmpeg 수급·검증 캐시. 실제 실행 파일은 하위 `bin/` 등에서 탐색 |
+| `node/` | `node_provider.py`의 Node.js 22+ 포터블 런타임과 npm 무결성 관리 |
+| `bgutil-ytdlp-pot-provider/` | `pot_server.server_home()`의 PO 서버 소스/빌드. `server/.version`으로 설치 버전 판정 |
+| `bgutil_server.log` | PO 서버 기동/빌드 진단 로그 |
+| `.prewarm.lock` | PO 서버 프리웜 상호배제 락. 죽은 PID + 30분 초과 시 stale 회수 |
+| `yt_dlp_plugins/` | 구 PO 플러그인 잔재 제거 대상. 현행 자체 Node 서버와는 별도 정리 경로 |
+
+- Node 런타임 다운로드 아카이브는 일시적으로 `writable_base()/node_portable.zip` 또는 `node_portable.tar.gz`에 저장한 뒤 전개한다.
+- PO 서버 소스 갱신은 `tempfile.mkdtemp(prefix="chzzktube_bgutil_")`의 임시 디렉터리에서 수행하고, 완료 후 `server_home()`으로 원자적으로 반영한다.
+- ffmpeg 수급은 `*.part`/임시 디렉터리를 사용하고 성공 시 최종 경로로 교체한다. 실패한 기존 캐시는 경고 후 재수급한다.
+- frozen 빌드의 PO 서버 번들 자료는 PyInstaller `_MEIPASS` 아래 `bgutil-ytdlp-pot-provider/`를 우선 참조하되, 쓰기 가능한 사용자 경로가 이미 존재하면 해당 경로를 서버 홈으로 사용한다.
+
+### 1.2.3 경로 관련 불변식
+
+- 설정/로그/외부 구성요소의 기본 경로는 `config.py`의 상수와 `writable_base()`를 단일 출처로 사용한다.
+- frozen과 Dev의 경로 차이는 `config.resolve_dirs()`와 각 구성요소 헬퍼에서만 해석한다. UI/워커가 직접 절대 경로를 조립하지 않는다.
+- `CHZZKTUBE_COMPONENTS_DIR`는 배포/테스트 경로 오버라이드용이며, 설정 파일의 `download_path`와는 독립적이다.
+- 캐시/락/임시 파일은 재시작·실패·stale 판정을 고려해 소유 모듈이 정리한다. 수동 삭제는 `server_home()`, `components_root()`, `writable_base()` 계약을 먼저 확인한다.
+
+## 1.3 개발 방향성 및 TUI 표준 (v3.4.0+)
 
 ### 1. 핵심 철학 (Core Philosophy)
 - **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 요소를 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃을 유지한다.
@@ -182,7 +255,7 @@ LAYER 0: Domain / Helpers / Infra (Leaf)
   components.py · log_history.py · smoke_test.py · sync_mirrors.py
 ```
 
-### 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.3.1 실측)
+### 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.4.0 실측)
 
 ```
 [기동 시퀀스 — DEPS → upgrade → prewarm → READY]
@@ -240,7 +313,7 @@ DownloadWorker: finished_all(int,int) — 유일 잔존 Signal
 raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책임은 GUI를 점유한 수신층(main.py).
 ```
 
-### 모듈 목록 (38개 루트 .py — 2026-09-12 `ls *.py` 실측. worker_context v3.3.1 삭제 후. [상세 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거) 참조)
+### 모듈 목록 (39개 루트 .py — 2026-09-13 `ls *.py` 실측. `tool_log.py` 포함. [상세 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거) 참조)
 
 | 분류 | 모듈 | 핵심 책임 |
 |------|------|----------|
@@ -263,6 +336,7 @@ raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책�
 | Pipeline | dl_context | DownloadContext dataclass (86) — 파이프라인 명시적 계약 |
 | Pipeline | speed_window | 속도 측정 슬라이딩 윈도우 |
 | Shared | yt_logger_bridge | yt-dlp logger → `raw("ytdlp")` 어댑터 (150) — `\r` 캐리지 조립 + 2Hz 스로틀 |
+| Infra | tool_log | subprocess STDOUT/STDERR 비블로킹 펌프 + 종료·타임아웃·잔여 출력 정리 |
 | Shared | updater | PyPI 조회+pip 업그레이드 (423, stdlib only) |
 | Infra | po_client | bgutil HTTP 순수 계층 (91) — 순수 HTTP 핑만, 상위 역참조 0 |
 | Infra | node_provider | Node.js 런타임 수급 (314) |
@@ -270,7 +344,7 @@ raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책�
 | Domain | media | 코덱랭크/포맷설명/remux/cleanup (350) — `import log_history` 잔재 §5-15 |
 | Domain | chzzk_api | 치지직 clip/vod/live 분석 (365) — `import log_history` 잔재 §5-15 |
 | Domain | cookies | 브라우저 쿠키 추출 (87) — `import log_history` 잔재 §5-15 |
-| Domain | config | `default_config()` 15키 + `_APP_VERSION` + 병합 |
+| Domain | config | `default_config()` 23키 + `_APP_VERSION` + 병합 |
 | Domain | playlist | YT 채널 URL 정규화 |
 | Domain | client_opts | player_client/쿠키/PO Token 옵션 주입 (125) |
 | Domain | dl_platform | URL 판정 + `_short_platform`/`_dl_platform` (111) |
@@ -332,7 +406,7 @@ raw 버스(raw_log.py — 순수 파이썬 bounded-queue dispatcher, Qt 링크 �
 {"running": bool, "canceled": bool, "skip": bool, "analyzing": bool}
 ```
 
-### cfg (config.default_config() 15키 — 로드 시 dl_config.json 병합)
+### cfg (config.default_config() 23키 — 로드 시 dl_config.json 병합)
 ```python
 download_path, container("mp4"), embed_subtitles, audio_only,
 fast_download(True), remove_duplicates(True), auto_open_folder(True),
@@ -491,6 +565,31 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
 
+### 2026-09-13 — v3.4.0 4컬럼 로그 규격 — SPEC/PLATFORM 폐지·SCOPE 통합·메타데이터 태그화
+
+#### 변경
+- **TUI 계약**: 메인 로그를 `[HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG`로 단일화. `PLATFORM`과 `SPEC` 컬럼을 폐지하고 발생지/대상은 `SCOPE`, 해상도·코덱·버전은 MSG 앞 태그로 보존
+- **렌더링**: STAGE/STATUS/SCOPE 5자 고정, 진행률은 `PCT → SPEED → GAUGE → MSG`, 빈 MSG에는 말단 구분자를 붙이지 않음
+- **구조화 로그**: `LogEvent.scope`를 정식 필드로 고정. `platform`은 하위 호환 별칭, `spec` 전달값은 렌더러에서 MSG 태그로 흡수
+- **문서화**: HANDOVER·LOGGING_POLICY·README의 v3.4.0 규격을 현행 소스와 맞추고, §1.1 버전 관리 절차와 §1.2 경로 계약을 추가하며 Python 미러를 재생성
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `log_event.py` | `scope` 정식화·`platform` 호환 별칭·`spec` MSG 태그 계약 |
+| `log_console.py` | 4컬럼 고정 폭·진행률 지터 방지·빈 MSG 구분자 제거 |
+| `main.py`/`downloader.py`/`media.py` | 5컬럼 포맷·중복 SPEC/SPEED 제거·4컬럼 렌더러 호출 |
+| `components.py`/`cookies.py`/`chzzk_api.py`/`finalizer.py`/`live_recorder.py`/`progress_emitter.py`/`update_worker.py` | SCOPE/MSG 태그·4컬럼 이벤트 계약 정합성 수리 |
+| `tool_log.py`/`tests/test_tool_log.py` | v3.4.0 검증에 사용된 subprocess 로그 펌프와 회귀 테스트 유지 |
+| `HANDOVER.md`/`LOGGING_POLICY.md`/`README.md` | v3.4.0 4컬럼 규격 문서화 |
+| `mirrors/` | 변경 Python 소스와 전체 코드 합본 재생성 |
+
+#### 검증
+- 전체 Python `compileall` 통과
+- `python sync_mirrors.py --check` — 모든 지정 미러 최신 상태
+- 관련 로그/파이프라인 회귀 테스트 및 전체 pytest 스위트 통과
+- `git diff --check` 통과
+
 ### 2026-09-12 — v3.3.1 계층 모숭 정리 — L0 순수화·좀비 제거·Qt 스레드 경계 분리
 
 #### 문제 (5계층 전수조사 실측)
@@ -540,7 +639,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | `log_console.py` | `append(…, no_wrap)`→`_buffer{…, no_wrap}`→`_insert_clamped`→`_flow_lines(raw, no_wrap)` 플래그 체인 · `is_tui_line` 렌더 퇴출(호환 shim 강등) |
 | `chzzk_api.py`/`cookies.py`/`media.py` | 직접 `log_history.log` 7곳 → `raw_log.raw(…, to_tui=False)` (F12+history 전용) |
 | `log_bus.py` | 삭제(`git rm`) — `import log_bus` 참조 0건 확인 |
-| `sync_mirrors.py` | 미러 출력처 루트 `*.md` → `mirrors/*.md` 이전 + `mirrors/chzzktube_codebase.md` 합본 번들 신규 · `fix_target`/`log_event`/`worker_context` 대상 추가(→ `fix_target`은 일회용 스크립트 정리로同日 제거, 37개 확정) |
+| `sync_mirrors.py` | 미러 출력처 루트 `*.md` → `mirrors/*.md` 이전 + `mirrors/chzzktube_codebase.md` 합본 번들 신규 · `fix_target`/`log_event`/`worker_context` 대상 추가(→ `fix_target`은 일회용 스크립트 정리로同日 제거, 39개 확정) |
 | `README.md` | 주의사항 로그 서술 현행 계약으로 교체 (단일 진입·전량·`to_tui` 팬아웃) |
 | `CHANGELOG.md` | v3.3.0 엔트리 5 bullets 추가 |
 | `HANDOVER.md` | 머리글 v3.3.0 · §3 40개 모듈 실측표 · §4 v3.3.0 시그널 계약 신설(구 블록 `<details>` 보존) · §5 불변식 11~15 편입 · 본 §9 v3.3.0 행 |
@@ -620,7 +719,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | §1 개요 | macOS/Windows/Linux 정정, 스택에 Node.js(PO Token) 추가 |
 | §2 실행환경 | bgutil-ytdlp-pot-provider 행 제거(의존성 퇴출 반영), 콘솔 폰트 D2Coding→CascadiaMono 정정(레거시 잔재 명기), pyinstaller build 그룹·log_history·smoke_test 행 추가 |
 | §3 아키텍처 | 모듈 라인 수 실측 갱신(main 1042 · downloader 451 등), 인프라 모듈 표 추가(pot_provider/components/log_history/smoke_test/sync_mirrors) |
-| §4 데이터 | default_config 15키(+yt_player_client), 데드 키 10종 명기, 시그널 계약 실제 서명·result_ready 형상 반영 |
+| §4 데이터 | default_config 23키, 데드 키 10종 명기, 시그널 계약 실제 서명·result_ready 형상 반영 |
 | §5·§6 | **emit 위치 인자 계약**·**extractor_args setdefault 병합**·**경량/무거운 경로 분리** 불변식 8~10 추가 + TUI 규격 우회·분석 결과 direct 신뢰 금지 항목 추가 |
 
 ### 2026-09-06 — URL 분석 스톨 해소(경량 분석) + emit 키워드 TypeError 광역 수리 + 분석 요약 표시
@@ -715,7 +814,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | `log_console.py` | `format_log_line()`: `SPEED │ PCT │ BAR` → `MSG` 통합 (고정 5칼럼 구조) |
 | `progress_emitter.py` | 다운로드 진행 틱에서 제목 제거 (ANAL 단계에 이미 표시됨) |
 | `sync_mirrors.py` | `startup_coordinator` MIRROR_MODULES 추가 |
-| `HANDOVER.md` | 로그 표준 문서화 (STAGE·STATUS·PLATFORM·SPEC·MSG 5컬럼) |
+| `HANDOVER.md` | 당시 로그 표준 문서화 (STAGE·STATUS·PLATFORM·SPEC·MSG 5컬럼; v3.4.0에서 4컬럼으로 개정) |
 
 #### 시그널 교통 정리 (최종 계약)
 ```
@@ -865,7 +964,7 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 
 #### 남은 과제
 - stale 감지 시 네트워크 3초 — preflight timeout 예산. 실패 시 판정 유지(stale 미확인≠FAIL)는 유지
-- 프리웜 자동 리프레시는 "잠긴 사이 사전 제거 기능"에 대해 게이트/다운로드 시점 실패 처리와 별개 — 프리웜은 최신 빌드 확보 우선 (📖 HANDOVER §1.1)
+- 프리웜 자동 리프레시는 "잠긴 사이 사전 제거 기능"에 대해 게이트/다운로드 시점 실패 처리와 별개 — 프리웜은 최신 빌드 확보 우선 (📖 HANDOVER §1.3)
 
 ---
 
@@ -1020,7 +1119,7 @@ L2 Service (QObject 아님 — plain)
 L1 Model (순수 — Qt 금지)
 ├── log_event.py .......... LogEvent{stage,status,platform,spec,msg,is_status,is_error,rendered}
 ├── raw_log.py(82) ........ 단일 진입 raw() — 정규화·history 1회·full 전량·concise 선택
-├── config.py ............. default_config 15키 + _APP_VERSION + dl_config.json 병합
+├── config.py ............. default_config 23키 + _APP_VERSION + dl_config.json 병합
 ├── theme.py(306) ......... QSS/색상 단일 정의
 ├── utils.py .............. explorer/clean_ansi/filename_template
 ├── dl_platform.py(111) ... URL 판정 + _short_platform/_dl_platform

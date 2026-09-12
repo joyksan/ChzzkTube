@@ -661,7 +661,7 @@ class MainWindow(QMainWindow):
         import raw_log
         from log_event import LogEvent
         event = LogEvent(
-            stage="POT", status="RUN", platform="pot", spec="-",
+            stage="POT", status="RUN", scope="POT",
             msg=(
                 f"gated={needs_pot} age_limit={age_limit if info else '-'} "
                 f"availability={((info or {}).get('availability') or '-')}"
@@ -671,7 +671,7 @@ class MainWindow(QMainWindow):
 
         if needs_pot:
             self.append_concise_log(
-                log_console.emit_event("POT", "RUN", "pot", "starting..."),
+                log_console.emit_event("POT", "RUN", "POT", "starting..."),
                 is_status=True,
                 is_error=False,
             )
@@ -685,7 +685,7 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "-", "analyzing..."),
+            log_console.emit_event("ANAL", "RUN", "", "analyzing..."),
             is_status=True,
             is_error=False,
         )
@@ -730,23 +730,25 @@ class MainWindow(QMainWindow):
             if h:
                 res = f"{h}p{fps}" if fps else f"{h}p"
 
-        # ANAL OK 메인 라인: Platform=사이트, Spec=해상도, Msg=stream analyzed · channel · title
-        counts = log_console.format_analysis_counts(len(v_list), len(a_list))
-        base_msg = f"stream analyzed{counts}"
-        if meta:
-            base_msg += f" · {meta[:80]}"
-        # [버스 v3.3.0] 분석 성공 -> 논리 LogEvent(근원 라벨링). _render_concise가 컬럼화,
-        # _mirror_event_full이 F12에 원본 msg 기록. format_log_line 직접 호출 제거.
-        import raw_log
-        from log_event import LogEvent
-        raw_log.raw(
-            "anal",
-            LogEvent(
-                stage="ANAL", status="OK", platform=platform, spec=res,
-                msg=base_msg, is_status=True, is_error=False,
-            ),
-            to_tui=True,
-        )
+            # ANAL OK 메인 라인: scope=사이트, [해상도] 태그, msg=analyzed · channel · title
+            counts = log_console.format_analysis_counts(len(v_list), len(a_list))
+            base_msg = f"analyzed{counts}"
+            if meta:
+                base_msg += f" · {meta[:80]}"
+            # [버스 v3.3.0] 분석 성공 -> 논리 LogEvent(근원 라벨링). _render_concise가 컬럼화,
+            # _mirror_event_full이 F12에 원본 msg 기록. format_log_line 직접 호출 제거.
+            # [v3.4.0] SPEC 컬럼 폐지 — 해상도는 [tag]로 MSG에 흡수된다.
+            import raw_log
+            from log_event import LogEvent
+            anal_msg = f"[{res}] {base_msg}" if res else base_msg
+            raw_log.raw(
+                "anal",
+                LogEvent(
+                    stage="ANAL", status="OK", scope=platform,
+                    msg=anal_msg, is_status=True, is_error=False,
+                ),
+                to_tui=True,
+            )
 
         # 마지막 블록 철회 가드
         self._analysis_block_active = True
@@ -757,27 +759,28 @@ class MainWindow(QMainWindow):
         self._emit_format_logs(v_list, a_list, platform)
 
     def _emit_format_logs(self, v_list, a_list, platform):
-        """스트림 분석 완료 후 비디오/오디오 코덱 사양을 별도 로그로 출력."""
+        """스트림 분석 완료 후 비디오/오디오 코덱 사양을 1줄 태그 로그로 출력.
+
+        [v3.4.0] V-FMT/A-FMT 2줄 분리(SPEC 컬럼 시절 산물)를 폐기하고
+        '[vcodec/acodec] streams isolated' 1줄로 합친다.
+        """
         import raw_log
         from log_event import LogEvent
+        from media import short_codec
 
-        v_codecs = list(dict.fromkeys(f.get("vcodec") for f in v_list if f.get("vcodec")))
-        a_codecs = list(dict.fromkeys(f.get("acodec") for f in a_list if f.get("acodec")))
-
-        if v_codecs:
-            msg = f"video: {', '.join(v_codecs[:4])}"
-            raw_log.raw(
-                "anal",
-                LogEvent(stage="ANAL", status="OK", platform=platform, spec="V-FMT", msg=msg),
-                to_tui=True,
-            )
-        if a_codecs:
-            msg = f"audio: {', '.join(a_codecs[:4])}"
-            raw_log.raw(
-                "anal",
-                LogEvent(stage="ANAL", status="OK", platform=platform, spec="A-FMT", msg=msg),
-                to_tui=True,
-            )
+        v_seen = list(dict.fromkeys(
+            short_codec(f.get("vcodec")) for f in v_list if f.get("vcodec")))
+        a_seen = list(dict.fromkeys(
+            short_codec(f.get("acodec")) for f in a_list if f.get("acodec")))
+        codecs = "/".join([c for c in ("/".join(v_seen[:2]), "/".join(a_seen[:2])) if c])
+        if not codecs:
+            return
+        raw_log.raw(
+            "anal",
+            LogEvent(stage="ANAL", status="OK", scope=platform,
+                     msg=f"[{codecs}] streams isolated"),
+            to_tui=True,
+        )
 
     def _format_analysis_summary(self):
         """분석 완료 요약 — 채널명 · 제목 등 기본 정보 (플레이리스트/치지직 공용)."""
@@ -1025,12 +1028,16 @@ class MainWindow(QMainWindow):
         self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
-        """F12 렌더러 — 구조화 이벤트를 콘솔 포맷터로 복원한다."""
+        """F12 렌더러 — 원문 보관소. 컬럼화하지 않고 event.msg 원문을 적재한다.
+
+        컬럼화는 TUI 말단(_render_concise)의 책임이다. F12가 컬럼 문자열을
+        적재하면 (1) 원문이 영구 소실되고 (2) _log_ts + _mirror_full_log의
+        이중 타임스탬프가 발생한다. 스탬핑은 _mirror_full_log 1곳에서만.
+        """
         from log_event import LogEvent
         if isinstance(event, LogEvent):
-            # F12는 event.msg만 추출하던 기존 경로를 탈피해 stage/status/spec 등
-            # 구조화 컨텍스트를 보존한다. rendered 이벤트는 원문 포맷을 유지한다.
-            line = log_console.format_log_line_for_event(event)
+            # rendered 이벤트든 아니든 msg 원문을 그대로 보존한다.
+            line = event.msg if event.msg else ""
             if is_status:
                 self._last_status_line = line
             self._mirror_full_log(line, is_status)
@@ -1160,7 +1167,7 @@ class MainWindow(QMainWindow):
             # POT 기동 중이면 큐에 넣고 사용자 알림
             self._pending_download = (targets, "auto", "auto")
             self.append_concise_log(
-                log_console.emit_event("SYS", "WAIT", "pot", "queued — waiting for POT server"),
+                log_console.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
                 is_status=True, is_error=False
             )
             return
@@ -1169,7 +1176,7 @@ class MainWindow(QMainWindow):
             if not self._pot_manager.is_ready():
                 self._pending_download = (targets, "auto", "auto")
                 self.append_concise_log(
-                    log_console.emit_event("SYS", "WAIT", "pot", "queued — waiting for POT server"),
+                    log_console.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
                     is_status=True, is_error=False,
                 )
                 return
@@ -1181,7 +1188,7 @@ class MainWindow(QMainWindow):
         self.ctrl.begin_download()
 
         self.append_concise_log(
-            log_console.emit_event("DL", "RUN", "-", "downloading..."),
+            log_console.emit_event("DL", "RUN", "", "downloading..."),
             is_status=True,
             is_error=False,
         )
@@ -1229,7 +1236,7 @@ class MainWindow(QMainWindow):
         
         # POT 서버가 없으면 기동만 트리거 (대기는 큐가 처리)
         self.append_concise_log(
-            log_console.emit_event("POT", "RUN", "pot", "starting server..."),
+            log_console.emit_event("POT", "RUN", "POT", "starting server..."),
             is_status=True,
             is_error=False,
         )
@@ -1242,7 +1249,7 @@ class MainWindow(QMainWindow):
         self._pick_targets = [url]
         self._pick_pending = True
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "-", "format list analyzing..."),
+            log_console.emit_event("ANAL", "RUN", "", "analyzing formats..."),
             is_status=True,
             is_error=False,
         )
@@ -1317,7 +1324,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_skip()
             self.append_concise_log(
-                log_console.emit_event("DL", "SKIP", "-", "skip request"),
+                log_console.emit_event("DL", "SKIP", "", "skip requested"),
                 is_status=False,
                 is_error=False,
             )

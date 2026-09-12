@@ -22,7 +22,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.3.1"
+_APP_VERSION = "v3.4.0"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -50,6 +50,14 @@ def default_config():
         "yt_player_client": "auto",
         "update_channel": "stable",
         "auto_update_check": True,
+        # [외부툴 가변 설정 — client_opts._apply_* 헬퍼가 yt-dlp/streamlink/ffmpeg
+        #  옵션으로 배선한다. 새 키 추가 시 (1) 아래 기본값 (2) _apply_* 헬퍼
+        #  (3) dialogs.py 체크박스/콤보 3점 세트를 함께 추가할 것.]
+        "streamlink_quality": "best",      # streamlink 화질 선택 (best/1080p,720p/…)
+        "embed_thumbnail": False,          # 커버 썸네일 병합 (ffmpeg -c copy + 썸네일 주입)
+        "embed_chapters": True,            # 챕터/메타데이터 병합 (mp4/mkv)
+        "subtitle_langs": "all",           # 자막 언어 (all/ko,en/ko 등, embed_subtitles와 연동)
+        "concurrent_fragments": 4,         # 병렬 조각 수 (fast_download와 연동)
     }
 
 def load_config():

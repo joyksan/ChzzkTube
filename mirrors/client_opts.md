@@ -16,6 +16,55 @@ def _apply_ffmpeg_opts(opts):
     return opts
 
 
+def _apply_post_opts(opts, cfg):
+    """ffmpeg 후처리(postprocessors)를 cfg 가변 설정에 fit.
+
+    [fit 규칙] 모든 후처리는 cfg 키가 유일한 스위치다. 하드코딩 금지.
+    - embed_subtitles=True → writesubtitles + SRT 자동변환 병합
+    - embed_thumbnail=True → 커버 썸네일 병합
+    - embed_chapters(기본 True) → 챕터/메타데이터 병합
+    - subtitle_langs: "all"이면 allsubtitles, 아니면 subtitleslangs 목록
+    """
+    cfg = cfg or {}
+    pp = opts.setdefault("postprocessors", [])
+
+    def _has(key):
+        return any(isinstance(p, dict) and p.get("key") == key for p in pp)
+
+    if cfg.get("embed_subtitles"):
+        langs = str(cfg.get("subtitle_langs") or "all").strip() or "all"
+        if langs.lower() == "all":
+            opts["allsubtitles"] = True
+        else:
+            opts["subtitleslangs"] = [s.strip() for s in langs.split(",") if s.strip()]
+        opts["writesubtitles"] = True
+        if not _has("FFmpegSubtitlesConvertor"):
+            pp.append({"key": "FFmpegSubtitlesConvertor", "format": "srt"})
+        if not _has("FFmpegEmbedSubtitle"):
+            pp.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
+
+    if cfg.get("embed_thumbnail"):
+        if not _has("EmbedThumbnail"):
+            pp.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
+
+    if cfg.get("embed_chapters", True):
+        if not _has("FFmpegMetadata"):
+            pp.append({"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": True})
+
+    return opts
+
+
+def _concurrent_fragments(cfg):
+    """병렬 조각 수 — fast_download on이면 cfg 값(기본 4), off면 1(순차)."""
+    if not (cfg or {}).get("fast_download"):
+        return 1
+    try:
+        n = int((cfg or {}).get("concurrent_fragments", 4) or 4)
+    except (TypeError, ValueError):
+        n = 4
+    return max(1, min(n, 16))
+
+
 def _apply_client_opts(opts, cfg, forced=None):
     """유튜브 player_client 수동 지정을 ydl_opts에 반영 (성인제한 대응).
 

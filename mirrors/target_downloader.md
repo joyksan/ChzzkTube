@@ -38,7 +38,9 @@ from client_opts import (
     _apply_ejs_opts,
     _apply_ffmpeg_opts,
     _apply_light_analysis_opts,
+    _apply_post_opts,
     _apply_pot_opts,
+    _concurrent_fragments,
 )
 from log_console import emit_err as _emit_err
 import raw_log
@@ -68,14 +70,16 @@ def _make_ytdl_opts(ctx, fmt, url):
         # 100KB/s → 50KB/s로 완화: 초기 버퍼링 구간에서 오탐 방지
         "throttledratelimit": 50_000,
     }
-    if ctx.cfg.get("fast_download"):
-        opts["concurrent_fragment_downloads"] = 4
+    frags = _concurrent_fragments(ctx.cfg)
+    if frags > 1:
+        opts["concurrent_fragment_downloads"] = frags
     _apply_cookie_opts(opts, ctx.cfg)
     _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
     _apply_ejs_opts(opts)
     _apply_pot_opts(opts, _extract_yt_id(url),
                     client=(ctx.yt_client if ctx.yt_client != "auto" else "web_embedded"))
     _apply_ffmpeg_opts(opts)
+    _apply_post_opts(opts, ctx.cfg)
     return opts
 
 
@@ -157,12 +161,13 @@ def _download_youtube_live(ctx, url):
 
 
 def _download_streamlink(ctx, url):
-    """streamlink 대상 — 자식 프로세스 녹화 파이프라인."""
+    """streamlink 대상 — 자식 프로세스 녹화 파이프라인 (화질은 cfg fit)."""
     out_file = os.path.join(
         ctx.cfg["download_path"], "streamlink_live.mp4"
     )
     temp_ts, thumb, _ = _lr.prepare_live_paths(ctx, out_file, None)
-    cmd = ["streamlink", url, "best", "-O"]
+    quality = str(ctx.cfg.get("streamlink_quality") or "best").strip() or "best"
+    cmd = ["streamlink", url, quality, "-O"]
     return _lr.record_live_stream(ctx, cmd, temp_ts, out_file, thumb)
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "chzzktube"
-version = "3.1.0"
+version = "3.4.0"
 description = "YouTube/치지직 영상 다운로더 GUI (PySide6 + yt-dlp + streamlink)"
 requires-python = ">=3.12"
 # 앱 버전의 단일 출처는 config._APP_VERSION (bump_version.py 관리) — 이 version은 메타 참고용

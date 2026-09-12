@@ -75,8 +75,8 @@ def get_browser_cookies():
                 raw_log.raw(
                     "cookie",
                     LogEvent(
-                        stage="CK", status="WARN", platform="cookie",
-                        msg=f"cookie DB read failed ({os.path.basename(p)}): {type(e).__name__}: {e}",
+                        stage="SYS", status="WARN", scope="MAIN",
+                        msg=f"cookie db read failed ({os.path.basename(p)}): {type(e).__name__}: {e}",
                         is_error=False,
                     ),
                     to_tui=False,

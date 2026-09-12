@@ -50,6 +50,7 @@ MIRROR_MODULES = [
     "startup_state",
     "sync_mirrors",
     "target_downloader",
+    "tool_log",
     "theme",
     "update_worker",
     "updater",

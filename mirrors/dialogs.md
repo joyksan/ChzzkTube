@@ -21,7 +21,6 @@ from PySide6.QtWidgets import (
 )
 import theme
 import log_console
-from log_console import emit_component
 
 try:
     import winsound
@@ -407,9 +406,17 @@ class SettingsDialog(QDialog):
         self.chk_fast = QCheckBox()
         self.chk_auto_open = QCheckBox()
         self.chk_sound = QCheckBox()
+        self.chk_thumb = QCheckBox()
+        self.chk_chapters = QCheckBox()
 
         self.chk_sub.toggled.connect(
             lambda v: self._apply_change("embed_subtitles", v)
+        )
+        self.chk_thumb.toggled.connect(
+            lambda v: self._apply_change("embed_thumbnail", v)
+        )
+        self.chk_chapters.toggled.connect(
+            lambda v: self._apply_change("embed_chapters", v)
         )
         self.chk_audio.toggled.connect(self._on_audio_only_toggled)
         self.chk_dedup.toggled.connect(
@@ -423,6 +430,8 @@ class SettingsDialog(QDialog):
 
         chk_items = [
             (self.chk_sub, "Embed subtitles (SRT auto-convert + merge)"),
+            (self.chk_thumb, "Embed thumbnail (cover art)"),
+            (self.chk_chapters, "Embed chapters + metadata"),
             (self.chk_audio, "Audio only (MP3)"),
             (self.chk_dedup, "Auto-remove duplicate URLs"),
             (self.chk_fast, "Fast segmented download (5 threads)"),
@@ -578,6 +587,60 @@ class SettingsDialog(QDialog):
         row3.addWidget(self.chk_pick)
         layout.addWidget(_sec3)
 
+        sl_row = QHBoxLayout()
+        _sec_sl = QGroupBox("Streamlink / Post-proc")
+        _sec_sl.setProperty("class", "tui-panel")
+        _sec_sl.setLayout(sl_row)
+        sl_row.addWidget(QLabel("Streamlink 화질"))
+        sl_row.addStretch()
+        self.cb_slq = make_combo(
+            [
+                ("best", "best (auto)"),
+                ("1080p60,1080p,best", "1080p60 → 1080p → best"),
+                ("1080p,best", "1080p → best"),
+                ("720p,best", "720p → best"),
+                ("480p,best", "480p → best"),
+                ("worst", "worst (data-save)"),
+            ],
+            190,
+        )
+        self.cb_slq.currentIndexChanged.connect(
+            lambda: self._apply_change("streamlink_quality", self.cb_slq.currentData())
+        )
+        sl_row.addWidget(self.cb_slq)
+        sl_row.addSpacing(12)
+        sl_row.addWidget(QLabel("자막 언어"))
+        self.cb_sublangs = make_combo(
+            [
+                ("all", "all"),
+                ("ko,en", "ko + en"),
+                ("ko", "ko"),
+                ("en", "en"),
+            ],
+            110,
+        )
+        self.cb_sublangs.currentIndexChanged.connect(
+            lambda: self._apply_change("subtitle_langs", self.cb_sublangs.currentData())
+        )
+        sl_row.addWidget(self.cb_sublangs)
+        sl_row.addSpacing(12)
+        sl_row.addWidget(QLabel("병렬 조각"))
+        self.cb_frags = make_combo(
+            [
+                (4, "4 (default)"),
+                (1, "1 (sequential)"),
+                (2, "2"),
+                (8, "8"),
+                (16, "16"),
+            ],
+            110,
+        )
+        self.cb_frags.currentIndexChanged.connect(
+            lambda: self._apply_change("concurrent_fragments", self.cb_frags.currentData())
+        )
+        sl_row.addWidget(self.cb_frags)
+        layout.addWidget(_sec_sl)
+
         format_layout = QHBoxLayout()
         _sec_filename = QGroupBox("Filename")
         _sec_filename.setProperty("class", "tui-panel")
@@ -700,9 +763,14 @@ class SettingsDialog(QDialog):
         set_combo(self.cb_yt_client, self.cfg.get("yt_player_client", "auto"))
         set_combo(self.cb_update_channel, self.cfg.get("update_channel", "stable"))
         set_combo(self.cb_max_res, self.cfg.get("max_video_res", "none"))
+        set_combo(self.cb_slq, self.cfg.get("streamlink_quality", "best"))
+        set_combo(self.cb_sublangs, self.cfg.get("subtitle_langs", "all"))
+        set_combo(self.cb_frags, self.cfg.get("concurrent_fragments", 4))
         self.chk_pick.setChecked(self.cfg.get("pick_format", False))
 
         self.chk_sub.setChecked(self.cfg.get("embed_subtitles", False))
+        self.chk_thumb.setChecked(self.cfg.get("embed_thumbnail", False))
+        self.chk_chapters.setChecked(self.cfg.get("embed_chapters", True))
         self.chk_audio.setChecked(self.cfg.get("audio_only", False))
         self.chk_dedup.setChecked(self.cfg.get("remove_duplicates", True))
         self.chk_fast.setChecked(self.cfg.get("fast_download", True))

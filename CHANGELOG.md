@@ -1,3 +1,11 @@
+### 2026-09-13 — v3.4.0 : 4컬럼 로그 규격 — SPEC/PLATFORM 폐지·SCOPE 통합·메타데이터 태그화
+
+- **로그 포맷 표준화**: 메인 TUI를 `[HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG` 4컬럼으로 통합. `PLATFORM`과 `SPEC`을 별도 컬럼으로 유지하지 않고 발생지/대상은 `SCOPE`, 미디어·버전 정보는 MSG 앞 태그(`[1080p30]`, `[v2026.8.19]`)로 이동
+- **고정 폭·중복 제거**: STAGE/STATUS/SCOPE는 5자 고정, 진행률은 3자리 퍼센트·8자리 속도·10블록 게이지로 렌더링. 빈 MSG의 말단 구분자와 같은 의미의 중복 상태 문구를 제거
+- **구조화 계약 갱신**: `LogEvent.platform`은 `scope` 호환 별칭으로 남기고 신규 발행점은 `scope`만 사용. `SPEC` 전달 시 MSG 태그로 흡수하며 `WAIT`는 독립 STATUS를 만들지 않고 `RUN`으로 통합
+- **문서·미러 정합성**: HANDOVER/LOGGING_POLICY/README의 v3.4.0 규격을 현행 소스와 동기화하고, 변경 Python 소스에 대응하는 `mirrors/*.md` 및 합본 미러를 재생성
+- **검증**: 전체 Python 컴파일, 미러 `--check`, 관련 회귀 테스트 및 전체 테스트 스위트 통과
+
 ### 2026-09-12 — v3.3.1 : 계층 모숭 정리 — L0 순수화·좀비 제거·Qt 스레드 경계 분리
 
 - **기동 게이트 신뢰 복구**: `StartupState.pot_ready` 플래그 — READY는 prewarm/gate **실완료 토큰**으로만 개방. `POTManager.pot_finished` msg를 상태 토큰(`"staged"`/`"ready"`/`"failed"`)으로 발행(사람용 msg 발행 시 READY 미개방 결함 수정), `use_existing()` 신설(기존 서버 응답 시 `_pending_download` 영구 큐잉 방지), `_on_pot_finished`의 `is_ready()` 재확인 후 회수 재개
@@ -40,5 +48,5 @@
 ### 2026-09-08 — v3.1.0 : Qt/PySide6 정리, 로깅 표준화, Cascadia Mono 11px
 
 - Flat TUI 3-Layer 구조로 전환, 모노스페이스 폰트 통일
-- 고정 칼럼 로그 규격([HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ MSG) + 파스텔 톤 에러 컬러
+- 당시 고정 칼럼 로그 규격([HH:MM:SS] STAGE │ STATUS │ PLATFORM │ SPEC │ MSG) + 파스텔 톤 에러 컬러 (v3.4.0에서 4컬럼으로 개정)
 - MSG 영문 미니멀화 (1~3단어 CLI 태그), live 콘솔 모니터 stretch=1 분리

@@ -1509,7 +1509,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.3.1"
+_APP_VERSION = "v3.4.0"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -8528,6 +8528,7 @@ MIRROR_MODULES = [
     "startup_state",
     "sync_mirrors",
     "target_downloader",
+    "tool_log",
     "theme",
     "update_worker",
     "updater",
