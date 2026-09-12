@@ -18,8 +18,8 @@ import raw_log
 from media import cleanup_temp_files, format_bytes, remux_live_to_container
 from utils import get_filename_template
 from dl_platform import _dl_platform
-from progress_emitter import emit_dl, emit_live_final_stats
-import live_recorder as _lr
+from progress_emitter import emit_dl, emit_live_final_stats, log_success_info
+
 
 def download_youtube_live(worker, url):
     """유튜브 라이브 — yt-dlp로 통합 포맷 URL만 추출 후 ffmpeg로 녹화."""
@@ -51,10 +51,18 @@ def download_youtube_live(worker, url):
         worker.cfg["download_path"],
         get_filename_template(worker.cfg) % info,
     )
-    temp_ts, thumb, _ = _lr.prepare_live_paths(worker, out_file, info.get("thumbnail"))
+    temp_ts, thumb, _ = prepare_live_paths(worker, out_file, info.get("thumbnail"))
 
     cmd = ["ffmpeg", "-y", "-i", stream_url, "-c", "copy", "-f", "mpegts", temp_ts]
-    return _lr.record_live_stream(worker, cmd, temp_ts, out_file, thumb)
+    return record_live_stream(worker, cmd, temp_ts, out_file, thumb)
+
+
+def prepare_live_paths(ctx, out_file, thumb_url=None):
+    """라이브 녹화용 임시 TS 파일 및 썸네일 경로 도출."""
+    base, _ = os.path.splitext(out_file)
+    temp_ts = f"{base}_temp.ts"
+    thumb_file = f"{base}_temp_thumb.jpg" if thumb_url else None
+    return temp_ts, thumb_file, out_file
 
 
 def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
@@ -98,7 +106,7 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
             ),
             to_tui=True,
         )
-        worker.log_success_info(out_path)
+        log_success_info(worker, out_path)
     cleanup_temp_files(temp_file)
     return True
 
@@ -219,4 +227,4 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
         )
     finally:
         stderr_t.join(timeout=1.0)
-        return worker.handle_stream_finish(True, temp_ts_file, returncode)
+        return handle_stream_finish(worker, True, temp_ts_file, returncode)

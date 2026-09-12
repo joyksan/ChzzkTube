@@ -19,6 +19,9 @@ def test_raw_bus_overflow_is_bounded_and_summarized_once():
 
     dispatcher = raw_log._RawDispatcher()
     try:
+        # 소비 스레드를 먼저 정지해 결정적으로 포화시킨다 —
+        # dispatcher가 도중에 이벤트를 소비하면 큐가 차지 않는 타이밍 레이스 제거.
+        dispatcher.shutdown()
         for index in range(raw_log.MAX_QUEUE):
             assert dispatcher.publish(
                 LogEvent(
@@ -43,7 +46,6 @@ def test_raw_bus_overflow_is_bounded_and_summarized_once():
                 False,
             )
 
-        dispatcher.flush()
         assert dispatcher.overflowed is True
         history_log.assert_called_once_with(
             f"[raw-log] {raw_log._HISTORY_SUMMARY}", level="WARN"

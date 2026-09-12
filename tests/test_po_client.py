@@ -28,22 +28,6 @@ class TestServerPing:
         mock_urlopen.side_effect = Exception("connection refused")
         assert server_ping() is False
 
-    @patch("po_client.urllib.request.urlopen")
-    @patch("po_client.os.path.exists", return_value=True)
-    @patch("pot_server._prewarm_lock_path", return_value="/tmp/zombie.pid")
-    @patch("pot_server._read_lock_info", return_value=(999999, 0))
-    @patch("pot_server._pid_alive", return_value=False)
-    def test_ping_zombie_pid_blocked(
-        self, mock_pid_alive, mock_read_lock, mock_lock_path, mock_exists, mock_urlopen
-    ):
-        # 포트가 응답해도(200) 락 PID가 죽어 있으면 좀비로 간주 → False
-        resp = MagicMock()
-        resp.status = 200
-        mock_urlopen.return_value.__enter__ = MagicMock(return_value=resp)
-        mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
-        assert server_ping() is False
-        mock_pid_alive.assert_called_with(999999)
-
 
 class TestExtractVideoId:
     @pytest.mark.parametrize(

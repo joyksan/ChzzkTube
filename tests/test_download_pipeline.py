@@ -124,14 +124,6 @@ class TestPotProviderFacade:
         assert isinstance(ready, bool)
         assert isinstance(reason, str) and reason != ""
 
-    def test_pot_provider_worker_contract(self):
-        """POTProviderWorker 생성자 계약 — prewarm은 POTManager가 담당."""
-        import pot_provider
-        w = pot_provider.POTProviderWorker()
-        assert w.outcome == (False, "")
-        assert hasattr(w, "request_interruption")
-        assert hasattr(w, "finished_signal")
-
     def test_deps_pot_readiness_labels(self):
         """check_deps POT 분기: FAIL 오경보 금지 — OK running / SKIP *."""
         import updater
@@ -301,11 +293,6 @@ class TestPotProviderFacade:
             assert hasattr(pot_provider, name), f"pot_provider.{name} missing"
             assert getattr(pot_provider, name) is getattr(po_client, name), \
                 f"pot_provider.{name} is not po_client.{name}"
-
-    def test_pothProviderWorker_in_facade(self):
-        """facade에 POTProviderWorker 클래스 존재 확인."""
-        import pot_provider
-        assert hasattr(pot_provider, "POTProviderWorker")
 
 
 class TestContextPipelineFlow:

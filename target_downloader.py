@@ -146,7 +146,7 @@ def _download_chzzk(ctx, url, content_type):
         ctx.cfg["download_path"], _chzzk_filename(ch_info, fmt, ctx.cfg)
     )
     real = _http_download(ctx, stream_url, out_path)
-    ctx.log_success_info(real)
+    _pe.log_success_info(ctx, real)
     ctx.speed_win.reset()
     return True
 
