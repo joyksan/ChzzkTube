@@ -565,6 +565,24 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
 
+### 2026-09-13 — v3.4.0 패치 : 분석 상태 머신 회귀 수리 — ENTER 잠금·URL 클리어 크래시
+
+#### 문제 (파이프라인 전수조사 실측)
+- **ENTER 잠금**: `controller.spawn_analyzer`가 `state["analyzing"]=True`를 세팅한 뒤 성공/실패 어디에서도 `False`로 되돌리지 않았다(`_abandon_analyzer` 유기 경로에만 존재). `a18639b`(State-Button Matrix)부터 `get_current_app_state`가 `ANALYZING`을 하드 차단하고 `toggle_download`가 `state != "IDLE"`에서 조기 반환 → 분석 완료 직후 입력·ENTER 영구 잠금. `_is_stale_analyze_signal` docstring("분석 상태가 아니면(유기·완료) 모든 큐잉된 시그널 폐기")과도 모순된 누락
+- **URL 클리어 크래시**: `on_url_changed`의 클리어 분기가 MVC 이관(94f1ee4)에서 사라진 `_abandon_analyze_worker()`를 호출 — AttributeError로 뒤의 `clear_status_line`/`_discard_analysis_result` 로직 미실행
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `main.py` | `on_analyze_success`/`on_analyze_error`에 `ctrl.state["analyzing"]=False`(stale 검사 통과 직후) / `on_url_changed` 클리어 → `ctrl._abandon_analyzer()` |
+| `tests/test_analyze_state.py` | 신규 회귀 테스트 5건 (ENTER 재개·IDLE 복귀·PICKING 비가림·유령 시그널 폐기·URL 클리어) |
+| `mirrors/` | main.py 변경 반영 재생성 |
+
+#### 검증
+- 전체 pytest 126 passed (신규 5건 포함)
+- `python sync_mirrors.py --check` — 변경 0건
+- `py_compile` OK · 재현 스크립트로 수정 전 ANALYZING 고정 → 수정 후 IDLE + 다운로드 시작 확인
+
 ### 2026-09-13 — v3.4.0 4컬럼 로그 규격 — SPEC/PLATFORM 폐지·SCOPE 통합·메타데이터 태그화
 
 #### 변경

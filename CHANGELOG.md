@@ -1,3 +1,10 @@
+### 2026-09-13 — v3.4.0 패치 : 분석 상태 머신 회귀 수리 — ENTER 잠금 해제·URL 클리어 크래시 제거
+
+- **ENTER 잠금 근본 원인 수리**: `on_analyze_success`/`on_analyze_error`가 `ctrl.state["analyzing"]`을 해제하지 않아 State-Button Matrix(`get_current_app_state`)가 `ANALYZING`에 영구 고정 → `toggle_download`가 `state != "IDLE"`에서 조기 반환 → 분석 완료 후 ENTER·입력 잠금
+- **죽은 호출 교체**: `on_url_changed` URL 클리어 분기가 MVC 이관(94f1ee4)에서 삭제된 `_abandon_analyze_worker()`를 호출(AttributeError) — `ctrl._abandon_analyzer()`로 교체
+- **회귀 테스트**: `tests/test_analyze_state.py` 신규 5건 — 분석 성공/실패 IDLE 복귀·ENTER 재개, 포맷 고르기 PICKING 비가림, 완료 후 유령 시그널 폐기, URL 클리어 크래시
+- **검증**: 전체 pytest 126 passed · `sync_mirrors.py --check` 변경 0건 · py_compile OK
+
 ### 2026-09-13 — v3.4.0 : 4컬럼 로그 규격 — SPEC/PLATFORM 폐지·SCOPE 통합·메타데이터 태그화
 
 - **로그 포맷 표준화**: 메인 TUI를 `[HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG` 4컬럼으로 통합. `PLATFORM`과 `SPEC`을 별도 컬럼으로 유지하지 않고 발생지/대상은 `SCOPE`, 미디어·버전 정보는 MSG 앞 태그(`[1080p30]`, `[v2026.8.19]`)로 이동

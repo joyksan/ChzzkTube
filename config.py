@@ -16,7 +16,7 @@ def writable_base():
     """쓰기 보장 런타임 캐시 루트 — node/PO 서버/플러그인/ffmpeg 등
     실행 시 수급하는 구성요소의 단일 경로 출처 (pot_provider·components 공용).
     """
-    local_appdata = os.environ.get("LOCALAPPDATA")
+    local_appdata = os.environ.get("LOCALAPPDATA") 
     if local_appdata:
         return os.path.join(local_appdata, "ChzzkTube")
     return os.path.join(os.path.expanduser("~"), ".chzzktube")

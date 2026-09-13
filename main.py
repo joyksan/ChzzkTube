@@ -613,7 +613,9 @@ class MainWindow(QMainWindow):
             # 야매 종료시켜 GUI 전체의 파이썬 실행을 영구 정지시켰다 — 이 뒤의
             # 로그 정리(clear_status_line)가 절대 실행되지 않아 'URL을 지워도
             # 분석중·URL 로그가 남는' 현상의 근본 원인. 유기 패턴으로 대체.
-            self._abandon_analyze_worker()
+            # [MVC 이관] _abandon_analyze_worker는 94f1ee4 이후 controller의
+            # _abandon_analyzer로 이관 — 죽은 호출(AttributeError) 교체.
+            self.ctrl._abandon_analyzer()
             self.console.clear_status_line()
             # 직전 분석 결과 블록도 철회 — 링크를 지우면 그 링크의 분석 로그가 남아있던 현상 방지
             self._discard_analysis_result()
@@ -907,6 +909,11 @@ class MainWindow(QMainWindow):
     def on_analyze_success(self, data):
         if self._is_stale_analyze_signal():
             return
+        # [상태 머신 회귀 수리] 분석 완료는 곧 '분석 상태 종료'다 — 플래그를
+        # 해제해야 get_current_app_state()가 IDLE을 반환해 ENTER 잠금이 풀린다.
+        # (_is_stale_analyze_signal docstring: "분석 상태가 아니면(유기·완료)
+        # 모든 큐잉된 시그널 폐기" — 완료 경로에서 이 불변식이 지켜지지 않았다.)
+        self.ctrl.state["analyzing"] = False
         self.extracted_data = data
         # PO 필요 여부 판단 후 필요 시에만 서버 가동
         self._ensure_pot_for_info(data.get("info"))
@@ -928,6 +935,8 @@ class MainWindow(QMainWindow):
     def on_analyze_error(self, err_msg):
         if self._is_stale_analyze_signal():
             return
+        # 실패도 분석 상태 종료 — 성공 경로와 동일하게 플래그를 해제한다.
+        self.ctrl.state["analyzing"] = False
         pick_pending = getattr(self, "_pick_pending", False)
         self._pick_pending = False
         if pick_pending:
