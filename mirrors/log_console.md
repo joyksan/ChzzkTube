@@ -220,7 +220,7 @@ class ConciseLogConsole:
         원본(msg 전체)은 _buffer에 보존되고, 이 함수는 화면 표시만
         viewport 픽셀 폭에 맞춰 '…'로 자른다. 핵심은 display_width
         (east_asian_width 기반 문자 단위 추정)가 아니라 fontMetrics의
-        horizontalAdvance로 *실제 픽셀 폭*을 재는 것이다 — D2Coding은
+        horizontalAdvance로 *실제 픽셀 폭*을 재는 것이다 — Cascadia Mono는
         한글 2칸·latin 1칸·'│'(U+2502, Ambiguous)는 폰트에 따라 1칸이
         되는 비일관성이 있어, 문자 단위 추론만으로는 짤림 위치가 들쭉날쭉
         해진다. 픽셀 단위 절단으로 폰트/Ambiguous 폭/한영 혼용에 무관하게
@@ -241,7 +241,7 @@ class ConciseLogConsole:
         if not head:
             return line
         # head + 마지막 ' │ ' 까지의 실제 픽셀 폭을 잰다 — '│'의 Ambiguous
-        # 폭(1칸/2칸)과 D2Coding의 한글/라틴 폭 차이를 그대로 반영한다.
+        # 폭(1칸/2칸)과 Cascadia Mono의 한글/라틴 폭 차이를 그대로 반영한다.
         head_px = fm.horizontalAdvance(head + " │ ")
         msg_budget_px = viewport_px - head_px - RIGHT_PADDING_PX
         return head + " │ " + _truncate_by_pixels(msg, msg_budget_px, fm)
@@ -678,7 +678,7 @@ def _truncate_by_pixels(msg, budget_px, fm):
     """msg를 fontMetrics 기반 *실제 픽셀 폭*으로 절단 — 초과 시 '…' 부착.
 
     display_width(east_asian_width 기반 문자 단위 추정) 대신
-    horizontalAdvance로 실제 픽셀을 잰다 — D2Coding은 한글 2칸·
+    horizontalAdvance로 실제 픽셀을 잰다 — Cascadia Mono는 한글 2칸·
     latin 1칸·'│'(U+2502, Ambiguous)는 폰트에 따라 1칸/2칸이 되는
     비일관성이 있어, 문자 단위 추론만으로는 한영 혼용 라인의 짤림
     위치가 들쭉날쭉해진다. 픽셀 단위 절단으로 폰트/Ambiguous 폭/

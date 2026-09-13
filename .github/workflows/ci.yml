@@ -7,7 +7,7 @@ on:
     paths-ignore:
       - '**.md'
       - 'mirrors/**'
-      - '.github/workflows/sync-drive.yml'
+      - '.github/workflows/sync-to-drive.yml'
   pull_request:
     paths-ignore:
       - '**.md'

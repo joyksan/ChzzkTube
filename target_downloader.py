@@ -109,6 +109,46 @@ def _format_selector(ctx):
     return "bv*+ba/b"  # 기본 최고 품질 (명시/통합 동일)
 
 
+def _chzzk_filename(ch_info, fmt, cfg):
+    """치지직 다운로드 파일명 — get_filename_template(cfg) 계약을 치지직 메타로 치환.
+
+    [P0-3 복구] _chzzk_filename이 정의 없이 호출만 되어 치지직 다운로드가
+    NameError로 전부 실패했다. yt-dlp 필드(%(uploader)s/%(id)s 등)가 없는
+    치지직 dict이므로 아래 매핑으로 대역한다.
+    - prefix: filename_prefix cfg (none/uploader/date_*) — chzzk의
+      channel_name/date(YYYY-MM-DD)로 치환, 없으면 빈 접두
+    - suffix: filename_suffix cfg (id/id_res) — clip_id·video_no·live_id 중
+      존재하는 값, id_res면 fmt.height를 추가
+    - 확장자: progressive MP4 스트림이므로 .mp4 고정
+    """
+    cfg = cfg or {}
+    title = str(ch_info.get("title") or ch_info.get("videoTitle") or "chzzk")
+    title = re.sub(r'[\\/:*?"<>|]+', "_", title).strip(" _") or "chzzk"
+    cid = str(ch_info.get("clip_id") or ch_info.get("video_no")
+              or ch_info.get("live_id") or "").strip()
+    chan = str(ch_info.get("channel_name") or "").strip()
+    date = str(ch_info.get("date") or "").strip()[:10]
+    height = fmt.get("height") if isinstance(fmt, dict) else None
+
+    prefix_map = {
+        "none": "",
+        "uploader": f"[{chan}] " if chan else "",
+        "date_dash_uploader": f"{date} [{chan}] " if (date and chan) else "",
+        "date_compact_uploader": (f"{date.replace('-', '')} [{chan}] "
+                                  if (date and chan) else ""),
+        "date_dash": f"{date} " if date else "",
+        "date_compact": f"{date.replace('-', '')} " if date else "",
+    }
+    prefix = prefix_map.get(str(cfg.get("filename_prefix", "none") or "none"), "")
+
+    suffix = ""
+    if cid:
+        suffix = f" [{cid}]"
+        if str(cfg.get("filename_suffix", "id") or "id") == "id_res" and height:
+            suffix += f" [{height}p]"
+    return f"{prefix}{title}{suffix}.mp4"
+
+
 def _http_download(ctx, url, out_path):
     """치지직 progressive MP4 직접 스트림 다운로드 + 진행률 틱."""
     import urllib.request

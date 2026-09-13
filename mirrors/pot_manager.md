@@ -62,7 +62,7 @@ class _POTWorker(QThread):
         stage = "SYS" if is_error else "POT"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
         event = LogEvent(stage=stage, status=status, scope="POT",
-                         msg=str(msg)[:120],
+                         msg=str(msg),
                          is_status=is_status, is_error=is_error)
         raw_log.raw("pot", event, to_tui=True)
 
@@ -77,7 +77,7 @@ class _POTWorker(QThread):
             raw_log.raw("pot-DEBUG", str(msg))
         else:
             event = LogEvent(stage="POT", status="RUN", scope="POT",
-                             msg=str(msg)[:120])
+                             msg=str(msg))
             raw_log.raw("pot", event, to_tui=True)
     
     def _run(self):
@@ -122,8 +122,11 @@ class _POTWorker(QThread):
                 self._note("pot prewarm staging...", True)
                 from pot_server import ensure_node_server, server_home, _SERVER_FALLBACK_VER
                 ver = remote or local or _SERVER_FALLBACK_VER
-                have_build = built_server_js() is not None
-                _, err = ensure_node_server(self._note, self._dbg, ver, rebuild=have_build)
+                # [A3 수리] "빌드 존재=재빌드" 반전 로직 교정 — 기존 rebuild=have_build는
+                # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).
+                # remote·local 버전이 실제 어긋난 스테일일 때만 재빌드한다.
+                stale = bool(remote and local and remote != local)
+                _, err = ensure_node_server(self._note, self._dbg, ver, rebuild=stale)
                 if err is None and built_server_js():
                     self.outcome = (True, "prewarm staged")
                 else:
@@ -244,5 +247,3 @@ class POTManager(QObject):
             if not worker.wait(2000):
                 worker.terminate()
                 worker.wait(1000)
-
-POTProviderWorker = _POTWorker

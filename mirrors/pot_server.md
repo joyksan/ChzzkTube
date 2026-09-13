@@ -149,10 +149,8 @@ def read_server_log_tail(n=10):
 
 
 # ── 서버 버전·소스 관리 ─────────────────────────────────────────────
-_SERVER_FALLBACK_VER = "1.3.2"
-_TAG_ZIP = (
-    "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{ver}.zip"
-)
+# [B4 정리] _TAG_ZIP·_SERVER_FALLBACK_VER는 상단(32~35행) 단일 정의만 유지 —
+# 병합 잔재로 두 번 선언돼 있던 중복 상수는 제거했다.
 
 
 def latest_server_ver(timeout=3):

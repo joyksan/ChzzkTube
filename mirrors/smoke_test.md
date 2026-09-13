@@ -30,7 +30,7 @@ def test_main():
         assert win is not None
         assert win.ctrl is not None
         assert hasattr(win, "_force_unlock_input")
-        print("[Smoke Test] dl_state 프로퍼티 확인:", win.dl_state)
+        print("[Smoke Test] ctrl.state 확인:", win.ctrl.state)
         # [다이얼로그 커버] SettingsDialog 실생성 — 콤보/체크박스 초기화가
         # NameError 없이 완료되는지 검증 (QGroupBox 미import·format__flay
         # 오타 잠복 결함을 잡기 위해 도입 — 스모크가 다이얼로그를 안 만들어

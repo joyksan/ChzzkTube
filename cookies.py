@@ -6,7 +6,6 @@ import shutil
 import sqlite3
 import tempfile
 
-import log_history
 
 def get_browser_cookies():
     # 도메인별 쿠키를 담기 위해 {domain: {name: value}} 구조로 변경

@@ -412,7 +412,6 @@ import json
 import re
 import urllib.request
 
-import log_history
 from cookies import get_browser_cookies
 from media import get_video_codec_rank
 
@@ -1503,7 +1502,7 @@ def writable_base():
     """쓰기 보장 런타임 캐시 루트 — node/PO 서버/플러그인/ffmpeg 등
     실행 시 수급하는 구성요소의 단일 경로 출처 (pot_provider·components 공용).
     """
-    local_appdata = os.environ.get("LOCALAPPDATA")
+    local_appdata = os.environ.get("LOCALAPPDATA") 
     if local_appdata:
         return os.path.join(local_appdata, "ChzzkTube")
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
@@ -1586,7 +1585,7 @@ class MediaController(QObject):
     """다운로드 + 분석 세션의 상태 머신과 생명주기를 통치하는 완벽한 컨트롤러.
 
     계약:
-    *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유하며 기존 MainWindow.dl_state와 완전히 동치이다.
+    *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유한다.
     *  스레드 경계 — state 플래그는 단방향 쓰기: canceled/skip 는
        UI 스레드만 쓰고 워커 스레드는 읽기만 한다. CPython GIL 하에서 dict 단일 키 읽기/쓰기는 원자적이고
        각 키의 쓰기 주체가 하나뿐이므로 lock 없이도 경쟁상태(lost update)가 발생하지 않는다.
@@ -1803,7 +1802,6 @@ import shutil
 import sqlite3
 import tempfile
 
-import log_history
 
 def get_browser_cookies():
     # 도메인별 쿠키를 담기 위해 {domain: {name: value}} 구조로 변경
@@ -3033,6 +3031,7 @@ import yt_dlp
 yt_dlp.plugins.plugin_dirs.value = []
 
 from PySide6.QtCore import QThread, Signal
+from dl_platform import _dl_platform
 from speed_window import SpeedWindow
 from yt_logger_bridge import YtLoggerBridge
 import raw_log
@@ -3079,6 +3078,7 @@ class DownloadWorker(QThread):
         self.current_idx = 1
         self.current_url = None
         self._live_proc = None  # 라이브 녹화 프로세스 핸들 (앱 종료 시 정리용)
+        self._ctx = None  # [A4] DownloadContext 참조 — 라이브 proc는 ctx에 부착된다
 
     def extract(self):
         """파이프라인 모듈에 넘길 DownloadContext를 생성한다 (D: 명시적 계약)."""
@@ -3113,6 +3113,7 @@ class DownloadWorker(QThread):
     def run(self):
         """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
         ctx = self.extract()
+        self._ctx = ctx  # [A4] 라이브 녹화 proc 핸들이 ctx._live_proc에 부착된다
         ctx.targets = _td.expand_targets(ctx)
         self.targets = ctx.targets  # 동기화 (current_file 등 내부 상태 유지)
         self.total_count = len(self.targets)
@@ -3149,11 +3150,20 @@ class DownloadWorker(QThread):
 
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 
-    def terminate(self):
-        """스레드 강제 종료 시 라이브 녹화 프로세스도 함께 정리."""
-        if self._live_proc is not None:
+    def kill_live_process(self):
+        """[A4] 라이브 녹화 프로세스 정리 — worker·ctx 양쪽 핸들을 모두 킬.
+
+        live_recorder.record_live_stream은 proc를 DownloadContext._live_proc에
+        부착한다(worker가 아님). worker 자체 핸들만 보던 기존 terminate는
+        실제 라이브 프로세스를 놓쳤다 — closeEvent의 kill_live_process 호출이
+        이제 실제로 동작한다.
+        """
+        handles = (self._live_proc, getattr(getattr(self, "_ctx", None), "_live_proc", None))
+        for proc in handles:
+            if proc is None:
+                continue
             try:
-                self._live_proc.kill()
+                proc.kill()
                 raw_log.raw(
                     "dl",
                     _pe.emit_event("DL", "WARN", "FFMP",
@@ -3162,7 +3172,12 @@ class DownloadWorker(QThread):
                 )
             except Exception:
                 pass
-            self._live_proc = None
+        self._live_proc = None
+
+    def terminate(self):
+        """스레드 강제 종료 시 라이브 녹화 프로세스도 함께 정리."""
+        self.kill_live_process()
+        super().terminate()
 
 
 ```
@@ -3182,6 +3197,7 @@ class DownloadWorker(QThread):
 import os
 
 import raw_log
+from dl_platform import _dl_platform
 from progress_emitter import emit_dl, emit_err
 
 
@@ -3679,7 +3695,7 @@ class ConciseLogConsole:
         원본(msg 전체)은 _buffer에 보존되고, 이 함수는 화면 표시만
         viewport 픽셀 폭에 맞춰 '…'로 자른다. 핵심은 display_width
         (east_asian_width 기반 문자 단위 추정)가 아니라 fontMetrics의
-        horizontalAdvance로 *실제 픽셀 폭*을 재는 것이다 — D2Coding은
+        horizontalAdvance로 *실제 픽셀 폭*을 재는 것이다 — Cascadia Mono는
         한글 2칸·latin 1칸·'│'(U+2502, Ambiguous)는 폰트에 따라 1칸이
         되는 비일관성이 있어, 문자 단위 추론만으로는 짤림 위치가 들쭉날쭉
         해진다. 픽셀 단위 절단으로 폰트/Ambiguous 폭/한영 혼용에 무관하게
@@ -3700,7 +3716,7 @@ class ConciseLogConsole:
         if not head:
             return line
         # head + 마지막 ' │ ' 까지의 실제 픽셀 폭을 잰다 — '│'의 Ambiguous
-        # 폭(1칸/2칸)과 D2Coding의 한글/라틴 폭 차이를 그대로 반영한다.
+        # 폭(1칸/2칸)과 Cascadia Mono의 한글/라틴 폭 차이를 그대로 반영한다.
         head_px = fm.horizontalAdvance(head + " │ ")
         msg_budget_px = viewport_px - head_px - RIGHT_PADDING_PX
         return head + " │ " + _truncate_by_pixels(msg, msg_budget_px, fm)
@@ -4137,7 +4153,7 @@ def _truncate_by_pixels(msg, budget_px, fm):
     """msg를 fontMetrics 기반 *실제 픽셀 폭*으로 절단 — 초과 시 '…' 부착.
 
     display_width(east_asian_width 기반 문자 단위 추정) 대신
-    horizontalAdvance로 실제 픽셀을 잰다 — D2Coding은 한글 2칸·
+    horizontalAdvance로 실제 픽셀을 잰다 — Cascadia Mono는 한글 2칸·
     latin 1칸·'│'(U+2502, Ambiguous)는 폰트에 따라 1칸/2칸이 되는
     비일관성이 있어, 문자 단위 추론만으로는 한영 혼용 라인의 짤림
     위치가 들쭉날쭉해진다. 픽셀 단위 절단으로 폰트/Ambiguous 폭/
@@ -4523,7 +4539,6 @@ from pot_manager import POTManager
 import config
 import log_console
 import log_history
-import pot_provider
 import theme
 from controller import MediaController
 from dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
@@ -4536,6 +4551,22 @@ _ANALYZE_DEBOUNCE_MS = 900
 # [벌크 입력 공출화] 붙여넣기·드래그&드롭·TXT 로드는 통째로 들어오므로 즉시 분석.
 # 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
 _BULK_INPUT_DELAY_MS = 150
+
+# [E1 단일화] POT 게이트 판정 — 3곳에 복사되던 판정식을 단일 진실로 통합한다.
+# HANDOVER §3 '다운로드 게이트' 상수 목록의 유일한 코드 출처이다.
+_POT_AVAIL_GATED = ("needs_auth", "premium_only", "subscriber_only", "private")
+
+
+def _needs_pot(info):
+    """PO 토큰 필요 여부 — age_limit>0 ∨ availability∈게이트 집합."""
+    if not info:
+        return False
+    age_limit = info.get("age_limit") or 0
+    if age_limit > 0:
+        return True
+    availability = info.get("availability") or ""
+    return isinstance(availability, str) and availability.lower() in _POT_AVAIL_GATED
+
 
 try:
     import winsound
@@ -4579,7 +4610,7 @@ class MainWindow(QMainWindow):
 
         self.cfg = self._load_config()
 
-        # 다운로드 + 분석 세션 상태/워커는 컨트롤러가 소유 (dl_state 프로퍼티로 접근 가능)
+        # 다운로드 + 분석 세션 상태/워커는 컨트롤러가 소유 (ctrl.state 단일 참조)
         self.ctrl = MediaController(self)
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
@@ -4615,11 +4646,6 @@ class MainWindow(QMainWindow):
         # 입력을 강제 개방 — URL 잠금이 영구화되지 않게 한다.
         QTimer.singleShot(15000, self._force_unlock_input)
 
-    @property
-    def dl_state(self):
-        """다운로드 세션 상태 — DownloadController.state의 별칭."""
-        return self.ctrl.state
-
     def closeEvent(self, event):
         # 1. 최소화 상태 해제 및 Qt 표준 창 활성화
         self.setWindowState(
@@ -4628,7 +4654,7 @@ class MainWindow(QMainWindow):
         )
         self.activateWindow()
 
-        is_running = self.dl_state.get("running", False)
+        is_running = self.ctrl.state.get("running", False)
         parent_dlg = (
             self.settings_dlg
             if (
@@ -4948,6 +4974,8 @@ class MainWindow(QMainWindow):
 
         # ── 보조 상태 초기화 ──
         self._full_log_buf: deque[str] = deque(maxlen=4096)
+        # [A5] F12 창이 흡수한 버퍼 엔트리 수 — 재오픈 시 누락분 증분 동기화용
+        self._full_log_win_n = 0
         self._last_status_line = ""
         # [버스 구독 — 스레드 경계 분리] raw_log의 순수 데몬 스레드는 브리지의
         # Signal.emit만 호출하고, 슬롯은 QueuedConnection으로 GUI 스레드 이벤트
@@ -5127,19 +5155,10 @@ class MainWindow(QMainWindow):
         [POTManager 위임] 게이트 책임은 POTManager가 담당.
         Spawn(Popen)은 POTManager.ensure_ready("gate")로 지연.
         """
-        needs_pot = False
-        if info:
-            age_limit = info.get("age_limit") or 0
-            if age_limit > 0:
-                needs_pot = True
-            availability = info.get("availability") or ""
-            if isinstance(availability, str) and availability.lower() in (
-                "needs_auth",
-                "premium_only",
-                "subscriber_only",
-                "private",
-            ):
-                needs_pot = True
+        info = info or {}
+        needs_pot = _needs_pot(info)
+        age_limit = info.get("age_limit") or 0
+        availability = info.get("availability") or ""
 
         import raw_log
         from log_event import LogEvent
@@ -5147,7 +5166,7 @@ class MainWindow(QMainWindow):
             stage="POT", status="RUN", scope="POT",
             msg=(
                 f"gated={needs_pot} age_limit={age_limit if info else '-'} "
-                f"availability={((info or {}).get('availability') or '-')}"
+                f"availability={availability or '-'}"
             ),
         )
         raw_log.raw("pot-gate", event, to_tui=True)
@@ -5546,12 +5565,14 @@ class MainWindow(QMainWindow):
         stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
         if not is_status:
             self._full_log_buf.append(stamped)
-        if (
-            getattr(self, "verbose_win", None) is not None
-            and self.verbose_win.isVisible()
-        ):
+        win = getattr(self, "verbose_win", None)
+        win_visible = win is not None and win.isVisible()
+        if not is_status and win_visible:
+            # [A5] 열려 있는 동안의 적재는 즉시 미러링됨 — 흡수 인덱스 전진.
+            self._full_log_win_n = len(self._full_log_buf)
+        if win_visible:
             try:
-                self.verbose_win.append(stamped, is_status)
+                win.append(stamped, is_status)
             except Exception:
                 pass
 
@@ -5587,6 +5608,14 @@ class MainWindow(QMainWindow):
                     "empty buffer",
                 )
             self.verbose_win.set_content(content)
+            self._full_log_win_n = len(self._full_log_buf)
+        else:
+            # [A5 수리] 닫혀 있던 구간의 누락분을 증분 동기화 — 재오픈 시에도
+            # F12가 버퍼 전체와 일치하도록 흡수 인덱스를 전진시킨다.
+            pending = list(self._full_log_buf)[self._full_log_win_n:]
+            for line in pending:
+                self.verbose_win.append(line, False)
+            self._full_log_win_n = len(self._full_log_buf)
         self.verbose_win.show()
         self.verbose_win.raise_()
         self.verbose_win.activateWindow()
@@ -5646,13 +5675,7 @@ class MainWindow(QMainWindow):
 
         # POT 필요 영상이고 POT 기동 중이면 큐에 적재
         info = (self.extracted_data or {}).get("info") or {}
-        age_limit = info.get("age_limit") or 0
-        availability = info.get("availability") or ""
-        needs_pot = age_limit > 0 or (
-            isinstance(availability, str) and availability.lower() in (
-                "needs_auth", "premium_only", "subscriber_only", "private"
-            )
-        )
+        needs_pot = _needs_pot(info)
         if needs_pot and self._pot_manager.is_busy():
             # POT 기동 중이면 큐에 넣고 사용자 알림
             self._pending_download = (targets, "auto", "auto")
@@ -5706,14 +5729,7 @@ class MainWindow(QMainWindow):
         """PO Token 필요 영상(연령제한 등)인 경우 POT 서버 기동 트리거.
         논블로킹 — 큐 메커니즘(_pending_download + _on_pot_finished)이 완료 후 실행."""
         info = (self.extracted_data or {}).get("info") or {}
-        age_limit = info.get("age_limit") or 0
-        availability = info.get("availability") or ""
-        needs_pot = age_limit > 0 or (
-            isinstance(availability, str) and availability.lower() in (
-                "needs_auth", "premium_only", "subscriber_only", "private"
-            )
-        )
-        if not needs_pot:
+        if not _needs_pot(info):
             return
         
         # POT 서버가 이미 실행 중이면 즉시 ready 승격 — 기존 서버 재사용.
@@ -5873,8 +5889,7 @@ import os
 import re
 import subprocess
 
-# 침묵 실패(리먹싱 등)의 증거 기록용 — log_history는 config leaf만 의존(비Qt·스레드 안전)
-import log_history
+# 침묵 실패(리먹싱 등)의 증거 기록용 — raw 버스 단일 경유로 이관됨(v3.3.0)
 
 ### 사이트 축약기호 매핑 (extractor → 3~4글자 약자)
 # 공식 브랜드 축약 우선, 없으면 도메인 앞글자 추출
@@ -6747,7 +6762,7 @@ class _POTWorker(QThread):
         stage = "SYS" if is_error else "POT"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
         event = LogEvent(stage=stage, status=status, scope="POT",
-                         msg=str(msg)[:120],
+                         msg=str(msg),
                          is_status=is_status, is_error=is_error)
         raw_log.raw("pot", event, to_tui=True)
 
@@ -6762,7 +6777,7 @@ class _POTWorker(QThread):
             raw_log.raw("pot-DEBUG", str(msg))
         else:
             event = LogEvent(stage="POT", status="RUN", scope="POT",
-                             msg=str(msg)[:120])
+                             msg=str(msg))
             raw_log.raw("pot", event, to_tui=True)
     
     def _run(self):
@@ -6807,8 +6822,11 @@ class _POTWorker(QThread):
                 self._note("pot prewarm staging...", True)
                 from pot_server import ensure_node_server, server_home, _SERVER_FALLBACK_VER
                 ver = remote or local or _SERVER_FALLBACK_VER
-                have_build = built_server_js() is not None
-                _, err = ensure_node_server(self._note, self._dbg, ver, rebuild=have_build)
+                # [A3 수리] "빌드 존재=재빌드" 반전 로직 교정 — 기존 rebuild=have_build는
+                # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).
+                # remote·local 버전이 실제 어긋난 스테일일 때만 재빌드한다.
+                stale = bool(remote and local and remote != local)
+                _, err = ensure_node_server(self._note, self._dbg, ver, rebuild=stale)
                 if err is None and built_server_js():
                     self.outcome = (True, "prewarm staged")
                 else:
@@ -6929,8 +6947,6 @@ class POTManager(QObject):
             if not worker.wait(2000):
                 worker.terminate()
                 worker.wait(1000)
-
-POTProviderWorker = _POTWorker
 ```
 
 ## File: pot_provider.py
@@ -7169,10 +7185,8 @@ def read_server_log_tail(n=10):
 
 
 # ── 서버 버전·소스 관리 ─────────────────────────────────────────────
-_SERVER_FALLBACK_VER = "1.3.2"
-_TAG_ZIP = (
-    "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{ver}.zip"
-)
+# [B4 정리] _TAG_ZIP·_SERVER_FALLBACK_VER는 상단(32~35행) 단일 정의만 유지 —
+# 병합 잔재로 두 번 선언돼 있던 중복 상수는 제거했다.
 
 
 def latest_server_ver(timeout=3):
@@ -7816,7 +7830,6 @@ from log_console import (
 import raw_log
 from media import cli_format_desc, format_bytes
 from dl_platform import _dl_platform
-from client_opts import _apply_client_opts, _apply_cookie_opts
 
 
 def _dl_spec(ctx):
@@ -7912,26 +7925,6 @@ def emit_download_header(ctx, info):
         emit_event("DL", "RUN", _dl_platform(ctx.current_url or ""), msg),
         to_tui=True,
     )
-    ctx._meta_logged = True
-
-
-def emit_live_header(ctx, info, res_label=""):
-    """라이브 녹화 시작 헤더 — LIVE 스테이지, 해상도는 SPEC 분리."""
-    title = _title_of(info)
-    if res_label:
-        raw_log.raw(
-            "dl",
-            emit_dl("RUN", scope=_dl_platform(ctx.current_url or ""),
-                    stage="LIVE", msg=title),
-            to_tui=True,
-        )
-    else:
-        raw_log.raw(
-            "dl",
-            emit_dl("RUN", _dl_platform(ctx.current_url or ""),
-                    stage="LIVE", msg=title),
-            to_tui=True,
-        )
     ctx._meta_logged = True
 
 
@@ -8201,7 +8194,7 @@ def test_main():
         assert win is not None
         assert win.ctrl is not None
         assert hasattr(win, "_force_unlock_input")
-        print("[Smoke Test] dl_state 프로퍼티 확인:", win.dl_state)
+        print("[Smoke Test] ctrl.state 확인:", win.ctrl.state)
         # [다이얼로그 커버] SettingsDialog 실생성 — 콤보/체크박스 초기화가
         # NameError 없이 완료되는지 검증 (QGroupBox 미import·format__flay
         # 오타 잠복 결함을 잡기 위해 도입 — 스모크가 다이얼로그를 안 만들어
@@ -8754,6 +8747,46 @@ def _format_selector(ctx):
     if res.isdigit():
         return f"bv*[height<={res}]+ba/b"
     return "bv*+ba/b"  # 기본 최고 품질 (명시/통합 동일)
+
+
+def _chzzk_filename(ch_info, fmt, cfg):
+    """치지직 다운로드 파일명 — get_filename_template(cfg) 계약을 치지직 메타로 치환.
+
+    [P0-3 복구] _chzzk_filename이 정의 없이 호출만 되어 치지직 다운로드가
+    NameError로 전부 실패했다. yt-dlp 필드(%(uploader)s/%(id)s 등)가 없는
+    치지직 dict이므로 아래 매핑으로 대역한다.
+    - prefix: filename_prefix cfg (none/uploader/date_*) — chzzk의
+      channel_name/date(YYYY-MM-DD)로 치환, 없으면 빈 접두
+    - suffix: filename_suffix cfg (id/id_res) — clip_id·video_no·live_id 중
+      존재하는 값, id_res면 fmt.height를 추가
+    - 확장자: progressive MP4 스트림이므로 .mp4 고정
+    """
+    cfg = cfg or {}
+    title = str(ch_info.get("title") or ch_info.get("videoTitle") or "chzzk")
+    title = re.sub(r'[\\/:*?"<>|]+', "_", title).strip(" _") or "chzzk"
+    cid = str(ch_info.get("clip_id") or ch_info.get("video_no")
+              or ch_info.get("live_id") or "").strip()
+    chan = str(ch_info.get("channel_name") or "").strip()
+    date = str(ch_info.get("date") or "").strip()[:10]
+    height = fmt.get("height") if isinstance(fmt, dict) else None
+
+    prefix_map = {
+        "none": "",
+        "uploader": f"[{chan}] " if chan else "",
+        "date_dash_uploader": f"{date} [{chan}] " if (date and chan) else "",
+        "date_compact_uploader": (f"{date.replace('-', '')} [{chan}] "
+                                  if (date and chan) else ""),
+        "date_dash": f"{date} " if date else "",
+        "date_compact": f"{date.replace('-', '')} " if date else "",
+    }
+    prefix = prefix_map.get(str(cfg.get("filename_prefix", "none") or "none"), "")
+
+    suffix = ""
+    if cid:
+        suffix = f" [{cid}]"
+        if str(cfg.get("filename_suffix", "id") or "id") == "id_res" and height:
+            suffix += f" [{height}p]"
+    return f"{prefix}{title}{suffix}.mp4"
 
 
 def _http_download(ctx, url, out_path):

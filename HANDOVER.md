@@ -245,13 +245,14 @@ LAYER 3: View (Qt Widgets)
 LAYER 2: Orchestrators
   startup_coordinator.py · controller.py
 LAYER 1: Worker Threads (QThread)
-  downloader.py · analyze_worker.py · update_worker.py · pot_provider.py
+  downloader.py · analyze_worker.py · update_worker.py
 LAYER 0.5: Pipeline Functions (ctx 기반, 비스레드)
   target_downloader.py · progress_emitter.py · live_recorder.py · finalizer.py · dl_context.py
 LAYER 0: Domain / Helpers / Infra (Leaf)
   media.py · chzzk_api.py · cookies.py · config.py · updater.py · utils.py
   yt_logger_bridge.py · dl_platform.py · speed_window.py · playlist.py
   po_client.py(L0 순수 — stdlib only, 상위 역참조 0) · node_provider.py(L0) · pot_server.py(L1) ·
+  pot_provider.py(순수 재수출 facade — 워커 없음, POTManager가 스폰 단일 근원) ·
   components.py · log_history.py · smoke_test.py · sync_mirrors.py
 ```
 
@@ -328,7 +329,7 @@ raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책�
 | Worker | downloader | DownloadWorker — `finished_all`만 잔존, 로그 시그널 0 (164) |
 | Worker | analyze_worker | AnalyzeWorker (354) — result_ready/error_occurred + pot-gate 판정 |
 | Worker | update_worker | UpdateWorker (201) — check_done/upgrade_done + deps raw 발행 |
-| Worker | pot_provider | PO Token 3개 모듈 재수출 facade (76) — POTProviderWorker는 v3.3.1 제거 |
+| Infra | pot_provider | PO Token 3개 모듈 재수출 facade (75) — 워커 없음(스폰은 POTManager 단독), POTProviderWorker는 v3.3.1 제거 |
 | Pipeline | progress_emitter | LogEvent 빌더 단일 출처 (182) — emit_event/emit_dl/emit_err/… |
 | Pipeline | target_downloader | 다운로드 실행부 (318) — `raw("dl"/"ytdlp"/"live")` |
 | Pipeline | live_recorder | ffmpeg 라이브 녹화 (229) — `prepare_live_paths`/`handle_stream_finish` 모듈 함수 계약 |
@@ -337,13 +338,13 @@ raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책�
 | Pipeline | speed_window | 속도 측정 슬라이딩 윈도우 |
 | Shared | yt_logger_bridge | yt-dlp logger → `raw("ytdlp")` 어댑터 (150) — `\r` 캐리지 조립 + 2Hz 스로틀 |
 | Infra | tool_log | subprocess STDOUT/STDERR 비블로킹 펌프 + 종료·타임아웃·잔여 출력 정리 |
-| Shared | updater | PyPI 조회+pip 업그레이드 (423, stdlib only) |
+| Shared | updater | PyPI 조회+pip 업그레이드 (423, 최상단 stdlib only — node/npm·ffmpeg CLI 원문 캡처용 경로는 pot_provider·components lazy import) |
 | Infra | po_client | bgutil HTTP 순수 계층 (91) — 순수 HTTP 핑만, 상위 역참조 0 |
 | Infra | node_provider | Node.js 런타임 수급 (314) |
 | Infra | pot_server | bgutil 서버 수명주기 (760) — 수급/빌드/기동/락/kill |
-| Domain | media | 코덱랭크/포맷설명/remux/cleanup (350) — `import log_history` 잔재 §5-15 |
-| Domain | chzzk_api | 치지직 clip/vod/live 분석 (365) — `import log_history` 잔재 §5-15 |
-| Domain | cookies | 브라우저 쿠키 추출 (87) — `import log_history` 잔재 §5-15 |
+| Domain | media | 코덱랭크/포맷설명/remux/cleanup (348) |
+| Domain | chzzk_api | 치지직 clip/vod/live 분석 (363) |
+| Domain | cookies | 브라우저 쿠키 추출 (85) |
 | Domain | config | `default_config()` 23키 + `_APP_VERSION` + 병합 |
 | Domain | playlist | YT 채널 URL 정규화 |
 | Domain | client_opts | player_client/쿠키/PO Token 옵션 주입 (125) |
@@ -564,6 +565,34 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **문서 미러** | `.py`가 원본, `mirrors/*.md` + `mirrors/chzzktube_codebase.md` 합본은 `python sync_mirrors.py` 자동 생성. 손수정 금지 |
 
 ## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-13 — v3.4.0 패치 2 : 파이프라인 P0 크래시 수리 + LEGACY_AUDIT 정리
+
+#### 문제 (전수조사·사용자 검증 실측)
+- **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
+- **A3**: 프리웜 `rebuild=have_build` — 빌드 존재 시 매 기동 npm ci+tsc 강제("디스크 스테이징만" 위반)
+- **A4**: 라이브 proc는 DownloadContext에 부착되는데 worker/`kill_live_process`가 이를 보지 못함
+- **C1**: `_note/_dbg` 발행 시 `[:120]` 절단 — LOGGING_POLICY §3/§4 위반
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `finalizer.py`/`downloader.py` | `from dl_platform import _dl_platform` 복원(P0-1/3) |
+| `target_downloader.py` | `_chzzk_filename(ch_info, fmt, cfg)` 신설 — 치지직 메타를 filename prefix/suffix 계약으로 치환, .mp4 고정(P0-2) |
+| `pot_manager.py` | prewarm rebuild을 스테일 감지 기반으로 교정(A3)·`_note/_dbg` 절단 제거(C1)·`POTProviderWorker` 별칭 제거(B3) |
+| `downloader.py` | `_ctx` 보관 + `kill_live_process()` — worker·ctx proc 양쪽 킬(A4) |
+| `progress_emitter.py` | 미사용 client_opts import 제거(B2)·`emit_live_header` 데드 함수 제거(B5) |
+| `main.py` | `import pot_provider` 제거(B1)·`_needs_pot(info)` 단일화(E1)·F12 재오픈 증분 동기화(A5) |
+| `pot_server.py` | `_TAG_ZIP`/`_SERVER_FALLBACK_VER` 중복 정의 제거(B4) |
+| `media.py`/`chzzk_api.py`/`cookies.py` | 죽은 `import log_history` 제거 |
+| 루트 | `1,` `_qtprobe.exit` `err/out.txt` `listing/locate_out.txt` `arch_dump.txt` `D2Coding-Regular.ttf` `requirements.txt` 제거(D1/D2) + `.gitignore` 보강 |
+| `tests/test_pipeline_regressions.py` | 신규 11건(마감 NameError·치지직 파일명·needs_pot·원문 보존·kill 계약·F12 인덱스·죽은 심볼 가드) |
+| `HANDOVER.md` | §3 레이어 표기 갱신(B7) — pot_provider는 facade(L0), 워커 아님 |
+| `log_console.py` | D2Coding 주석 → Cascadia Mono(D5) |
+| `smoke_test.py`/`controller.py`/`README.md`/`.github/workflows/ci.yml` | smoke `ctrl.state` 갱신(E2)·MVC docstring 정리·README CI 문구 교체(D3)·CI paths-ignore 오탈자 수리(D4) |
+
+#### 검증
+- 전체 pytest 137 passed / smoke_test PASS / `sync_mirrors.py --check` 0건 / py_compile OK
 
 ### 2026-09-13 — v3.4.0 패치 : 분석 상태 머신 회귀 수리 — ENTER 잠금·URL 클리어 크래시
 
@@ -1126,7 +1155,7 @@ L2 Service (QObject 아님 — plain)
 ├── target_downloader.py(318)  다운로드 실행부(DownloadWorker 분할)
 ├── finalizer.py .......... _finalize 분할 — TUI 컬럼 포맷 마무리
 ├── live_recorder.py(221) . ffmpeg 라이브 녹화(_live_proc + kill)
-├── updater.py(423) ....... PyPI 조회+pip 업그레이드(stdlib only)
+├── updater.py(423) ....... PyPI 조회+pip 업그레이드(최상단 stdlib only, node·ffmpeg CLI 캡처 lazy import)
 ├── yt_logger_bridge.py ... yt-dlp logger → raw("ytdlp") 어댑터(시그널 없음)
 ├── pot_server.py(760) .... bgutil 서버 수명주기(수급/빌드/기동/락/kill)
 ├── po_client.py(103) ..... bgutil HTTP 순수 계층(server_ping PID 확인)

@@ -10,6 +10,7 @@
 import os
 
 import raw_log
+from dl_platform import _dl_platform
 from progress_emitter import emit_dl, emit_err
 
 

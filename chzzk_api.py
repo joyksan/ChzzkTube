@@ -4,7 +4,6 @@ import json
 import re
 import urllib.request
 
-import log_history
 from cookies import get_browser_cookies
 from media import get_video_codec_rank
 

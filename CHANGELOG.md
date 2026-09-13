@@ -1,3 +1,15 @@
+### 2026-09-13 — v3.4.0 패치 2 : 파이프라인 P0 크래시 수리 + LEGACY_AUDIT 정리
+
+- **P0-1 finalizer**: `_dl_platform` import 누락 — 모든 배치 완료/취소 시 NameError → `finished_all` 미발화 → UI 영구 락업
+- **P0-2 downloader**: SKIP 틱 `_dl_platform` NameError
+- **P0-3 target_downloader**: 정의 없는 `_chzzk_filename` — 치지직 다운로드 전부 실패. `get_filename_template` 계약을 치지직 메타(channel_name/date/clip_id·video_no·live_id/fmt.height)로 치환해 복구
+- **P1-A3 pot_manager**: 프리웜 `rebuild=have_build` 반전 수리 — 매 기동 npm ci+tsc 강제(§1.3 경량 prewarm 위반)를 스테일 감지 기반으로 교정
+- **P1-A4 라이브 계약**: live_recorder가 DownloadContext에 부착하는 proc를 worker가 보지 못하는 불일치 수리 — `DownloadWorker._ctx` 보관 + `kill_live_process()`가 양쪽 핸들 킬, closeEvent 분기 활성화
+- **P2**: `_note/_dbg` 발행 시 `[:120]` 절단 제거(LOGGING_POLICY §3/§4), 미사용 import 2건(main·progress_emitter), `POTProviderWorker` 별칭 제거, `pot_server` 중복 상수 제거, `media/chzzk_api/cookies` 죽은 `import log_history` 제거, 루트 잔재 9종 git rm(`1,` `_qtprobe.exit` `err/out.txt` `listing/locate_out.txt` `arch_dump.txt` `D2Coding-Regular.ttf` `requirements.txt`), HANDOVER §3 레이어 표기 갱신
+- **P3**: `needs_pot` 3중 판정식 → `_needs_pot(info)` 단일화, F12 재오픈 증분 동기화(`_full_log_win_n`), `emit_live_header` 데드 함수 제거
+- **잔여 P3 수리**: README의 미실물 pre-commit 주장 → CI 실측 문구 교체(D3) · CI paths-ignore 오탈자 `sync-drive.yml`→`sync-to-drive.yml`(D4) · log_console D2Coding 주석 → Cascadia Mono(D5) · `dl_state` 레거시 별칭 폐기 + smoke_test `ctrl.state` 갱신(E2) · HANDOVER updater "stdlib only" 표기 정밀화(lazy import 명시, E3)
+- **검증**: 전체 pytest 137 passed(신규 `tests/test_pipeline_regressions.py` 11건) · smoke_test PASS · `sync_mirrors.py --check` 0건 · py_compile OK
+
 ### 2026-09-13 — v3.4.0 패치 : 분석 상태 머신 회귀 수리 — ENTER 잠금 해제·URL 클리어 크래시 제거
 
 - **ENTER 잠금 근본 원인 수리**: `on_analyze_success`/`on_analyze_error`가 `ctrl.state["analyzing"]`을 해제하지 않아 State-Button Matrix(`get_current_app_state`)가 `ANALYZING`에 영구 고정 → `toggle_download`가 `state != "IDLE"`에서 조기 반환 → 분석 완료 후 ENTER·입력 잠금

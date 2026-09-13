@@ -30,7 +30,6 @@ from log_console import (
 import raw_log
 from media import cli_format_desc, format_bytes
 from dl_platform import _dl_platform
-from client_opts import _apply_client_opts, _apply_cookie_opts
 
 
 def _dl_spec(ctx):
@@ -126,26 +125,6 @@ def emit_download_header(ctx, info):
         emit_event("DL", "RUN", _dl_platform(ctx.current_url or ""), msg),
         to_tui=True,
     )
-    ctx._meta_logged = True
-
-
-def emit_live_header(ctx, info, res_label=""):
-    """라이브 녹화 시작 헤더 — LIVE 스테이지, 해상도는 SPEC 분리."""
-    title = _title_of(info)
-    if res_label:
-        raw_log.raw(
-            "dl",
-            emit_dl("RUN", scope=_dl_platform(ctx.current_url or ""),
-                    stage="LIVE", msg=title),
-            to_tui=True,
-        )
-    else:
-        raw_log.raw(
-            "dl",
-            emit_dl("RUN", _dl_platform(ctx.current_url or ""),
-                    stage="LIVE", msg=title),
-            to_tui=True,
-        )
     ctx._meta_logged = True
 
 

@@ -14,6 +14,7 @@ import yt_dlp
 yt_dlp.plugins.plugin_dirs.value = []
 
 from PySide6.QtCore import QThread, Signal
+from dl_platform import _dl_platform
 from speed_window import SpeedWindow
 from yt_logger_bridge import YtLoggerBridge
 import raw_log
@@ -60,6 +61,7 @@ class DownloadWorker(QThread):
         self.current_idx = 1
         self.current_url = None
         self._live_proc = None  # 라이브 녹화 프로세스 핸들 (앱 종료 시 정리용)
+        self._ctx = None  # [A4] DownloadContext 참조 — 라이브 proc는 ctx에 부착된다
 
     def extract(self):
         """파이프라인 모듈에 넘길 DownloadContext를 생성한다 (D: 명시적 계약)."""
@@ -94,6 +96,7 @@ class DownloadWorker(QThread):
     def run(self):
         """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
         ctx = self.extract()
+        self._ctx = ctx  # [A4] 라이브 녹화 proc 핸들이 ctx._live_proc에 부착된다
         ctx.targets = _td.expand_targets(ctx)
         self.targets = ctx.targets  # 동기화 (current_file 등 내부 상태 유지)
         self.total_count = len(self.targets)
@@ -130,11 +133,20 @@ class DownloadWorker(QThread):
 
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 
-    def terminate(self):
-        """스레드 강제 종료 시 라이브 녹화 프로세스도 함께 정리."""
-        if self._live_proc is not None:
+    def kill_live_process(self):
+        """[A4] 라이브 녹화 프로세스 정리 — worker·ctx 양쪽 핸들을 모두 킬.
+
+        live_recorder.record_live_stream은 proc를 DownloadContext._live_proc에
+        부착한다(worker가 아님). worker 자체 핸들만 보던 기존 terminate는
+        실제 라이브 프로세스를 놓쳤다 — closeEvent의 kill_live_process 호출이
+        이제 실제로 동작한다.
+        """
+        handles = (self._live_proc, getattr(getattr(self, "_ctx", None), "_live_proc", None))
+        for proc in handles:
+            if proc is None:
+                continue
             try:
-                self._live_proc.kill()
+                proc.kill()
                 raw_log.raw(
                     "dl",
                     _pe.emit_event("DL", "WARN", "FFMP",
@@ -143,5 +155,10 @@ class DownloadWorker(QThread):
                 )
             except Exception:
                 pass
-            self._live_proc = None
+        self._live_proc = None
+
+    def terminate(self):
+        """스레드 강제 종료 시 라이브 녹화 프로세스도 함께 정리."""
+        self.kill_live_process()
+        super().terminate()
 

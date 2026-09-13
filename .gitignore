@@ -19,6 +19,12 @@ Untitled
 dl_config.json
 logs/
 
+# 디버그/덤프 산출물 (수동 정리된 잔재 재유입 방지)
+1,
+*.exit
+arch_dump.txt
+arch_dump*
+
 #사용자파일
 .clinerules
 versions/

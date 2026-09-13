@@ -4,8 +4,7 @@ import os
 import re
 import subprocess
 
-# 침묵 실패(리먹싱 등)의 증거 기록용 — log_history는 config leaf만 의존(비Qt·스레드 안전)
-import log_history
+# 침묵 실패(리먹싱 등)의 증거 기록용 — raw 버스 단일 경유로 이관됨(v3.3.0)
 
 ### 사이트 축약기호 매핑 (extractor → 3~4글자 약자)
 # 공식 브랜드 축약 우선, 없으면 도메인 앞글자 추출

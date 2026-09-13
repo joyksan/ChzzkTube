@@ -42,7 +42,6 @@ from pot_manager import POTManager
 import config
 import log_console
 import log_history
-import pot_provider
 import theme
 from controller import MediaController
 from dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
@@ -55,6 +54,22 @@ _ANALYZE_DEBOUNCE_MS = 900
 # [벌크 입력 공출화] 붙여넣기·드래그&드롭·TXT 로드는 통째로 들어오므로 즉시 분석.
 # 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
 _BULK_INPUT_DELAY_MS = 150
+
+# [E1 단일화] POT 게이트 판정 — 3곳에 복사되던 판정식을 단일 진실로 통합한다.
+# HANDOVER §3 '다운로드 게이트' 상수 목록의 유일한 코드 출처이다.
+_POT_AVAIL_GATED = ("needs_auth", "premium_only", "subscriber_only", "private")
+
+
+def _needs_pot(info):
+    """PO 토큰 필요 여부 — age_limit>0 ∨ availability∈게이트 집합."""
+    if not info:
+        return False
+    age_limit = info.get("age_limit") or 0
+    if age_limit > 0:
+        return True
+    availability = info.get("availability") or ""
+    return isinstance(availability, str) and availability.lower() in _POT_AVAIL_GATED
+
 
 try:
     import winsound
@@ -98,7 +113,7 @@ class MainWindow(QMainWindow):
 
         self.cfg = self._load_config()
 
-        # 다운로드 + 분석 세션 상태/워커는 컨트롤러가 소유 (dl_state 프로퍼티로 접근 가능)
+        # 다운로드 + 분석 세션 상태/워커는 컨트롤러가 소유 (ctrl.state 단일 참조)
         self.ctrl = MediaController(self)
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
 
@@ -134,11 +149,6 @@ class MainWindow(QMainWindow):
         # 입력을 강제 개방 — URL 잠금이 영구화되지 않게 한다.
         QTimer.singleShot(15000, self._force_unlock_input)
 
-    @property
-    def dl_state(self):
-        """다운로드 세션 상태 — DownloadController.state의 별칭."""
-        return self.ctrl.state
-
     def closeEvent(self, event):
         # 1. 최소화 상태 해제 및 Qt 표준 창 활성화
         self.setWindowState(
@@ -147,7 +157,7 @@ class MainWindow(QMainWindow):
         )
         self.activateWindow()
 
-        is_running = self.dl_state.get("running", False)
+        is_running = self.ctrl.state.get("running", False)
         parent_dlg = (
             self.settings_dlg
             if (
@@ -467,6 +477,8 @@ class MainWindow(QMainWindow):
 
         # ── 보조 상태 초기화 ──
         self._full_log_buf: deque[str] = deque(maxlen=4096)
+        # [A5] F12 창이 흡수한 버퍼 엔트리 수 — 재오픈 시 누락분 증분 동기화용
+        self._full_log_win_n = 0
         self._last_status_line = ""
         # [버스 구독 — 스레드 경계 분리] raw_log의 순수 데몬 스레드는 브리지의
         # Signal.emit만 호출하고, 슬롯은 QueuedConnection으로 GUI 스레드 이벤트
@@ -646,19 +658,10 @@ class MainWindow(QMainWindow):
         [POTManager 위임] 게이트 책임은 POTManager가 담당.
         Spawn(Popen)은 POTManager.ensure_ready("gate")로 지연.
         """
-        needs_pot = False
-        if info:
-            age_limit = info.get("age_limit") or 0
-            if age_limit > 0:
-                needs_pot = True
-            availability = info.get("availability") or ""
-            if isinstance(availability, str) and availability.lower() in (
-                "needs_auth",
-                "premium_only",
-                "subscriber_only",
-                "private",
-            ):
-                needs_pot = True
+        info = info or {}
+        needs_pot = _needs_pot(info)
+        age_limit = info.get("age_limit") or 0
+        availability = info.get("availability") or ""
 
         import raw_log
         from log_event import LogEvent
@@ -666,7 +669,7 @@ class MainWindow(QMainWindow):
             stage="POT", status="RUN", scope="POT",
             msg=(
                 f"gated={needs_pot} age_limit={age_limit if info else '-'} "
-                f"availability={((info or {}).get('availability') or '-')}"
+                f"availability={availability or '-'}"
             ),
         )
         raw_log.raw("pot-gate", event, to_tui=True)
@@ -1065,12 +1068,14 @@ class MainWindow(QMainWindow):
         stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
         if not is_status:
             self._full_log_buf.append(stamped)
-        if (
-            getattr(self, "verbose_win", None) is not None
-            and self.verbose_win.isVisible()
-        ):
+        win = getattr(self, "verbose_win", None)
+        win_visible = win is not None and win.isVisible()
+        if not is_status and win_visible:
+            # [A5] 열려 있는 동안의 적재는 즉시 미러링됨 — 흡수 인덱스 전진.
+            self._full_log_win_n = len(self._full_log_buf)
+        if win_visible:
             try:
-                self.verbose_win.append(stamped, is_status)
+                win.append(stamped, is_status)
             except Exception:
                 pass
 
@@ -1106,6 +1111,14 @@ class MainWindow(QMainWindow):
                     "empty buffer",
                 )
             self.verbose_win.set_content(content)
+            self._full_log_win_n = len(self._full_log_buf)
+        else:
+            # [A5 수리] 닫혀 있던 구간의 누락분을 증분 동기화 — 재오픈 시에도
+            # F12가 버퍼 전체와 일치하도록 흡수 인덱스를 전진시킨다.
+            pending = list(self._full_log_buf)[self._full_log_win_n:]
+            for line in pending:
+                self.verbose_win.append(line, False)
+            self._full_log_win_n = len(self._full_log_buf)
         self.verbose_win.show()
         self.verbose_win.raise_()
         self.verbose_win.activateWindow()
@@ -1165,13 +1178,7 @@ class MainWindow(QMainWindow):
 
         # POT 필요 영상이고 POT 기동 중이면 큐에 적재
         info = (self.extracted_data or {}).get("info") or {}
-        age_limit = info.get("age_limit") or 0
-        availability = info.get("availability") or ""
-        needs_pot = age_limit > 0 or (
-            isinstance(availability, str) and availability.lower() in (
-                "needs_auth", "premium_only", "subscriber_only", "private"
-            )
-        )
+        needs_pot = _needs_pot(info)
         if needs_pot and self._pot_manager.is_busy():
             # POT 기동 중이면 큐에 넣고 사용자 알림
             self._pending_download = (targets, "auto", "auto")
@@ -1225,14 +1232,7 @@ class MainWindow(QMainWindow):
         """PO Token 필요 영상(연령제한 등)인 경우 POT 서버 기동 트리거.
         논블로킹 — 큐 메커니즘(_pending_download + _on_pot_finished)이 완료 후 실행."""
         info = (self.extracted_data or {}).get("info") or {}
-        age_limit = info.get("age_limit") or 0
-        availability = info.get("availability") or ""
-        needs_pot = age_limit > 0 or (
-            isinstance(availability, str) and availability.lower() in (
-                "needs_auth", "premium_only", "subscriber_only", "private"
-            )
-        )
-        if not needs_pot:
+        if not _needs_pot(info):
             return
         
         # POT 서버가 이미 실행 중이면 즉시 ready 승격 — 기존 서버 재사용.

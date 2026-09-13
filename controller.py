@@ -12,7 +12,7 @@ class MediaController(QObject):
     """다운로드 + 분석 세션의 상태 머신과 생명주기를 통치하는 완벽한 컨트롤러.
 
     계약:
-    *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유하며 기존 MainWindow.dl_state와 완전히 동치이다.
+    *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유한다.
     *  스레드 경계 — state 플래그는 단방향 쓰기: canceled/skip 는
        UI 스레드만 쓰고 워커 스레드는 읽기만 한다. CPython GIL 하에서 dict 단일 키 읽기/쓰기는 원자적이고
        각 키의 쓰기 주체가 하나뿐이므로 lock 없이도 경쟁상태(lost update)가 발생하지 않는다.
