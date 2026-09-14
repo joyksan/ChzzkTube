@@ -690,7 +690,7 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "", "analyzing..."),
+            log_console.emit_event("ANAL", "RUN", "YT", "analyzing..."),
             is_status=True,
             is_error=False,
         )
@@ -1204,7 +1204,7 @@ class MainWindow(QMainWindow):
         self.ctrl.begin_download()
 
         self.append_concise_log(
-            log_console.emit_event("DL", "RUN", "", "downloading..."),
+            log_console.emit_event("DL", "RUN", "YT", "downloading..."),
             is_status=True,
             is_error=False,
         )
@@ -1258,7 +1258,7 @@ class MainWindow(QMainWindow):
         self._pick_targets = [url]
         self._pick_pending = True
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "", "analyzing formats..."),
+            log_console.emit_event("ANAL", "RUN", "YT", "analyzing formats..."),
             is_status=True,
             is_error=False,
         )
@@ -1333,7 +1333,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_skip()
             self.append_concise_log(
-                log_console.emit_event("DL", "SKIP", "", "skip requested"),
+                log_console.emit_event("DL", "SKIP", "MAIN", "skip requested"),
                 is_status=False,
                 is_error=False,
             )

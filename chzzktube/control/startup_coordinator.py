@@ -89,7 +89,11 @@ class StartupCoordinator(QObject):
     # ── POTManager 시그널 핸들러 ──────────────────────────────
 
     def _on_pot_status(self, status: str):
+        # View로만 포워드하던 것을 raw 버스에도 태워 TUI/F12/history에 남긴다.
         self.pot_status_changed.emit(status)
+        from chzzktube.core.raw_log import raw
+        from chzzktube.core.log_emitter import emit_event
+        raw("startup", emit_event("POT", "RUN", "POT", status), to_tui=True)
 
     def _on_pot_finished(self, ok: bool, msg: str):
         self.report_pot(ok, msg)
