@@ -30,4 +30,5 @@ arch_dump*
 versions/
 build/
 dist/
-.txt
+_pot_stage/
+*.txt

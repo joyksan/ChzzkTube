@@ -11,11 +11,12 @@
 여기서는 test_gate_integration.py와 동일하게 MainWindow 비공개 메서드를
 가벼운 self 대역에 바인딩해 계약만 검증한다 (헤드리스 위젯 불필요).
 """
+import chzzktube
 from types import SimpleNamespace
 
-from controller import MediaController
+from chzzktube.control.controller import MediaController
 
-import main as main_module
+import chzzktube.ui.main_window as main_module
 
 
 class _FakeInput:
@@ -142,7 +143,7 @@ def test_analyzing_cleared_on_error():
     m = _FakeMain()
     m.ctrl.state["analyzing"] = True
 
-    m.on_analyze_error("media info fail")
+    m.on_analyze_error("chzzktube.core.media info fail")
 
     assert m.ctrl.state["analyzing"] is False
     assert m.get_current_app_state() == "IDLE"
@@ -189,7 +190,7 @@ def test_duplicate_result_after_completion_is_dropped():
 
 
 def test_on_url_changed_clear_uses_controller_abandon():
-    """URL 클리어 시 죽은 _abandon_analyze_worker 호출이 아니라 controller 유기로 동작.
+    """URL 클리어 시 죽은 _abandon_analyze_worker 호출이 아니라 chzzktube.control.controller 유기로 동작.
 
     - 이전: self._abandon_analyze_worker() → 정의 없음 → AttributeError
       → console.clear_status_line() 이후 로직이 실행되지 않았다.

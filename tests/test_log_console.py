@@ -1,11 +1,12 @@
-"""log_console 단위 테스트 — format_log_line 포맷 규격."""
+"""chzzktube.ui.log_console 단위 테스트 — format_log_line 포맷 규격."""
+import chzzktube
 import os
 
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from log_console import _flow_lines, format_log_line, is_tui_line
+from chzzktube.core.log_emitter import _flow_lines, format_log_line, is_tui_line
 
 
 def _parts(line):
@@ -93,3 +94,43 @@ class TestFlowLinesNoWrapFlag:
     def test_default_is_wrap(self):
         plain = "z" * 300
         assert len(_flow_lines(plain)) > 1
+
+
+class TestResizeBudgetPath:
+    """[회귀 방지 v3.4.0] ui/log_console 렌더러 예산 재계산 경로.
+
+    레이어 리팩터링 시 core/log_emitter 분리 추출 과정에서
+    update_tree_budget() 내부에 '_emitter' alias 잔재(NameError)가 남아
+    창 resize/show 시점에 Qt C++ 오버라이드 콜백에서 예외 → 종료 시
+    세그폴트(EXC_BAD_ACCESS at Py_FinalizeEx) 유발 이력. (2026-09-14)
+    이 경로는 반드시 정상 동작해야 한다.
+    """
+
+    @pytest.fixture(scope="class")
+    def qapp(self):
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance() or QApplication([])
+        yield app
+        app.processEvents()
+
+    def test_update_tree_budget_sets_total_width(self, qapp):
+        from PySide6.QtWidgets import QTextEdit
+        from chzzktube.ui.log_console import update_tree_budget
+
+        te = QTextEdit()
+        te.resize(640, 480)
+        update_tree_budget(te)
+
+        from chzzktube.core import log_emitter
+        assert log_emitter.TREE_TOTAL_WIDTH >= 40
+
+    def test_console_on_resize_smoke(self, qapp):
+        from PySide6.QtWidgets import QTextEdit
+        from chzzktube.ui.log_console import ConciseLogConsole
+
+        te = QTextEdit()
+        te.resize(640, 480)
+        console = ConciseLogConsole(te)
+        console.on_resize()  # NameError(_emitter) 회귀 시 이 호출이 실패한다
+        assert console._budget_key is not None

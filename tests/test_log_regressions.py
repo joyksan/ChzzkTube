@@ -1,22 +1,20 @@
 """로그 버스 및 F12 버퍼 회귀 테스트 (Qt 의존 없음).
 
 [목적]
-- raw_log dispatcher가 bounded queue를 유지하고, 포화 시 UI mirror를 드롭하며
+- chzzktube.core.raw_log dispatcher가 bounded queue를 유지하고, 포화 시 UI mirror를 드롭하며
   overflow 요약을 한 번만 기록하는지 검증한다.
 - F12 전체 로그 버퍼가 deque(maxlen=4096)로 동작해 4,096건을 초과하면
   오래된 이벤트를 제거하는지 검증한다.
 """
+import chzzktube
 from collections import deque
 from unittest.mock import patch
 
-from log_event import LogEvent
-import raw_log
-
-
+from chzzktube.core.log_event import LogEvent
+import chzzktube.core.raw_log as raw_log
 def test_raw_bus_overflow_is_bounded_and_summarized_once():
     """raw bus: 포화 시 UI mirror를 드롭하고 overflow 요약을 한 번만 기록."""
-    import log_history
-
+    import chzzktube.core.log_history as log_history
     dispatcher = raw_log._RawDispatcher()
     try:
         # 소비 스레드를 먼저 정지해 결정적으로 포화시킨다 —
@@ -33,7 +31,7 @@ def test_raw_bus_overflow_is_bounded_and_summarized_once():
                 False,
             )
 
-        with patch.object(log_history, "log") as history_log:
+        with patch.object(chzzktube.core.log_history, "log") as history_log:
             assert not dispatcher.publish(
                 LogEvent(
                     stage="SYS",
@@ -61,7 +59,7 @@ def test_full_log_buffer_is_bounded():
     # 초기화해야 한다 (무제한 list/str 누수 방지 회귀). MainWindow 인스턴스
     # 생성은 Qt 이벤트 루프에 의존하므로 소스 계약으로 검증한다.
     main_src = pathlib.Path(
-        os.path.join(os.path.dirname(__file__), "..", "main.py")
+        os.path.join(os.path.dirname(__file__), "..", "chzzktube", "ui", "main_window.py")
     ).read_text(encoding="utf-8")
     assert "self._full_log_buf: deque[str] = deque(maxlen=4096)" in main_src
 

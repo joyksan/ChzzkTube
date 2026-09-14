@@ -1,7 +1,8 @@
-"""media 단위 테스트 — 순수 헬퍼 함수."""
+"""chzzktube.core.media 단위 테스트 — 순수 헬퍼 함수."""
+import chzzktube
 import pytest
 
-from media import (
+from chzzktube.core.media import (
     audio_spec,
     format_bytes,
     get_audio_codec_rank,

@@ -1,0 +1,1202 @@
+# HANDOVER.md — ChzzkTube 인수인계서
+
+> 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
+> 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
+> 마지막 갱신: v3.4.0 — 2026-09-13 4컬럼 로그 규격 — SPEC/PLATFORM 컬럼 폐지·SCOPE 통합·미디어/버전 MSG 태그화·고정 폭 진행률·문서/미러 정합성
+
+---
+
+## 1. 프로젝트 개요
+
+- **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
+- **버전**: `v3.4.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.4.0"` (최신: 2026-09-13 4컬럼 로그 규격·문서/미러 정합성)
+- **버전 정책 (비공개 개발, semver-lite)**:
+  - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
+  - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
+  - `z` patch: 버그 수정·로그/색상/판정 문구·성능 다듬기 등 기능 지평 변화 없는 안정 작업
+  - 비공개 개발이므로 `y` 단위로 릴리즈하고, `z`는 중간 커밋 구분용. 공개/배포 마일스톤에서만 `x`·`1.0.0` 레이블을 의미에 맞게 사용. 버전 변경 사유는 HANDOVER §9 변경 테이블 + CHANGELOG에 동기화.
+- **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PySide6 + yt-dlp + streamlink + FFmpeg(리먹싱) + Node.js 22+(PO Token 서버)
+- **진입점**: `main.py` (`python main.py`)
+- **빌드**: PyInstaller — `ChzzkTube.spec`
+- **설정 파일**: `dl_config.json` (CONFIG_DIR에 생성, UTF-8 / indent=4)
+
+---
+
+## 1.1 버전 관리 절차
+
+### 1.1.1 버전 진실 공급원과 정책
+
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.4.0`이다.
+- `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
+- 비공개 개발은 semver-lite를 따른다.
+  - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
+  - `minor`: 기능 추가, 대형 리팩토링, 아키텍처 재편 등 사용자/호출부 관점의 기능 지평이 바뀔 때
+  - `patch`: 버그 수정, 로그·색상·판정 문구, 성능 다듬기 등 기능 지평 변화 없는 안정 작업
+- 비공개 개발은 patch 단위로 커밋/중간 상태를 구분하고, 외부 공개 또는 배포 마일스톤에서 major/minor 레이블을 의미에 맞게 붙인다.
+- 버전 변경 사유는 `HANDOVER.md` §9 변경 테이블과 `CHANGELOG.md` 최신 엔트리에 함께 기록한다.
+
+### 1.1.2 버전 증가 절차
+
+1. 변경 성격에 따라 `major`/`minor`/`patch` 증가를 결정한다.
+2. `config.py`의 `_APP_VERSION`를 먼저 수정한다. 앱 화면, 부트 로그, 히스토리 세션 마커는 이 값을 사용한다.
+3. `pyproject.toml`의 `version`과 `uv.lock`의 루트 `[[package]] name = "chzzktube"` 버전을 같은 숫자로 맞춘다.
+4. `HANDOVER.md` 머리글/개요/최신 변경 이력과 `CHANGELOG.md` 최신 엔트리를 갱신한다.
+5. `python sync_mirrors.py`로 `mirrors/config.md`와 `mirrors/chzzktube_codebase.md`를 재생성한다.
+6. 다음 정합성 조건을 확인한다.
+   - `config._APP_VERSION == "v" + pyproject.toml version`
+   - `uv.lock` 루트 프로젝트 버전이 `pyproject.toml`과 동일
+   - `HANDOVER.md`, `CHANGELOG.md`, README의 현재 버전 표기가 동일
+   - `python sync_mirrors.py --check`가 변경 0건/누락 0건을 반환
+
+### 1.1.3 `bump_version.py` 제한
+
+- `bump_version.py`는 `config.py`의 `_APP_VERSION`에서 patch 숫자만 `+1`하는 보조 스크립트다.
+- `major`/`minor` 증가는 지원하지 않으며, `pyproject.toml`, `uv.lock`, `HANDOVER.md`, `CHANGELOG.md`, `README.md`, Python 미러는 자동 갱신하지 않는다.
+- 따라서 릴리스/배포 버전 변경 시에는 위 §1.1.2 절차를 수동으로 완수해야 하며, `python bump_version.py` 실행 후 `config.py`만 바뀌었다고 완료 처리하면 안 된다.
+
+## 1.2 경로 계약
+
+### 1.2.1 기본 디렉터리
+
+| 경로/상수 | 소스(Dev) | PyInstaller(frozen/onedir) | 용도 |
+|---|---|---|---|
+| `BASE_DIR` | 프로젝트 루트 | `sys._MEIPASS` | 번들 리소스·파이썬 모듈 탐색 |
+| `CONFIG_DIR` | 프로젝트 루트 | 실행 파일(`sys.executable`) 디렉터리 | `dl_config.json`과 설정 저장 |
+| `CONFIG_FILE` | `<repo>/dl_config.json` | `<exe-dir>/dl_config.json` | UTF-8, indent=4 설정 파일 |
+| `LOG_DIR` | `<repo>/logs/` | `<exe-dir>/logs/` | `chzzktube_YYYY-MM-DD.log`, 30일 보존 |
+| `ICON_PATH` | `<BASE_DIR>/icon.ico` | `<BASE_DIR>/icon.ico` | 창 아이콘 |
+| `writable_base()` | `$HOME/.chzzktube` | Windows는 `%LOCALAPPDATA%/ChzzkTube`, 그 외는 `$HOME/.chzzktube` | 쓰기 보장 사용자 데이터/캐시 루트 |
+
+- `CONFIG_DIR`는 설정 저장 위치이며, `download_path`의 기본값으로도 사용된다. 사용자는 `dl_config.json`에서 별도 다운로드 경로를 지정할 수 있다.
+- `CHZZKTUBE_COMPONENTS_DIR` 환경 변수가 설정되면 `components.components_root()`가 그 경로를 최우선으로 사용한다. 미설정 시 소스는 `<repo>/components`, frozen은 `<exe-dir>/components`다.
+
+### 1.2.2 런타임 캐시·외부 구성요소
+
+`writable_base()` 아래의 주요 경로는 다음 계약을 따른다.
+
+| 경로 | 소유/용도 |
+|---|---|
+| `ffmpeg/` | `components.py`의 ffmpeg 수급·검증 캐시. 실제 실행 파일은 하위 `bin/` 등에서 탐색 |
+| `node/` | `node_provider.py`의 Node.js 22+ 포터블 런타임과 npm 무결성 관리 |
+| `bgutil-ytdlp-pot-provider/` | `pot_server.server_home()`의 PO 서버 소스/빌드. `server/.version`으로 설치 버전 판정 |
+| `bgutil_server.log` | PO 서버 기동/빌드 진단 로그 |
+| `.prewarm.lock` | PO 서버 프리웜 상호배제 락. 죽은 PID + 30분 초과 시 stale 회수 |
+| `yt_dlp_plugins/` | 구 PO 플러그인 잔재 제거 대상. 현행 자체 Node 서버와는 별도 정리 경로 |
+
+- Node 런타임 다운로드 아카이브는 일시적으로 `writable_base()/node_portable.zip` 또는 `node_portable.tar.gz`에 저장한 뒤 전개한다.
+- PO 서버 소스 갱신은 `tempfile.mkdtemp(prefix="chzzktube_bgutil_")`의 임시 디렉터리에서 수행하고, 완료 후 `server_home()`으로 원자적으로 반영한다.
+- ffmpeg 수급은 `*.part`/임시 디렉터리를 사용하고 성공 시 최종 경로로 교체한다. 실패한 기존 캐시는 경고 후 재수급한다.
+- frozen 빌드의 PO 서버 번들 자료는 PyInstaller `_MEIPASS` 아래 `bgutil-ytdlp-pot-provider/`를 우선 참조하되, 쓰기 가능한 사용자 경로가 이미 존재하면 해당 경로를 서버 홈으로 사용한다.
+
+### 1.2.3 경로 관련 불변식
+
+- 설정/로그/외부 구성요소의 기본 경로는 `config.py`의 상수와 `writable_base()`를 단일 출처로 사용한다.
+- frozen과 Dev의 경로 차이는 `config.resolve_dirs()`와 각 구성요소 헬퍼에서만 해석한다. UI/워커가 직접 절대 경로를 조립하지 않는다.
+- `CHZZKTUBE_COMPONENTS_DIR`는 배포/테스트 경로 오버라이드용이며, 설정 파일의 `download_path`와는 독립적이다.
+- 캐시/락/임시 파일은 재시작·실패·stale 판정을 고려해 소유 모듈이 정리한다. 수동 삭제는 `server_home()`, `components_root()`, `writable_base()` 계약을 먼저 확인한다.
+
+## 1.3 개발 방향성 및 TUI 표준 (v3.4.0+)
+
+### 1. 핵심 철학 (Core Philosophy)
+- **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 요소를 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃을 유지한다.
+- **도구의 순수성**: 미디어 추출 본연의 안정성과 속도에 집중한다. 우회 로직은 단계적 폴백 원칙을 따른다.
+- **Zero Redundancy & Clean Termination**:
+  - 단일 라인 내 같은 의미의 단어/상태를 중복 출력하지 않는다.
+  - 내용 없는 빈 컬럼(`-`)과 행 말단의 방치된 구분자(`│`)를 배제한다.
+  - 타임스탬프와 컬럼 조판은 말단 렌더러(TUI/F12)에서 1회만 수행한다.
+
+### 2. UI 레이아웃 & 폰트 표준
+- **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인과 높낮이 튐을 차단한다.
+- **Flat TUI 3-Layer 구조**:
+  - **Configuration Bar (상단)**: 저장 경로와 단축키 배지 (`[ F1: Change ]`, `[ F2: Open ]`, `[ F3: Settings ]`, `[ F12: Full Log ]`).
+  - **Input & Action Bar (중간)**: 프롬프트(`>`) 기반 URL 입력창. `[ ESC: Clear │ ENTER: Start ]` 단축키를 사용한다.
+  - **Live Console Monitor (하단, `stretch=1`)**: 메인 로그를 표시한다. Raw 디버그 로그는 `F12` 독립 서브 윈도우로 격리한다.
+
+### 3. 고정 칼럼 로그 규격 (v3.4.0+)
+
+#### 3.1 기본 포맷
+```text
+[HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG
+```
+
+- `TIMESTAMP`: `[HH:MM:SS]` 10자 고정, 단일 스탬프
+- `STAGE`: 5자 고정 좌측 정렬
+- `STATUS`: 5자 고정 좌측 정렬
+- `SCOPE`: 5자 고정 좌측 정렬
+- `MSG`: 가변 텍스트, 초과 시 픽셀 단위 절단
+- `SPEC` 컬럼 폐지: 미디어/버전 메타데이터는 MSG 전두부 태그(`[1080p30]`, `[v2026.8.19]`)로 흡수
+- 빈 MSG에는 꼬리 구분자(`│`)를 출력하지 않는다
+
+#### 3.2 STAGE 값 (5자 규격)
+- `SYS`: 시스템 생명주기
+- `DEPS`: 의존성 검증 및 무결성 체크
+- `ANAL`: 메타데이터/스트림 분석
+- `DL`: 다운로드 파이프라인
+- `LIVE`: 실시간 녹화
+- `MERG`: 스트림 믹싱/컨테이너 변환
+- `BATCH`: 배치 처리
+- `POT`: PO Token 서버
+
+`MEDIA`, `CHZ`, `CK`, `API`는 독립 STAGE로 추가하지 않는다.
+- `media.remux` 실패 → `MERG`
+- `chzzk_api` 경고 → `ANAL`
+- 쿠키 오류 → `SYS`
+- API는 작업 단계가 아니라 발생 수단이므로 STAGE가 아닌 SCOPE/MSG로 표현
+
+#### 3.3 STATUS 값 (5자 규격)
+- `READY`: 준비 완료/입력 대기
+- `RUN`: 진행 중(대기/큐잉 포함)
+- `OK`: 단위 작업 성공
+- `DONE`: 전체 시퀀스 정상 종료
+- `SKIP`: 건너뛰기
+- `WARN`: 비치명적 경고
+- `FAIL`: 작업 실패
+- `ABORT`: 사용자 취소
+- `END`: 스트림 세션 종료
+
+`WAIT`는 독립 STATUS로 추가하지 않고 `RUN`으로 통합한다.
+
+#### 3.4 SCOPE 값 (발생지/대상, 5자 규격)
+- 외부 엔진: `YTDL`, `STRE`, `FFMP`, `NODE`, `POT`
+- 미디어 플랫폼: `YT`, `CHZ`, `TW`, `TIKT`, `IG`, `X`, `BILI`, `AFTV`
+- 시스템 도메인: `MAIN`, `RAW`, `QUEUE`, `DISK`
+- 미지원 값은 확장 예약이며 신규 발행점을 만들지 않는다.
+- 스트림 코덱/미디어 속성은 SCOPE가 아닌 MSG 내부 태그로 위임한다.
+
+#### 3.5 진행률 바 지터링 방지 규격
+```text
+[tag] <PCT>% · <SPEED> <GAUGE> · <MSG>
+```
+
+- `PCT`: 3자리 우측 정렬(` 65%`, `100%`)
+- `SPEED`: 8자리 우측 정렬(` 12.4M/s`, ` 980.2K/s`)
+- `GAUGE`: 고정 10블록(`[██████░░░░]`)
+- 순서: `PCT → SPEED → GAUGE → MSG`
+
+#### 3.6 예시 로그
+```text
+[03:17:20] DEPS │ OK   │ YTDL │ [v2026.8.19] verified
+[03:17:20] DEPS │ OK   │ STRE │ [v8.5.0] verified
+[03:17:20] DEPS │ OK   │ FFMP │ [v9.0.1] verified
+[03:17:20] DEPS │ OK   │ NODE │ [v22.23.2] verified
+[03:17:20] DEPS │ OK   │ POT  │ [running] port 4416
+[03:17:21] SYS  │ READY│ MAIN │ ready - input unlocked
+[03:17:22] ANAL │ RUN  │ YT   │ probing stream manifest...
+[03:17:22] ANAL │ OK   │ YT   │ [1080p30] analyzed · YTN · "news"
+[03:17:22] ANAL │ OK   │ YT   │ [H264/VP9/OPUS/AAC] streams isolated
+[03:17:23] DL   │ RUN  │ YT   │ [1080p30]  65% ·  12.4M/s [██████░░░░]
+[03:17:23] DL   │ RUN  │ YT   │ [1080p30] 100% ·   4.1M/s [██████████]
+[03:17:24] MERG │ RUN  │ FFMP │ muxing audio and video streams...
+[03:17:25] DL   │ OK   │ YT   │ saved · video.mp4 (11.56MB)
+```
+
+### 4. 시각적 디테일 및 영문 미니멀화
+- **파스텔 팔레트는 현행 유지**: `SUCCESS #6a9955`, `ERROR #e06c75`, `WARN #e5c07b`.
+- `MSG`는 영문 소문자 CLI 태그를 원칙으로 한다.
+- 채널명/영상 제목 같은 사용자 데이터는 번역하지 않는다.
+- TUI와 F12 모두 발행된 원문을 동일하게 보존한다.
+
+### 5. 단계적 우회 계층화 (Tiered Bypass Architecture)
+YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.
+
+- **Tier 1 (기본, 항상 가동)**: 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
+- **PO Token 서버 (선택적 가동)**: `pot_provider`는 실행 초기 DEPS 체크 때 가동여부만 판단 후 **필요 시에만** 가동한다.
+  - 가동 조건: `age_limit > 0` (연령 제한) 또는 `availability` in ('needs_auth', 'premium_only', 'subscriber_only', 'private')
+  - 일반 공개 영상은 PO 서버 없이 다운로드 → 리소스 절약
+  - 분석(`AnalyzeWorker`) 완료 후 판단, 필요 시 `[POT] RUN — starting...` 로그 출력
+- **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`ios` → `tv`), JS 런타임 Solver(`ejs:github` + deno), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
+- **운용 경계**: `cfg["yt_player_client"]`가 `"auto"`일 때만 Tier 2 폴백이 활성화된다. 사용자가 특정 클라이언트를 지정하면 Tier 1 해당 클라이언트 1회 시도 후 즉시 실패 처리(폴백 무한 방지).
+- **측정**: 어떤 Tier로 다운로드가 성공했는지 상세 로그(F12)에 기록(`[client retry] bot check — X → Y`). 이는 "왜 폴백이 발동했는지" 추적하는 유일한 증거이며, 로컬 전용(간결 로그 미노출).
+
+> 원칙: **기본은 Tier 1, PO 서버는 필요 시에만, Tier 2는 명시적 폴백**. 핵심 코어(`media`/`downloader` 추출 파이프라인)와 우회 로직(`client_opts`)의 결합도를 헬퍼 모듈로 분리해, 우회 로직 변경이 코어에 영향을 주지 않도록 한다.
+
+### 6. 렌더링 엔진 정책 (Rendering Engine Policy)
+**PySide6 (Qt 엔진) 유지.** 렌더링 주권(폰트 강제, 픽셀 단위 정렬)과 크로스플랫폼 마우스/클립보드를 동시에 확보하기 위해 TTY 계열(curses/Textual)은 배제한다.
+
+- **Qt 엔진 유지 이유**: 폰트 종류/크기/행간 강제 제어, 박스 드로잉 픽셀 정렬, OS 레벨 마우스/클립보드/포커스 지원을 모두 충족하는 유일한 선택.
+- **라이선스**: PySide6 (LGPL) — 상용/비상업 가리지 않고 자유롭게 사용 가능. PyQt6 대비 법적 리스크 없음.
+- **핵심 로직 분리**: `media`(포맷/코덱/비트레이트), `log_console`(컬럼 포맷·트리 조판), `downloader`/`target_downloader`(추출 파이프라인), `client_opts`(옵션 빌드)는 **프레임워크 비의존**으로 분리. 향후 렌더러 교체 시 이 모듈들은 수정 불포함.
+- **In-Place Overwrite (제자리 갱신)**: `DL │ RUN` 및 `LIVE │ RUN` 틱 로그는 매 틱마다 새 줄을 만들지 않고 커서 조작을 통해 마지막 줄을 제자리 갱신.
+- **상태 및 스테이지 코드**:
+  - `LIVE` 스테이지 코드 신설 (VOD 다운로드 `DL`과 라이브 녹화 구분).
+  - 사용자 취소는 `DL │ ABORT`로 독립 표기 (`FAIL` 오류와 명확히 분리).
+
+---
+
+## 2. 실행 환경
+
+| 항목 | 상태 |
+|------|------|
+| Python | 3.12.14 (pyenv, `.python-version` 고정) |
+| 의존성 단일 출처 | `pyproject.toml` / `uv.lock` — PyQt6 6.11.0 · yt-dlp 2026.8.19 · streamlink 8.5.0 고정. build 그룹엔 pyinstaller (Windows 빌드용) |
+| FFmpeg | 런타임 수급 — `components.ensure_ffmpeg()` 퍼사드 (시스템 PATH 우선 → GitHub 릴리스 → macOS Homebrew 전략) |
+| Node.js 22+ | PO Token 서버용 (`pot_provider`) — 시스템 우선, 없으면 포터블 다운로드 |
+| 콘솔 폰트 | `CascadiaMono-VariableFont_wght.ttf` (BASE_DIR, 11px — theme.py 단일 출처). `D2Coding-Regular.ttf`는 레거시 잔재(미로드) |
+| 히스토리 로그 | `logs/chzzktube_YYYY-MM-DD.log` (`log_history`, 날짜별 append, 30일 보존, thread-safe) |
+| 스모크 | `smoke_test.py` — `QT_QPA_PLATFORM=offscreen` 강제로 CI 가능 |
+
+## 3. 아키텍처 (역방향 참조 0 · 순환 import 0 — 2026-09-12 `wc -l *.py` 총 9763줄 실측)
+
+### 레이어별 구조 (4계층 + L0 Leaf) — v3.4.0 레이아웃 리팩터링(`chzzktube/` 단일 패키지)
+
+```
+LAYER 3: View (Qt Widgets) — chzzktube/ui/
+  main_window.py(main.py 본체) · dialogs.py · theme.py · log_console.py
+LAYER 2: Orchestrators — chzzktube/control/
+  startup_coordinator.py · controller.py · startup_state.py · pot_manager.py
+LAYER 1: Worker Threads (QThread) — chzzktube/workers/
+  downloader.py · analyze_worker.py · update_worker.py
+LAYER 0.5: Pipeline Functions (ctx 기반, 비스레드) — chzzktube/pipeline/
+  target_downloader.py · progress_emitter.py · live_recorder.py · finalizer.py · dl_context.py
+LAYER 0: Domain / Helpers / Infra (Leaf)
+  chzzktube/core/: media.py · chzzk_api.py · cookies.py · config.py · utils.py
+    yt_logger_bridge.py · dl_platform.py · speed_window.py · playlist.py
+    log_event.py · log_history.py · raw_log.py · tool_log.py · log_emitter.py(Qt-free 순수 조판)
+  chzzktube/infra/: po_client.py(stdlib only) · node_provider.py · pot_server.py
+    pot_provider.py(순수 재수출 facade) · components.py · updater.py
+  루트: main.py(씬 런처) · smoke_test.py · sync_mirrors.py · bump_version.py
+```
+
+### 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.4.0 실측)
+
+```
+[기동 시퀀스 — DEPS → upgrade → prewarm → READY]
+main.py (MainWindow)
+ └─ _start_update_check → UpdateWorker(check)
+      └─ check_done(list) ──→ Main._on_update_check_done 중계 (Coordinator 직결 금지)
+           ├─ DEPS 결론 1줄 raw("deps", emit_component) + Coord.report_deps(ok)
+           ├─ UpdateWorker(upgrade) 기동 ─→ upgrade_done(bool,str) → Coord.report_upgrade(ok)
+           └─ POTManager.ensure_ready("prewarm")   # 기동 즉시 — 디스크 스테이징, 스폰 없음
+
+[POT 서버 수명주기 — POTManager 단일 진실 (_POTWorker 유일 스폰)]
+POTManager.ensure_ready(mode)                 # 스폰 가드: 실행 중 워커 있으면 중복 스폰 없음
+ ├─ "prewarm" (기동 직후): 빌드 스테이징만 — Popen 없음, RAM 0MB·포트 미점유
+ │    └─ ok → _mode="staged" → pot_finished(True, "staged") ─→ report_pot → pot_ready=True
+ ├─ "gate" (분석/다운로드 게이트): 연령제한·프라이빗만 서버 기동
+ │    ├─ prewarm 실행 중 요청 → _pending_gate=True → 완료 후 QTimer singleShot gate 자동 재기동
+ │    ├─ probe_server()=="ok" → 기존 서버 바인드 → pot_finished(True, "ready")
+ │    └─ 실패 → _mode="failed" → pot_finished(False, "failed")
+ └─ use_existing()  # server_ping()==True(기존 서버 응답) → 스폰 없이 즉시 ready 승격
+                    # (이 경로는 pot_finished가 없으므로 대기 다운로드 영구 큐잉 방지용)
+
+[READY 게이트 — StartupState 멱등 1회]
+can_emit_ready() = deps_ok ∧ upgrade_done ∧ pot_ready ∧ ¬ready_emitted
+ ├─ 충족 시: raw("startup", READY, to_tui=True) 1건 + ui_unlocked() → 입력 잠금 해제
+ └─ 15초 폴백: Main._force_unlock_input → force_unlock() → report_ready()
+
+[다운로드 게이트 — PO 필요 영상 (연령제한·프라이빗)]
+toggle_download: needs_pot = age_limit>0 ∨ availability∈{needs_auth,premium_only,subscriber_only,private}
+ ├─ POTManager.is_busy() → _pending_download 큐잉 + "queued — waiting for POT server"
+ ├─ server_ping()==True  → use_existing() → 즉시 진행
+ ├─ is_ready()==False    → _pending_download 큐잉 → pot_finished(ok, "ready") 시 Main._on_pot_finished가
+ │                         is_ready() 재확인 후 회수 → _start_download 재개
+ └─ PO 토큰: client_opts._apply_pot_opts → po_client.fetch_po_token (게이트 완료 보장 후 워커에서 실행)
+
+[시그널 계약 — 결과/게이트만, 워커 로그 시그널 0]
+POTManager (_POTWorker 유일 스폰):
+  pot_status_changed(str) : starting/staging/staged/failed → Coordinator passthrough → View
+  pot_finished(bool,str)  : (ok, 상태 토큰 "staged"/"ready"/"failed") — 사람용 msg 발행 금지(v3.3.1)
+    → Coordinator.report_pot → READY 게이트 입력
+    → Main._on_pot_finished → is_ready() 확인 → _pending_download 회수 → _start_download
+StartupCoordinator (View행 3종):
+  ready_emitted(str,bool,str) · pot_status_changed(str) passthrough · ui_unlocked()
+  보고 진입점(함수 호출): report_deps / report_upgrade / report_pot / report_ready / force_unlock
+UpdateWorker : check_done(list)(Main 중계) · upgrade_done(bool,str)
+AnalyzeWorker: result_ready(dict) · error_occurred(str)
+DownloadWorker: finished_all(int,int) — 유일 잔존 Signal
+
+[로그 채널 — raw 버스 단일 진입 + 스레드 경계]
+워커/파이프라인/UI → raw_log.raw(tag, LogEvent, to_tui)
+  ├─ bounded queue(MAX_QUEUE=2048): 발행 스레드는 put만 — 포화 시 UI mirror 드롭 + history 요약 1건
+  └─ dispatcher 데몬 스레드: history 파일 I/O + full_events ring(4096) 적재
+스레드 경계 (v3.3.1): dispatcher ──Signal.emit──→ main._GuiLogBridge(QObject)
+  ├─ tui_signal(object,bool,bool) ─QueuedConnection─→ Main._render_concise   (GUI 스레드)
+  └─ full_signal(object,bool)     ─QueuedConnection─→ Main._mirror_event_full (GUI 스레드)
+raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책임은 GUI를 점유한 수신층(main.py).
+```
+
+### 모듈 목록 (39개 루트 .py — 2026-09-13 `ls *.py` 실측. `tool_log.py` 포함. [상세 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거) 참조)
+
+| 분류 | 모듈 | 핵심 책임 |
+|------|------|----------|
+| View | main | 진입점 + MainWindow (1366) — `_GuiLogBridge` QueuedConnection 구독, append_concise_log=bus shim |
+| View | dialogs | 6종 Dialog + ComboBox + UpdateWorker 연동 |
+| View | theme | QSS/컬러 토큰 |
+| View | log_console | ConciseLogConsole 렌더러 (833) — append(no_wrap)→_flow_lines 플래그 체인 |
+| Control | controller | MediaController — spawn_worker/spawn_analyzer + URL 파싱 (217) |
+| Control | startup_coordinator | 기동 게이트 (124) — report_* + View행 Signal 3종 + raw("startup") |
+| Control | startup_state | READY 단일 진실 (69) — `can_emit_ready()` 멱등 가드 + pot_ready |
+| Control | pot_manager | POT 수명주기 (247) — `ensure_ready(prewarm/gate)` + `use_existing` + Signal 2종 |
+| Worker | downloader | DownloadWorker — `finished_all`만 잔존, 로그 시그널 0 (164) |
+| Worker | analyze_worker | AnalyzeWorker (354) — result_ready/error_occurred + pot-gate 판정 |
+| Worker | update_worker | UpdateWorker (201) — check_done/upgrade_done + deps raw 발행 |
+| Infra | pot_provider | PO Token 3개 모듈 재수출 facade (75) — 워커 없음(스폰은 POTManager 단독), POTProviderWorker는 v3.3.1 제거 |
+| Pipeline | progress_emitter | LogEvent 빌더 단일 출처 (182) — emit_event/emit_dl/emit_err/… |
+| Pipeline | target_downloader | 다운로드 실행부 (318) — `raw("dl"/"ytdlp"/"live")` |
+| Pipeline | live_recorder | ffmpeg 라이브 녹화 (229) — `prepare_live_paths`/`handle_stream_finish` 모듈 함수 계약 |
+| Pipeline | finalizer | `_finalize` 분할 — TUI 컬럼 마무리 |
+| Pipeline | dl_context | DownloadContext dataclass (86) — 파이프라인 명시적 계약 |
+| Pipeline | speed_window | 속도 측정 슬라이딩 윈도우 |
+| Shared | yt_logger_bridge | yt-dlp logger → `raw("ytdlp")` 어댑터 (150) — `\r` 캐리지 조립 + 2Hz 스로틀 |
+| Infra | tool_log | subprocess STDOUT/STDERR 비블로킹 펌프 + 종료·타임아웃·잔여 출력 정리 |
+| Shared | updater | PyPI 조회+pip 업그레이드 (423, 최상단 stdlib only — node/npm·ffmpeg CLI 원문 캡처용 경로는 pot_provider·components lazy import) |
+| Infra | po_client | bgutil HTTP 순수 계층 (91) — 순수 HTTP 핑만, 상위 역참조 0 |
+| Infra | node_provider | Node.js 런타임 수급 (314) |
+| Infra | pot_server | bgutil 서버 수명주기 (760) — 수급/빌드/기동/락/kill |
+| Domain | media | 코덱랭크/포맷설명/remux/cleanup (348) |
+| Domain | chzzk_api | 치지직 clip/vod/live 분석 (363) |
+| Domain | cookies | 브라우저 쿠키 추출 (85) |
+| Domain | config | `default_config()` 23키 + `_APP_VERSION` + 병합 |
+| Domain | playlist | YT 채널 URL 정규화 |
+| Domain | client_opts | player_client/쿠키/PO Token 옵션 주입 (125) |
+| Domain | dl_platform | URL 판정 + `_short_platform`/`_dl_platform` (111) |
+| Infra | components | ffmpeg 자동 수급/관리 (522) |
+| Infra | log_history | 파일 로그 단일 소유자 (95) — 직접 호출 금지, raw 경유만 |
+| Infra | smoke_test | offscreen 기동 검증 하네스 · tests/*.py 12종 · logs/ 일자 산출물 |
+
+> 구 분류표의 `cookie.py`(단수)·`pot_manager alivede progress`·`startup_coordinator 시퀀스 스텝 실행기` 서술은 2026-09-12 실측으로 정정 — 실제 파일은 `cookies.py`, POTManager=수명주기 관리자, Coordinator=게이트+보고 중계. 구 34행 분류표는 아래 v3.3.0 실측 시그널 계약으로 대체.
+
+### Worker ↔ UI 시그널 계약 (v3.3.0 — 로그 시그널 0, 결과/게이트만 잔존. 2026-09-12 실측)
+
+```
+AnalyzeWorker(target_url, cfg):                        # 결과 전달 전용 — 로그 시그널 없음
+    result_ready(dict) : 성공 — {info, v_list, a_list, is_chzzk:False, yt_client}
+                         또는 {info, v_list, a_list, is_chzzk:True}
+                         또는 {is_playlist:True, title, count, v_list:[], a_list:[]}
+    error_occurred(str): 실패 — 미니멀 영문 오류 코드
+   로그: logger=YtLoggerBridge → raw("ytdlp") 버스 직행 + raw("analyze"/"pot-gate", LogEvent)
+
+DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
+               v_spec=None, audio_desc="", yt_client="auto"):  # 로그 시그널 없음
+    finished_all(int, int)       : (성공 수, 실패 수) — 유일 잔존 Signal
+   로그: logger=YtLoggerBridge → raw("ytdlp") + raw("dl", emit_dl/emit_err, to_tui=True)
+
+UpdateWorker(parent, upgrade, stale_updates, channel, check_updates):  # 로그 시그널 없음
+    check_done(list)             : [stale …] — Main._on_update_check_done이 중계 (Coordinator 직결 금지)
+    upgrade_done(bool, str)      : (ok, summary) — Coord.report_upgrade 직결
+   로그(check): raw("deps", emit_component DEPS, to_tui=True) 결론 1줄 + raw("deps-cli"/"pip"/"pypi", str) F12+history 전용
+   로그(upgrade): _provision_cb(show 플래그) → raw("deps", event, to_tui=show)
+
+POTManager:                                                # 수명주기 단일 스폰 가드 (_POTWorker 유일 스폰)
+    pot_status_changed(str)      : starting/staging/staged/failed → Coordinator._on_pot_status (passthrough)
+    pot_finished(bool, str)      : (ok, 상태 토큰 "staged"/"ready"/"failed") → Coordinator._on_pot_finished
+                                   → report_pot(READY 게이트) + Main._on_pot_finished(_pending_download 회수)
+    ensure_ready(mode): prewarm 실행 중 gate 요청 → _pending_gate=True → 완료 후 QTimer singleShot gate 자동 재기동
+    use_existing()   : server_ping()==True(기존 서버) → 스폰 없이 즉시 ready 승격 (영구 큐잉 방지)
+   로그: _POTWorker._note/_dbg → raw("pot"/"pot-DEBUG", …) — prewarm은 to_tui=False (TUI 오염 방지)
+   ※ v3.3.1: pot_finished msg는 상태 토큰만 — 사람용 상세("prewarm staged" 등)는 버스 로그로 남긴다.
+
+StartupCoordinator:                                        # 기동 게이트 — View행 Signal 3종
+    ready_emitted(str, bool, str): (stage, is_status, msg) — READY 1회 (StartupState 멱등 가드)
+    pot_status_changed(str)      : View passthrough
+    ui_unlocked()                : 입력 잠금 해제
+    _emit(stage,status,msg): raw("startup", LogEvent SYS, to_tui=True) — 기동 라인 버스 발행
+    보고 진입점(함수 호출, Signal 아님): report_deps / report_upgrade / report_pot / report_ready / force_unlock(15s 폴백)
+
+raw 버스(raw_log.py — 순수 파이썬 bounded-queue dispatcher, Qt 링크 없음):
+    발행 스레드: raw() → queue.put (포화 시 UI mirror 드롭 + history 요약 1건)
+    dispatcher 데몬 스레드: history 파일 I/O + full_events ring(4096) 적재 → 구독자 호출
+    스레드 경계: dispatcher → main._GuiLogBridge Signal.emit ─QueuedConnection─→ GUI 스레드
+        tui_signal(object,bool,bool) → Main._render_concise → console.append(no_wrap=True)
+        full_signal(object,bool)     → Main._mirror_event_full → _mirror_full_log(F12 버퍼+stamp)
+```
+
+> 구 계약표의 `POTProviderWorker(mode)` 행은 v3.3.1에서 삭제 — POTManager._POTWorker와 중복된 좀비 인터페이스였다(런타임 사용 0건 실측). pot_provider.py는 3개 모듈 재수출 facade만 남는다. `pot_finished` msg는 상태 토큰("staged"/"ready"/"failed")만 사용 — 사람용 상세는 버스 로그로.
+
+## 4. 핵심 데이터 구조
+```python
+{"running": bool, "canceled": bool, "skip": bool, "analyzing": bool}
+```
+
+### cfg (config.default_config() 23키 — 로드 시 dl_config.json 병합)
+```python
+download_path, container("mp4"), embed_subtitles, audio_only,
+fast_download(True), remove_duplicates(True), auto_open_folder(True),
+completion_action("none"), play_sound(True), max_video_res("none"),
+filename_prefix("none"), filename_suffix("id"),
+browser_cookie("auto"), cookie_file_path(""), yt_player_client("auto")
+```
+> 런타임 cfg = `default_config()` + `dl_config.json` 통째 병합(`load_config`의 `cfg.update`).
+> 기존 설정 파일에 남은 레거시 키(`use_cut`/`cut_start`/`cut_end`/`max_res`/`use_date`/
+> `use_uploader`/`use_title`/`use_id`/`filename_format`/`auto_shutdown`)는 보존되지만
+> **현재 어떤 모듈도 읽지 않는다(데드 키)** — 제거 시 깔끔해진다.
+
+### Worker ↔ UI 시그널 계약 (구 블록 — v3.3.0 이전 역사 기록, 참고용으로 유지)
+<details><summary>펼치기</summary>
+
+```
+AnalyzeWorker(target_url, cfg):
+    result_ready(dict) : 성공 — {info, v_list, a_list, is_chzzk:False, yt_client}
+                         또는 {info, v_list, a_list, is_chzzk:True}
+                         또는 {is_playlist:True, title, count, v_list:[], a_list:[]}
+    error_occurred(str): 실패 — 미니멀 영문 오류 코드
+    log_full(str)      : yt-dlp 원본 로그 라인
+
+DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
+               v_spec=None, audio_desc="", yt_client="auto"):
+    log_concise(str, bool, bool) : (텍스트, is_status, is_error) — 위치 인자 3개
+    log_full(str)                : yt-dlp 원본 로그 라인
+    finished_all(int, int)       : (성공 수, 실패 수)
+```
+> `yt_client`(분석에서 실증·통과한 player_client)는 다운로드가 분석과 같은
+> 클라이언트로 0% 스톨 경로를 재진입하지 않도록 강제하는 핵심 값.
+
+</details>
+
+## 5. 불변식 (코드 수정 시 절대 위반 금지)
+
+0. **표준 status**: `format_log_line`의 status로 허용되는 값: `OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP / WARN`. **비표준 사용 금지**: `MISSING` / `?` / 그 외 표준 외 값 사용 금지. DEPS 체크 실패 → `FAIL` + msg에 사유("not found" 등). **msg 비어있으면 세로줄 누락됨**: `format_log_line`이 falsy msg를 무시하므로 `None`/`""` 대신 명시적 문자열 사용.
+1. **state 딕셔너리 공유**: `MediaController.state`는 `DownloadWorker`에 참조 그대로 전달됨. 복사 금지.
+2. **단방향 쓰기**: `canceled/skip`는 UI 스레드만 쓰고, 워커는 읽기만. CPython GIL 하에서 원자적.
+3. **시그널만 통보**: 워커 → UI 통보는 절대 state가 아니라 Qt 시그널로만. 시그널 emit은 스레드 안전(QueuedConnection).
+4. **UI 위젯 직접 조작 금지**: 워커에서 UI 위젯 직접 조작 절대 금지. 반드시 시그널을 통해 View에 요청.
+5. **좀비 워커 패턴**: 폐기된 워커는 `_zombie_workers`에 넣고 자연 종료 시 `_reap_zombie()`로 소거. `wait()` 호출 금지.
+6. **QSS 단일 출처**: 모든 스타일은 `theme.py`에서만 정의. 인라인 스타일 금지.
+7. **의존성 단일 출처**: `pyproject.toml`이 유일한 의존성 정의 파일. 수동 설치 금지.
+8. **emit 위치 인자 계약**: PyQt 시그널 emit은 **키워드 인자 절대 금지** (`log_concise.emit(msg, False, True)`). 키워드 인자는 런타임
+   `TypeError: pyqtBoundSignal.emit() takes no keyword arguments` → 시그널 미도착 → `running` 잔류로 이어지는 실사고 이력 있음
+   (2026-09-06 finalizer/progress_emitter/live_recorder 광역 수리).
+9. **extractor_args 병합 규칙**: youtube 추출 옵션 주입은 반드시 `setdefault` 기반 병합(`client_opts` 계열 헬퍼 경유).
+   player_client/skip/po_token을 통째로 덮어쓰면 다운로드 일관성(0% 스톨)이 깨진다.
+10. **경량 분석/무거운 다운로드 분리**: `AnalyzeWorker`는 항상 `youtube:skip=[hls,dash]`(매니페스트 미열거), `DownloadWorker`는 항상
+    매니페스트 재열거. 분석 옵션을 다운로드에 재사용 금지. **포맷 선택 UI 도입 시에도 분석 결과의 v_list/a_list를 다운로드
+    포맷으로 직접 신뢰 금지** — 다운로드 경로에서 재열거된 `info` 기준으로 다시 매칭해야 한다.
+11. **로그 단일 진입 (v3.3.0)**: 모든 로그는 `raw_log.raw(tag, msg, is_status, is_error, to_tui)` 경유. `log_history.log` 직접 호출·`log_bus` 부활·워커 로그 시그널(`line/full/log_concise/log_full`) 신설 금지. history 적재는 raw 내부 1회가 유일 — 구독자(`_render_concise`/`_mirror_event_full`)에서 history 호출 금지.
+12. **플래그 라우팅 (v3.3.0)**: TUI 노출은 `to_tui` 비트, 줄바꿈은 `no_wrap` 플래그로만 결정. 렌더 레이어(`log_console.append`→`_insert_clamped`→`_flow_lines`→`_render_clamp`)에서 문자열 콘텐츠 판정(정규식·`is_tui_line`·`startswith` 분기) 부활 금지. `is_tui_line`은 호환 shim — 호출부 신설 금지.
+13. **신호-보고 분리 (v3.3.0)**: `check_done(list)` 등 결과 Signal은 Main이 중계 후 `report_*` 호출. Worker→Coordinator 직결 금지(시그널 교통 정리 — `check_done` 시그니처가 `(bool,str)`이 아니라 직결 시 오동작).
+14. **READY 멱등 (v3.3.1 갱신)**: READY 발산은 `StartupState.can_emit_ready()`(= `deps_ok ∧ upgrade_done ∧ pot_ready ∧ ¬ready_emitted`) 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지. `pot_ready`는 `report_pot`이 **상태 토큰**("staged"/"ready"/"standby")만 True로 세운다.
+15. **잔재 정리 (v3.3.0)**: `media/chzzk_api/cookies`의 `import log_history`는 미사용 잔재 — 직접 호출로 회귀 금지, 정리 시 import 행 삭제. `log_console`의 `import re`는 `is_tui_line` 퇴출 후 미사용이므로 제거 후보(타 용도 전수 확인 후).
+16. **L0 순수성 (v3.3.1)**: `po_client`는 표준 라이브러리만 — 상위 계층(pot_server) lazy import·락 파일 역참조 금지. 생존 판정은 순수 HTTP /ping만. 서버 수명주기/좀비 락 회수는 pot_server·POTManager 본연 책임.
+17. **상태 토큰 계약 (v3.3.1)**: `POTManager.pot_finished`의 msg는 반드시 `"staged"`/`"ready"`/`"failed"` 토큰 — `StartupCoordinator.report_pot`이 정확 일치로 READY를 판정한다. 사람용 상세 메시지("prewarm staged", "pot server bound ...")를 emit하면 **READY가 절대 열리지 않는다**(v3.3.1 이전 실제 결함).
+18. **스레드 경계 (v3.3.1)**: raw_log dispatcher(데몬 스레드)에서 GUI 슬롯을 직접 호출하는 회귀 금지 — 반드시 `main._GuiLogBridge` Signal.emit + QueuedConnection으로 GUI 스레드에 위임. raw_log에 Qt 링크 금지(순수 파이썬 유지), 스레드 경계 책임은 수신층(main.py).
+19. **POT 서버 단일 스폰 (v3.3.1)**: 서버 기동 진실의 근원은 `POTManager._POTWorker` 단독. `_spawn_existing` 등 스폰 함수는 1회만 호출(조건 평가+핸들 할당 원자화) — 이중 호출로 서버 2회 기동 방지. `pot_provider.POTProviderWorker` 재생성 금지.
+
+## 6. 하지 말 것 (회귀 방지)
+
+- ❌ `state/cfg` 딕셔너리를 복사해서 워커에 넘기는 것
+- ❌ `smoke_test` 통과 없이 리팩토링 커밋하는 것
+- ❌ `mirrors/*.md` 미러를 손으로 고치는 것 (항상 `.py`가 원본 — `python sync_mirrors.py`로 재생성)
+- ❌ GUI 없는 CI 가정으로 Qt 코드를 임포트만으로 검증 끝이라 착각하는 것 — `smoke_test(offscreen)`를 돌릴 것
+- ❌ 로그 채널을 각 호출점이 수동으로 흩뿌리기 — raw 버스(🤖 `raw_log.py`) 단일 진입만 유지. F12/메인/역사 팬아웃은 버스, 필터링은 각 모듈
+- ❌ POT 워커가 포그라운드/히스토리를 직접 import 하는 것 — L0 `log_func` 콜백으로 연결 (계층 역전 방지)
+- ❌ laziness를 굳히는 것 — "언제든 작동 가능한 준비 상태" 유지를 위해 stale 빌드를 FAIL로 닫지 말고 자동 리프레시로 따라간다
+- ❌ 시그널 다중 emit/중복 판정 — F12 2중 공판, standby 2중 출력의 직접적 원인 (판정+로그는 단일 호출로 끝낼 것)
+- ❌ Thin Wrapper 메서드 생성 (단순 위임은 모듈 함수 직접 호출로 대체)
+- ❌ `except Exception`으로 모든 예외 뭉뚱그리기 (세분화된 예외 처리 적용)
+- ❌ 상태 변수 개별 초기화 (초기화 메서드로 통합)
+- ❌ View에서 비즈니스 로직 수행 (Controller로 이관)
+- ❌ `log_console.emit_event/format_log_line`을 거치지 않고 컬럼 로그 문자열(`[HH:MM:SS] STAGE │ ...`)을 직접 조립하는 것 — TUI 규격 단일 출처 위반
+- ❌ `.emit(..., is_status=..., is_error=...)` 키워드 인자 시그니처로 되돌리는 것 (커밋 전 `grep -n 'is_status=' '*.py'` 스팟체크)
+- ❌ 분석(경량) 결과의 v_list/a_list를 '실제 다운로드 가능 포맷'으로 간주해 다운로드 포맷 선택에 그대로 쓰는 것
+
+## 7. 검증 워크플로우 (수정 후 필수 3단계 + 플랫폼 후속)
+
+1. **py_compile**: 변경된 모듈 전부 `python -m py_compile` 통과
+2. **smoke_test**: `python smoke_test.py` 통과 (offscreen 플래그로 CI 가능)
+3. **기능 확인**: 실제 다운로드/분석/라이브 녹화 1회씩 정상 동작
+4. **플랫폼 교차 검증 (후속 과제)**: 이 앱은 macOS/Windows에서 동작하지만, 개발 머신에서는 **타깃 플랫폼 전용 분기를 직접 실행할 수 없다**.
+   - macOS 개발 시 Windows 전용 분기(`winsound`, `CREATE_NO_WINDOW`, `JobObject`, `AppUserModelID`, Windows 브라우저 쿠키 경로, Gyan ffmpeg 수급)는 **import 가드(`try/except`, `platform.system()`) 검증만 가능**하고 실제 동작 검증 불가.
+   - Windows 개발 시 macOS 전용 분기(Homebrew ffmpeg, POSIX 신호) 역시 검증 불가.
+   - **원칙**: 플랫폼 비의존 코드(분석/다운로드/포맷 로직)는 현재 머신에서 전부 검증. 플랫폼 의존 코드는 반드시 **해당 플랡폼에서 수동 확인** 필요.
+   - **수동 테스트 체크리스트 (배포 전)**:
+     - [ ] Windows: 종료 확인 다이얼로그 알림음 + 작업표시줄 반짝임, 완료 비프, AppUserModelID 아이콘 그룹핑
+     - [ ] Windows: `CREATE_NO_WINDOW` 자식 창 억제, JobObject 프로세스 트리 정리
+     - [ ] macOS: Homebrew ffmpeg 수급 경로
+     - [ ] 양쪽: `python -c "import main, downloader, live_recorder, pot_provider, dialogs, cookies"` 임포트 성공
+
+> 핵심: **"돌아간다" ≠ "양쪽 다 돌아간다"**. CI는 offscreen(macOS) 기준이며, Windows 전용 동작은 릴라이즈 전 반드시 Windows 머신에서 직접 확인할 것.
+
+## 8. 빌드 및 배포 (PyInstaller)
+
+### 8.1 체리피킹 원칙
+PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는 Qt 모듈만 포함하고 나머지는 반드시 제거**한다. 개발 중 전체 설치는 어쩔 수 없으나, 배포 바이너리는 `--exclude-module`로 최소화한다.
+
+- **제거 대상 모듈** (런타임 사용 0, PyInstaller 빌드 시 `--exclude-module` 적용):
+  - `PySide6.QtWebEngine`, `PySide6.QtMultimedia`, `PySide6.Qt3D*`, `PySide6.QtCharts`, `PySide6.QtDataVisualization`, `PySide6.QtNetworkAuth`, `PySide6.QtBluetooth`, `PySide6.QtNfc`, `PySide6.QtRemoteObjects`
+  - 사용 모듈은 코드 변경 시 `grep -rn 'PySide6.Qt' --include='*.py'`로 확인 후 목록 갱신.
+- **효과**: 전체 포함 시 ~80-100MB → 체리피킹 시 ~50-60MB (30-40% 감소).
+- **원칙**: "안 쓰는 모듈은 빌드에 넣지 않는다" — 구체 목록보다 **원칙을 우선**하며, 새 Qt 모듈 추가 시 이 섹션의 사용 모듈 목록도 함께 갱신할 것.
+
+### 8.2 자동 업데이트 정책 (Nightly Channel)
+포터블 빌드에서도 yt-dlp 자동 업데이트를 지원한다. 네트워크 의존은 이 앱에서 본질적이다 (웹 미디어 추출기).
+
+- **Stable 채널** (기본): PyPI 릴리즈 기준, 안정 버전 수급
+- **Nightly 채널** (선택): yt-dlp-nightly 패키지, 최신 우회 로직 포함
+- **업데이트 방식 (Dev/Frozen 통합)**: 모든 환경에서 동일한 직접 다운로드 경로 사용. `pip install`은 빌드 시(PyInstaller)만 사용.
+  - Dev 환경: `_frozen_upgrade_ytdlp()`, `_frozen_upgrade_streamlink()` 직접 호출
+  - 포터블(PyInstaller): PyPI whl에서 yt-dlp 바이너리 직접 다운로드 후 교체 (Stable) / GitHub nightly-builds release 다운로드 (Nightly)
+  - 이유: Dev와 포터블이 동일한 코드 경로를 타야 디버깅 가능. Frozen과 Dev가 분기되면, 사용자에게서만 발생하는 버그를 Dev에서 재현하지 못함.
+- **버전 확인 (2분기 구조, v3.1.1)**: dev 는 실제 CLI 실행(.venv/bin/yt-dlp --version → 원문 F12), frozen 은 PYZ 임베드라 importlib.metadata 폴백 — 판정 로직은 updater.check_deps 단일화. **F12 = raw 원문 전용(갱신형 포함), 메인 = TUI 컬럼 가공**. 두 로그가 같은 정보를 이중으로 띄우지 않는다 (교체 원칙). Nightly 채널은 설정 UI 에서 실제 반영 — stale 채널 전환 시 다운그레이드 감지 포함.
+- **업데이트 실패 시**: 기존 버전 유지, 다음 실행 시 재시도
+- **bgutil (PO 토큰 서버)**: GitHub 태그 릴리즈에서 자동 수급, pot_provider가 별도 관리
+- **적용 범위**: yt-dlp only (streamlink은 Stable only, Nightly 미지원)
+- **DEPS 로그 확장** (v3.1.0 추가): `check_deps()`는 PyPI 패키지뿐 아니라 외부 바이너리(ffmpeg, node)와 PO 토큰 서버도 확인. `shutil.which()`로 존재 여부, `pot_provider`로 PO 서버 핑 체크.
+
+### 8.3 선택 과제 (향후)
+- ❌ **PO 서버 실패 시 폴백**: 봇 체크 실패 시 PO 서버 가동 후 재시도 (현재는 info 사전 감지만 적용)
+- ✅ **설정 UI**: 업데이트 채널 (Stable/Night) 선택 다이얼로그 — 완료
+- ✅ **streamlink 직접 다운로드**: 포터블 빌드에서 streamlink whl 직접 수급 — 완료
+
+### 8.4 빌드 시 해야 할 일 (OS별 체크리스트) — v3.1.1 신설
+
+포터블 빌드는 OS별로 각각 수행한다 (spec 의 _bundle_node_exe 가 빌드 OS 의 node 를
+번들하므로 교차 빌드 불가 — macOS 빌드는 macOS 에서, Windows 빌드는 Windows 에서).
+
+| 확인 항목 | 내용 | 미충족 시 동작 |
+|---|---|---|
+| node 번들 | `shutil.which("node")` 가 잡히는지 — _internal/node.exe 로 심김 | 포터블 캐시(node/) 최초 수급 |
+| ffmpeg | 시스템 PATH 또는 writable_base/ffmpeg 캐시 | 최초 실행 시 플랫폼별 수급(win=zip, mac=bottle, linux=static) |
+| yt-dlp / streamlink | **독립 exe 아님** — PYZ 내부 모듈 임베드. CLI 실행 불가 | 검사=importlib.metadata 폴백, 업데이트=whl 직접 교체(_frozen_upgrade_*) |
+| bgutil 서버 | `~/bgutil-ytdlp-pot-provider/server/build/main.js` 존재 시 스테이징 | 최초 실행 시 GitHub 릴리스에서 수급 |
+| icon | spec 은 icon.ico 고정 — macOS/Linux 빌드 시 아이콘 별도 검토 | 기본 아이콘 |
+
+실행체 해석은 updater._cli_base / components.ffmpeg_exe / pot_provider.node_exe 로
+단일화되어 있으며, dev(.venv/bin/yt-dlp 등) 와 frozen(importlib 폴백) 의 차이는
+이 계층에만 존재한다 — 검사·갱신·설치·로그 파이프라인은 동일 코드를 탄다.
+
+
+## 9. 파일 규칙
+
+| 카테고리 | 규칙 |
+|----------|------|
+| **Python** | 모든 `.py` 파일 UTF-8, LF. 입출력 명시적 `encoding="utf-8"` |
+| **JSON** | `dl_config.json` UTF-8 / indent-4 |
+| **Markdown** | `.md` 파일 LF 유지 |
+| **바이너리** | 이미지/폰트/실행 파일은 `.gitattributes`에서 binary 지정 |
+| **문서 미러** | `.py`가 원본, `mirrors/*.md` + `mirrors/chzzktube_codebase.md` 합본은 `python sync_mirrors.py` 자동 생성. 손수정 금지 |
+
+## 9. 수정 히스토리 요약 (최신순, 핵심만)
+
+### 2026-09-13 — v3.4.0 패치 2 : 파이프라인 P0 크래시 수리 + LEGACY_AUDIT 정리
+
+#### 문제 (전수조사·사용자 검증 실측)
+- **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
+- **A3**: 프리웜 `rebuild=have_build` — 빌드 존재 시 매 기동 npm ci+tsc 강제("디스크 스테이징만" 위반)
+- **A4**: 라이브 proc는 DownloadContext에 부착되는데 worker/`kill_live_process`가 이를 보지 못함
+- **C1**: `_note/_dbg` 발행 시 `[:120]` 절단 — LOGGING_POLICY §3/§4 위반
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `finalizer.py`/`downloader.py` | `from dl_platform import _dl_platform` 복원(P0-1/3) |
+| `target_downloader.py` | `_chzzk_filename(ch_info, fmt, cfg)` 신설 — 치지직 메타를 filename prefix/suffix 계약으로 치환, .mp4 고정(P0-2) |
+| `pot_manager.py` | prewarm rebuild을 스테일 감지 기반으로 교정(A3)·`_note/_dbg` 절단 제거(C1)·`POTProviderWorker` 별칭 제거(B3) |
+| `downloader.py` | `_ctx` 보관 + `kill_live_process()` — worker·ctx proc 양쪽 킬(A4) |
+| `progress_emitter.py` | 미사용 client_opts import 제거(B2)·`emit_live_header` 데드 함수 제거(B5) |
+| `main.py` | `import pot_provider` 제거(B1)·`_needs_pot(info)` 단일화(E1)·F12 재오픈 증분 동기화(A5) |
+| `pot_server.py` | `_TAG_ZIP`/`_SERVER_FALLBACK_VER` 중복 정의 제거(B4) |
+| `media.py`/`chzzk_api.py`/`cookies.py` | 죽은 `import log_history` 제거 |
+| 루트 | `1,` `_qtprobe.exit` `err/out.txt` `listing/locate_out.txt` `arch_dump.txt` `D2Coding-Regular.ttf` `requirements.txt` 제거(D1/D2) + `.gitignore` 보강 |
+| `tests/test_pipeline_regressions.py` | 신규 11건(마감 NameError·치지직 파일명·needs_pot·원문 보존·kill 계약·F12 인덱스·죽은 심볼 가드) |
+| `HANDOVER.md` | §3 레이어 표기 갱신(B7) — pot_provider는 facade(L0), 워커 아님 |
+| `log_console.py` | D2Coding 주석 → Cascadia Mono(D5) |
+| `smoke_test.py`/`controller.py`/`README.md`/`.github/workflows/ci.yml` | smoke `ctrl.state` 갱신(E2)·MVC docstring 정리·README CI 문구 교체(D3)·CI paths-ignore 오탈자 수리(D4) |
+
+#### 검증
+- 전체 pytest 137 passed / smoke_test PASS / `sync_mirrors.py --check` 0건 / py_compile OK
+
+### 2026-09-13 — v3.4.0 패치 : 분석 상태 머신 회귀 수리 — ENTER 잠금·URL 클리어 크래시
+
+#### 문제 (파이프라인 전수조사 실측)
+- **ENTER 잠금**: `controller.spawn_analyzer`가 `state["analyzing"]=True`를 세팅한 뒤 성공/실패 어디에서도 `False`로 되돌리지 않았다(`_abandon_analyzer` 유기 경로에만 존재). `a18639b`(State-Button Matrix)부터 `get_current_app_state`가 `ANALYZING`을 하드 차단하고 `toggle_download`가 `state != "IDLE"`에서 조기 반환 → 분석 완료 직후 입력·ENTER 영구 잠금. `_is_stale_analyze_signal` docstring("분석 상태가 아니면(유기·완료) 모든 큐잉된 시그널 폐기")과도 모순된 누락
+- **URL 클리어 크래시**: `on_url_changed`의 클리어 분기가 MVC 이관(94f1ee4)에서 사라진 `_abandon_analyze_worker()`를 호출 — AttributeError로 뒤의 `clear_status_line`/`_discard_analysis_result` 로직 미실행
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `main.py` | `on_analyze_success`/`on_analyze_error`에 `ctrl.state["analyzing"]=False`(stale 검사 통과 직후) / `on_url_changed` 클리어 → `ctrl._abandon_analyzer()` |
+| `tests/test_analyze_state.py` | 신규 회귀 테스트 5건 (ENTER 재개·IDLE 복귀·PICKING 비가림·유령 시그널 폐기·URL 클리어) |
+| `mirrors/` | main.py 변경 반영 재생성 |
+
+#### 검증
+- 전체 pytest 126 passed (신규 5건 포함)
+- `python sync_mirrors.py --check` — 변경 0건
+- `py_compile` OK · 재현 스크립트로 수정 전 ANALYZING 고정 → 수정 후 IDLE + 다운로드 시작 확인
+
+### 2026-09-13 — v3.4.0 4컬럼 로그 규격 — SPEC/PLATFORM 폐지·SCOPE 통합·메타데이터 태그화
+
+#### 변경
+- **TUI 계약**: 메인 로그를 `[HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG`로 단일화. `PLATFORM`과 `SPEC` 컬럼을 폐지하고 발생지/대상은 `SCOPE`, 해상도·코덱·버전은 MSG 앞 태그로 보존
+- **렌더링**: STAGE/STATUS/SCOPE 5자 고정, 진행률은 `PCT → SPEED → GAUGE → MSG`, 빈 MSG에는 말단 구분자를 붙이지 않음
+- **구조화 로그**: `LogEvent.scope`를 정식 필드로 고정. `platform`은 하위 호환 별칭, `spec` 전달값은 렌더러에서 MSG 태그로 흡수
+- **문서화**: HANDOVER·LOGGING_POLICY·README의 v3.4.0 규격을 현행 소스와 맞추고, §1.1 버전 관리 절차와 §1.2 경로 계약을 추가하며 Python 미러를 재생성
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `log_event.py` | `scope` 정식화·`platform` 호환 별칭·`spec` MSG 태그 계약 |
+| `log_console.py` | 4컬럼 고정 폭·진행률 지터 방지·빈 MSG 구분자 제거 |
+| `main.py`/`downloader.py`/`media.py` | 5컬럼 포맷·중복 SPEC/SPEED 제거·4컬럼 렌더러 호출 |
+| `components.py`/`cookies.py`/`chzzk_api.py`/`finalizer.py`/`live_recorder.py`/`progress_emitter.py`/`update_worker.py` | SCOPE/MSG 태그·4컬럼 이벤트 계약 정합성 수리 |
+| `tool_log.py`/`tests/test_tool_log.py` | v3.4.0 검증에 사용된 subprocess 로그 펌프와 회귀 테스트 유지 |
+| `HANDOVER.md`/`LOGGING_POLICY.md`/`README.md` | v3.4.0 4컬럼 규격 문서화 |
+| `mirrors/` | 변경 Python 소스와 전체 코드 합본 재생성 |
+
+#### 검증
+- 전체 Python `compileall` 통과
+- `python sync_mirrors.py --check` — 모든 지정 미러 최신 상태
+- 관련 로그/파이프라인 회귀 테스트 및 전체 pytest 스위트 통과
+- `git diff --check` 통과
+
+### 2026-09-12 — v3.3.1 계층 모숭 정리 — L0 순수화·좀비 제거·Qt 스레드 경계 분리
+
+#### 문제 (5계층 전수조사 실측)
+- **L0 계층 사칭**: po_client가 "stdlib only L0" 주장과 달리 `server_ping`에서 pot_server lazy import(락 파일 PID 염탐) — pot_server는 최상단에서 po_client 역참조하는 상호 순환. 게다가 `import os` 누락으로 PID 검증이 `except Exception: pass`에 삼켜져 NameError로 무력화
+- **L1 이중 계약**: `WorkerContext(worker_context.py)` — DownloadContext와 동일 목적, 런타임 사용 0건 죽은 코드
+- **L2 시한폭탄**: live_recorder에 `prepare_live_paths` 부재(`_lr.prepare_live_paths` AttributeError), `worker.handle_stream_finish`/`worker.log_success_info` 인스턴스 메서드 착각 호출 — 라이브 진입·종료 즉시 크래시
+- **L3 Qt 스레드 위반**: raw_log dispatcher(데몬 스레드)가 `_render_concise`/`_mirror_event_full`을 직접 호출 — QTextEdit 배경 스레드 조작(세그폴트 위험), main 구주석은 "QueuedConnection 경유 GUI 스레드 실행" 주장과 모순
+- **L4 좀비 인터페이스**: `pot_provider.POTProviderWorker` — POTManager._POTWorker와 중복, 런타임 사용 0건. `_spawn_existing` 이중 호출로 서버 2회 기동 시도
+- **기동 게이트**: `pot_finished` msg에 사람용 상세("prewarm staged")를 담아 `report_pot` 정확 일치와 불일치 → **런타임에서 READY가 절대 열리지 않음**. 기존 서버 응답 시 `_pending_download` 영구 큐잉
+
+#### 해결
+- **L0**: po_client — 역참조 완전 철거, 순수 HTTP /ping만 판정(TCP 성공+200=이벤트 루프 생존 증거). 좀비 락 회수는 pot_server 기동 시 본연 책임
+- **L1**: worker_context.py 삭제 + sync_mirrors 대상 제거
+- **L2**: `prepare_live_paths` 모듈 함수 구현, `handle_stream_finish(worker,…)`/`log_success_info(worker,…)` 모듈 함수 계약 교정, `_lr` 자기 참조 별칭 제거, target_downloader `ctx.log_success_info` → `_pe.log_success_info(ctx, real)`
+- **L3**: main `_GuiLogBridge(QObject)` + QueuedConnection — raw_log 순수 파이썬 유지(109 헤드리스 테스트 무수정), GUI 슬롯은 메인 스레드에서만 실행. 프로브로 스레드 경계 실증(워커 emit → pre processEvents 0 → post 2, 슬롯 전부 MainThread)
+- **L4**: POTProviderWorker 클래스 제거(177→76행 facade), `_spawn_existing` 단일 호출 원자화
+- **게이트**: `pot_finished` msg를 상태 토큰("staged"/"ready"/"failed")으로, `StartupState.pot_ready` 플래그, `use_existing()` 신설, `_on_pot_finished`의 `is_ready()` 재확인 후 `_pending_download` 회수
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `po_client.py` | server_ping 순수 HTTP화(91행) — 역참조 0·import os 제거·상수 보존 |
+| `live_recorder.py` | prepare_live_paths 신설 + 모듈 함수 계약 3곳 수리 + `_lr` 별칭 제거 (229행) |
+| `target_downloader.py` | `ctx.log_success_info` → `_pe.log_success_info(ctx, real)` 1곳 |
+| `pot_provider.py` | POTProviderWorker 제거 — 재수출 facade 단독 (177→76행) |
+| `worker_context.py` | 삭제 (git rm) + mirrors 목록 제거 |
+| `main.py` | `_GuiLogBridge(QObject)` 신설 + QueuedConnection 구독 전환 (1366행) |
+| `pot_manager.py` | pot_finished 토큰 발행 + use_existing + is_ready/use_existing 계약 (247행) |
+| `startup_coordinator.py` | report_pot 상태 토큰 판정 + 죽은 `_stage_complete` 제거 |
+| `startup_state.py` | pot_ready 플래그 + can_emit_ready 갱신 |
+| `raw_log.py` | _record_overflow 요약 이벤트 + flush queue.join (bounded queue) |
+| `yt_logger_bridge.py` | \r 캐리지 조립 버퍼(이월·최신 스냅샷) + 2Hz 스로틀 |
+| `tests/` | test_live_recorder 신규 5건, overflow 타이밍 레이스 제거, 좀비 테스트 정리 |
+
+#### 검증
+- py_compile 전체 + **pytest 111 passed** (전체 스위트) + `git diff --check` 클린
+- 브리지 스레드 경계 프로브: 워커 emit → pre processEvents 0 / post 2 / 슬롯 전부 MainThread
+- facade 재수출 무결성 실측(node_exe/pot_readiness/_spawn_existing/ensure_node_server 등), `POTProviderWorker` 부재 확인
+
+### 2026-09-12 — v3.3.0 로그 버스 단일화 — raw 단일 경로·플래그 라우팅·레거시 제거
+
+| 모듈 | 변경 |
+|------|------|
+| `config.py` | `_APP_VERSION` v3.2.1 → v3.3.0 (minor 점프 — 아키텍처 재편. semver-lite `y` 릴리즈) |
+| `raw_log.py` | `raw(tag, msg, is_status, is_error, to_tui)` 단일 진입 확정 — 문자열→LogEvent 정규화(`rendered=True`), history 내부 1회 적재(`level=ERROR↔INFO`) |
+| `main.py` | 버스 구독 2점(`subscribe_concise/full`) · `_render_concise` 컬럼화+`no_wrap=True` · `append_concise_log`=bus shim(호출부 20곳 무수정) · `append_full_log` 제거 · 분석 성공 `format_log_line` 직접 호출→`raw("anal", LogEvent)` · 직접 `log_history.log` 3곳 bus reroute |
+| `log_console.py` | `append(…, no_wrap)`→`_buffer{…, no_wrap}`→`_insert_clamped`→`_flow_lines(raw, no_wrap)` 플래그 체인 · `is_tui_line` 렌더 퇴출(호환 shim 강등) |
+| `chzzk_api.py`/`cookies.py`/`media.py` | 직접 `log_history.log` 7곳 → `raw_log.raw(…, to_tui=False)` (F12+history 전용) |
+| `log_bus.py` | 삭제(`git rm`) — `import log_bus` 참조 0건 확인 |
+| `sync_mirrors.py` | 미러 출력처 루트 `*.md` → `mirrors/*.md` 이전 + `mirrors/chzzktube_codebase.md` 합본 번들 신규 · `fix_target`/`log_event`/`worker_context` 대상 추가(→ `fix_target`은 일회용 스크립트 정리로同日 제거, 39개 확정) |
+| `README.md` | 주의사항 로그 서술 현행 계약으로 교체 (단일 진입·전량·`to_tui` 팬아웃) |
+| `CHANGELOG.md` | v3.3.0 엔트리 5 bullets 추가 |
+| `HANDOVER.md` | 머리글 v3.3.0 · §3 40개 모듈 실측표 · §4 v3.3.0 시그널 계약 신설(구 블록 `<details>` 보존) · §5 불변식 11~15 편입 · 본 §9 v3.3.0 행 |
+| `tests/test_log_console.py` | `TestFlowLinesNoWrapFlag` 6건 신규 (no_wrap passthrough·트리 유지·plain wrap·shim 구조판정·기본값 wrap) |
+| `tests/test_coordinator.py` | 죽은 `append_full_log` Mock 제거 |
+
+#### 검증
+- ✅ py_compile 전체 OK
+- ✅ pytest 86 passed (전체) — v3.3.0 계약 불일치 테스트 7건 수리 포함:
+  `TestEmitDl`/`TestEmitErr`/`test_context_passed_to_pipeline`은 `emit_dl`/`emit_err`가 `str`이 아닌 `LogEvent`를 반환하므로 `_rendered()`(`format_log_line_for_event`) 경유로 전환,
+  `test_raw_bus_fanout`은 폐기된 병렬-분리 계약(`full_only` kwarg) 대신 포함관계 계약(to_tui 1비트)으로 전면 교체.
+  원인: `0cf6b51` v3.3.0 리팩토링이 코드 계약만 바꾸고 테스트를 안 고친 채 머지됨.
+- 행위 변화 1건: 미리 포맷된 LogEvent 문자열(pick 메뉴 등)은 wrap 대신 한 줄 유지 + `_render_clamp` `…` 절단. bare 문자열은 기존대로 wrap
+
+### 2026-09-09 — pot_provider SRP 3-웨이 분리 + dataclass 컨텍스트 추출 + 통합 테스트 + CI
+
+| 모듈 | 변경 |
+|------|------|
+| `po_client.py` | **신규 L0 leaf** — PO Token HTTP 클라이언트 (`fetch_po_token`/`extract_video_id`/`probe_server`) |
+| `node_provider.py` | **신규 L0 leaf** — Node.js 런타임 수급 (`ensure_node_runtime`/`node_exe`/`npm_exe`) |
+| `pot_server.py` | **신규** — bgutil 서버 빌드/기동 (`ensure_node_server`/`built_server_js`/`_spawn_node_server`) |
+| `pot_provider.py` | **facade** — 3개 모듈 재수출 + `POTProviderWorker(QThread)` 유지 (935→230라인) |
+| `dl_context.py` | **신규** — `DownloadContext` dataclass로 파이프라인 계약 명시화 |
+| `analyze_worker.py` | **신규** — AnalyzeWorker(QThread) 분리 (path 분리) |
+| `update_worker.py` | **신규** — UpdateWorker + `_RAW_VERSION_CMDS` 분리 |
+| `yt_logger_bridge.py` | **신규** — 공용 YtLoggerBridge 어댑터 분리 |
+| `downloader.py` | DownloadWorker만 유지, 미사용 임포트 제거 |
+| `dialogs.py` | UpdateWorker 블록 제거 (846→686줄) |
+| `target_downloader.py` | 오류 사유 영문 1-3단어 태그화 |
+| `progress_emitter.py` | emit_dl/emit_err 재수출 단일화 |
+| `log_console.py` | emit_dl/emit_err 단일 출처 추가 |
+| `HANDOVER.md` | §3 아키텍처 34개 모듈 실측 최신화, §5 시그널 계약 갱신, §3.5 포맷 표준 추가 |
+| `tests/test_download_pipeline.py` | **신규 12개 테스트** — ctx 흐름/포맷/facade 검증 |
+| `.github/workflows/ci.yml` | **신규 CI** — push/PR 시 pytest 자동 실행 |
+
+#### 검증
+- ✅ py_compile 34개 모듈 OK
+- ✅ pytest 68 passed (56 기존 + 12 신규)
+- ✅ 런타임 READY 1건 유지 (3회 연속)
+- ✅ 계층 역전 0: client_opts/updater → po_client 직접 참조
+
+### 2026-09-07 — DEPS 로그 2분기 원문화 + 실행체 통일 + Nightly 채널 활성화
+
+| 모듈 | 변경 |
+|------|------|
+| `dialogs.py` | UpdateWorker 시그널 계약 정리 — line=(msg,is_status,is_error), **full=(raw,is_status)**. _do_check F12 재편: deps[] 요약 제거, 실제 CLI 원문($ yt-dlp --version → 2026.08.19)만 적재. _provision_cb TUI 미러 제거 → 마지막 메시지부 raw(is_status 전달). **VerboseLogWindow.append is_status — F12 갱신형(마지막 줄 덮어쓰기)**. channel/check_updates 파라미터 신설 |
+| `main.py` | full 수신 append_full_log/is_status → _mirror_full_log(진행률은 버퍼 미적재, F12 열려있으면 마지막 줄 갱신). UpdateWorker 생성에 channel=cfg[update_channel], check_updates=cfg[auto_update_check] 전달. **_on_auto_upgrade_done에서 _startup_completed=True** — 기존엔 POT 종료시에만 세팅돼 자동갱신 후 15초 폴백까지 입력 잠금 |
+
+| `updater.py` | **check_deps nightly 인지** — yt-dlp-nightly 는 dist 명이 달라 im.version(yt-dlp) 실패 → nightly 설치물 폴백 표기(2026.9.x (nightly)). outdated_packages(channel) **다운그레이드 감지** — stable 채널+nightly 잔존 → 강제 stale, stale 튜플 pypi_name 고정으로 upgrade_packages None 언팩 방지. cli_raw/_cli_base/_cli_env/npm_exe 신설 — 셸에서 친 것과 동일한 CLI 원문 캡처. _ffmpeg_version Windows creationflags |
+| `pot_provider.py` | _note 의 tui_to_raw F12 미러 2곳 제거 — F12 는 pot 실제 CLI 원문(tsc/npm)만. npm_exe 신설(node 런타임 옆 npm 스크립트) |
+| `log_console.py` | tui_to_raw 제거(미사용 정리). append 진행률 갱신형 계약 주석 명시(한 행=한 정보) |
+| `progress_emitter.py` / `live_recorder.py` | DL/LIVE 틱 is_status=True — 매 틱 새 줄 위반 수리(§6 In-Place) |
+| `components.py` | **bundled_npm_ok 크로스플랫폼** — macOS/Linux tarball(bin/../lib/node_modules/npm) 검사 추가. Windows 전용 경로만 봐서 정상 npm을 broken 오판 → **매 시작 재다운로드 루프**였던 근본 원인 수리 |
+| `config.py` | update_channel / auto_update_check 기본값 |
+| `HANDOVER.md` | §8.4 빌드 시 해야 할 일(OS별 체크리스트) 신설, §8.2 버전 확인 2분기 구조 반영 |
+| 검증 | py_compile 6모듈 · smoke PASS · UpdateWorker 시뮬(stale 없음→간결 침묵) · F12 갱신형 실측(40%→80% 한 줄) · outdated_packages 4시나리오(nightly 설치 판정/stable 다운그레이드/nightly 업그레이드/최신 무표기) · mirrors sync |
+
+
+
+
+### 2026-09-07 — DEPS 자동 수급 완전 통합 + 비표준 status 일괄 제거
+
+| 항목 | 변경 |
+|------|------|
+| `§5 0번` | **표준 status 규칙 신설**: `OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP / WARN` 허용, `MISSING` / `?` 금지. msg falsy 시 세로줄 누락 경고. DEPS 실패 → `FAIL` + msg 명시. |
+| `§8.2` | **Dev/Frozen 완전 통합**: frozen 분기 제거. `UpdateWorker`가 모든 deps(PyPI + ffmpeg + node) 처리. Dev = Frozen 디버깅 가능. |
+| `updater.py` | `check_deps()`: `"MISSING"` → `FAIL`, `"?"` → `FAIL`, `None` → `"not found"`. docstring에서 비표준 status 표기 제거. `outdated_packages()`: `"?"` → `"unknown"`. |
+| `main.py` | frozen 분기 제거(`sys.frozen` → `_start_pot_provider()` only). `UpdateWorker(upgrade=True)`이 항상 실행. |
+| `dialogs.py` | `_do_upgrade()` 확장: PyPI(yt-dlp/streamlink) + `components.ensure_ffmpeg()` + `pot_provider.ensure_node_runtime()`. 3단계 자동 수급. |
+| `dialogs.md` | 동기화. |
+| 검증 | py_compile OK — main.py / dialogs.py / updater.py |
+
+### 2026-09-06 — HANDOVER 최신화 (아키텍처·환경·데이터 구조 실측 반영)
+
+| 항목 | 변경 |
+|------|------|
+| §1 개요 | macOS/Windows/Linux 정정, 스택에 Node.js(PO Token) 추가 |
+| §2 실행환경 | bgutil-ytdlp-pot-provider 행 제거(의존성 퇴출 반영), 콘솔 폰트 D2Coding→CascadiaMono 정정(레거시 잔재 명기), pyinstaller build 그룹·log_history·smoke_test 행 추가 |
+| §3 아키텍처 | 모듈 라인 수 실측 갱신(main 1042 · downloader 451 등), 인프라 모듈 표 추가(pot_provider/components/log_history/smoke_test/sync_mirrors) |
+| §4 데이터 | default_config 23키, 데드 키 10종 명기, 시그널 계약 실제 서명·result_ready 형상 반영 |
+| §5·§6 | **emit 위치 인자 계약**·**extractor_args setdefault 병합**·**경량/무거운 경로 분리** 불변식 8~10 추가 + TUI 규격 우회·분석 결과 direct 신뢰 금지 항목 추가 |
+
+### 2026-09-06 — URL 분석 스톨 해소(경량 분석) + emit 키워드 TypeError 광역 수리 + 분석 요약 표시
+
+| 모듈 | 변경 |
+|------|------|
+| `client_opts.py` | `_apply_light_analysis_opts()` 신설 — `youtube:skip=[hls,dash]`로 매니페스트 열거 생략. "Downloading m3u8 information" 단계(googlevideo 셔드 스로틀에서 영구 멈춤)를 원천 차단 |
+| `downloader.py` | `AnalyzeWorker._extract_youtube`에 경량 분석 적용 — 분석은 플레이어 응답의 직접 URL 포맷(v/a 개수·메타)만 취하고 무거운 우회(클라이언트 폴백·PO 토큰·매니페스트 재열거)는 다운로드 전용으로 분리 |
+| `target_downloader.py` | `_flatten`/`_is_youtube_live_url`에도 경량 분석 적용 (라이브 감지는 `is_live` 플래그 기반이라 영향 없음). `expand_targets` emit 키워드 인자 TypeError 수리 |
+| `main.py` | `stop_analysis_anim`의 미정의 `formatted_url` **NameError 수리** (치명: 분석 성공 시마다 크래시) → `last_content_block_text()` 실측 텍스트로 대체. 분석 완료 로그에 채널명·제목 요약(`_format_analysis_summary`) 추가 |
+| `finalizer.py` | `log_concise.emit(... is_status=..., is_error=...)` 키워드 인자 TypeError 3곳 → 위치 인자. **미수리 시 다운로드 완료/취소마다 finished_all 미발신 → running 영구 잔류로 UI 잠금** |
+| `live_recorder.py` / `progress_emitter.py` | 동일 emit 키워드 인자 TypeError 9곳 위치 인자로 수리 |
+| 검증 | py_compile 0 · smoke PASS · 오프스크린에서 분석 완료 로그/철회 가드 일치/cancel→finished_all 실측 · 셸 재현(URL 1.6s 완주, m3u8 단계 미진입) |
+
+### 2026-09-06 — PACKAGES 언패킹 불일치 치명적 버그 수리
+
+| 모듈 | 변경 |
+|------|------|
+| `dialogs.py` | `UpdateWorker._do_check()`의 `for label, pypi_name in updater.PACKAGES` → `for label, pypi_name, _ in updater.PACKAGES` 수리. **원인: `updater.PACKAGES`가 3튜플(label, pypi_name, pypi_nightly)로 변경되었으나 언패킹 코드가 2튜플 그대로였음 → `ValueError: too many values to unpack`으로 앱 시작 시 UpdateWorker 크래시 → "Error calling Python override of QThread::run()"** |
+| `dialogs.md` | 문서 동기화 |
+| 검증 | thread_error.log 미생성 확인, ast.parse 구문 검사 통과 |
+
+### 2026-09-06 — DEPS 체크 누락 3건 수리 (ffmpeg/node/potserver) + Dev/포터블 통합
+
+| 모듈 | 변경 |
+|------|------|
+| `updater.py` | `check_deps()` 신설 — yt-dlp/streamlink(PyPI) + ffmpeg/node(`shutil.which`) + pot(`server_ping`)를 단일 리스트로 반환. `upgrade_packages()` Dev/Frozen 통합 — Dev에서도 `pip` 대신 직접 다운로드 경로 사용 (디버깅 일관성, 포터블 빌드와 동일 코드 경로) |
+| `pot_provider.py` | `server_ping()` 신설 — `http://127.0.0.1:4416/ping` HTTP 핑 체크 |
+| `dialogs.py` | `UpdateWorker._do_check()` 단순화 — `updater.check_deps()` 결과만 emit, outdated 검출은 `outdated_packages()` 위임 |
+| 미러 | `sync_mirrors.py` 일괄 갱신 (5건) |
+| 검증 | ast.parse 통과 — dialogs/updater/pot_provider |
+
+### 2026-09-07 — DEPS 로그 표시 지연 수리 (체크 시간 9~15초 → 3~5초)
+
+| 모듈 | 변경 |
+|------|------|
+| `updater.py` | `latest_version()` 타임아웃 2초→1.5초, ThreadPoolExecutor 버퍼 1초→0.5초로 단축. PyPI JSON API는 충분히 빠르므로 1.5초면 충분. DNS hang 방어(레벨)는 유지. |
+| `pot_provider.py` | `server_ping()` 타임아웃 3초→1초로 단축. PO 서버는 로컬(127.0.0.1)이므로 1초면 충분. |
+| 효과 | DEPS 로그 5개 항목 (ytdlp, streamlink, ffmpeg, node, pot) emit 시간 단축: 기존 직렬 합산 9~15초 → 수정 후 3~5초. 사용자가 보고한 "ready 후 10초 지연" 원인. |
+| 검증 | ast.parse 통과 — updater/pot_provider |
+
+### 2026-09-07 — 분석 스레드(HANG) 타임아웃 가드: QTimer watchdog
+
+| 모듈 | 변경 |
+|------|------|
+| `downloader.py` | **AnalyzeWorker 분석 타임아웃 가드 추가** — yt-dlp가 `Downloading visionos player API JSON` 단계에서 영구 HANG 시 GUI 전체가 멈지는 문제 근본 예방. `_ANALYSIS_TIMEOUT_MS = 45000` 상수 + `QTimer`(single-shot, main thread event loop 기반) + `_on_analysis_timeout()` 핸들러. `run()` 시작 시 `start()`, 내부 `try/finally`에서 `stop()`. 타임아웃 시 `self.terminate()` + `error_occurred.emit("Analysis timed out after 45s.")` |
+
+**설계 의도**: QTimer는 `__init__` 시점(main thread)에서 생성되므로 main thread event loop에 affinity를 가짐. `run()`은 worker thread에서 동기 실행되지만, main thread GUI loop가 살아 있으므로 45초 후 `timeout` 시그널이 정상 발화 → `QThread.terminate()`로 강제 종료. `finally`에서 `QTimer.stop()`은 thread-safe. `_abandon_analyzer()`는 Zombie Pattern(`disconnect` + `finished.connect(reap)`) → `wait()` 호출 없음으로 GIL deadlock 회피 |
+
+### 2026-09-06 — DEPS/POT/분석 스톨 3연쇄 수리 + 구 getpot 플러그인 퇴출
+
+| 모듈 | 변경 |
+|------|------|
+| `components.py` | 누락된 `_exe_suffix()` 정의 복구 — ffmpeg 검색 NameError 수리 |
+| `pot_provider.py` | tsc 실행 전 산출물(build/main.js) 부재 + `tsconfig.tsbuildinfo` 잔존 시 캐시 삭제 — incremental emit 스킵(exit 0 무산출) 함정 수리 |
+| `downloader.py` | **yt-dlp 외부 플러그인 전면 차단**(`yt_dlp.plugins.plugin_dirs.value = []`) — 구 getpot bgutil 플러그인 기생 제거. DownloadWorker 예외 emit 키워드 인자 TypeError 수리 |
+| `target_downloader.py` | `worker.hook` AttributeError → `functools.partial(_pe.hook, worker)`. 누락 `_pe` import 추가. `_make_ytdl_opts`에 `url` 미전달 NameError 수리. `_emit_error_log` emit 키워드 인자 수리 |
+| `main.py` | closeEvent의 `ctrl.worker` → `ctrl.worker_dl` (매 종료 시 AttributeError). START 버튼의 "analyzing..." 오표기 → "downloading..." |
+| `smoke_test.py` | 리다이렉트 시 cp949 UnicodeEncodeError 방지 — stdout/stderr UTF-8 강제 |
+| `pyproject.toml` / `uv.lock` | `bgutil-ytdlp-pot-provider==1.3.2` 의존성 제거 (`uv remove`) — 자체 Node PO 서버로 완전 이전 완수. %APPDATA% getpot 플러그인 잔재 삭제 |
+| 검증 | 실측: 분석 3.6s (v_list=25, maxh=2160), 서버 스폰 → /ping 200, py_compile 0, smoke PASS |
+
+### 2026-09-05 — 퍼사드 + 전략 패턴 리팩토링
+
+| 모듈 | 변경 |
+|------|------|
+| `components.py` | `ensure_ffmpeg()` 퍼사드 + `_exe_suffix()`/`_ensure_ffmpeg_by_platform()` 전략 패턴 |
+| `downloader.py` | Thin Wrapper 15개 삭제 → `run()`에서 직접 모듈 함수 호출. `_reset_loop_state()` 통합 |
+| `target_downloader.py` | 예외 처리 5개 유형 세분화. `_emit_error_log()` 헬퍼 추가 |
+| `live_recorder.py` | Thin wrapper 참조 → 직접 모듈 함수 호출 |
+| `controller.py` | `on_download_finished()` 추가 (View → Controller 상태 로직 이관) |
+| `.gitattributes` | EOL 정규화 (Python/Markdown → LF, 배치 → CRLF) |
+
+| `sync_mirrors.py` | `startup_coordinator` 모듈 추가 |
+
+### 2026-09-08 — PyQt6/PySide6 정리 + StartupCoordinator + 로깅 표준화
+
+#### 문제
+- PyQt6가 함께 설치되어 있어 Qt 심볼 충돌 발생 (`/objc[...]: Symbol not found: __ZN14QObjectPrivateC2E...`)
+- READY 로그가 콘솔에 표시되지 않음 — 근본 원인 3중 버그:
+  1. `UpdateWorker.check_done = Signal(list)`를 Coordinator `report_deps(ok, msg)`에 직결 → **시그니처 불일치로 stale→upgrade 기동 체인 사망** → `upgrade` 단계가 영원히 미완료 → READY 게이트 통과 불가
+  2. `_on_update_check_done` not-stale 분기에 결론 라인(`deps ok`) 출력 누락
+  3. `threading.Lock`을 `report_*` → `_try_emit_ready` 경로에서 재획득 → **deadlock** (RLock으로 수리)
+- 로깅 포맷 불일치 → 8칼럼 → 5칼럼 통합 필요
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| **의존성** | PyQt6/PyQt6-Qt6/PyQt6_sip 제거 → PySide6 단일화 |
+| `startup_coordinator.py` | **신규 생성** — 시작 시퀀스 완료 추적 전용 조정자. `report_deps/report_upgrade/report_pot/report_ready` 게이트 + `_ready_emitted` 1회 발산 + `RLock` 재진입. DEPS 5줄·결론 라인은 기존 경로(`_component_line`/`_on_update_check_done`)가 담당하므로 **이중 출력 금지** (플래그만 세팅), 히스토리는 `append_concise_log` 위임 |
+| `main.py` | `check_done` → `_on_update_check_done` 복원(결론 라인 출력 + upgrade 워커 기동 + `report_deps` 보고). `upgrade_done` → `report_upgrade`. `_force_unlock_input` → `report_ready` 위임. 죽은 코드 `_on_auto_upgrade_done`/`_on_pot_provider_finished` 제거 |
+| `log_console.py` | `format_log_line()`: `SPEED │ PCT │ BAR` → `MSG` 통합 (고정 5칼럼 구조) |
+| `progress_emitter.py` | 다운로드 진행 틱에서 제목 제거 (ANAL 단계에 이미 표시됨) |
+| `sync_mirrors.py` | `startup_coordinator` MIRROR_MODULES 추가 |
+| `HANDOVER.md` | 당시 로그 표준 문서화 (STAGE·STATUS·PLATFORM·SPEC·MSG 5컬럼; v3.4.0에서 4컬럼으로 개정) |
+
+#### 시그널 교통 정리 (최종 계약)
+```
+UpdateWorker.check_done(list) ──> _on_update_check_done  (결론 라인 + upgrade 기동 + report_deps)
+UpdateWorker.upgrade_done(bool,str) ──> Coordinator.report_upgrade (변화 시 결론 1줄)
+POTProviderWorker.finished ──> Coordinator.report_pot (플래그만)
+QTimer 15s ──> _force_unlock_input ──> Coordinator.report_ready (강제)
+Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + 입력 개방
+```
+
+#### 검증
+- ✅ 단위 시퀀스 3종 (변화없음/변화있음/중복방지) ALL PASS
+- ✅ Smoke test PASS
+- ✅ 런타임 실측: DEPS 5줄 → `deps ok` 결론 → `SYS │ READY │ SYS │ - │ ready` **정확히 1건**
+- ✅ READY 로그: `[HH:MM:SS] SYS │ READY │ SYS │ - │ ready`
+
+### 2026-09-09 — 구조적 트레이드오프 5건 수술 + 모듈 분리
+
+#### 문제
+- 계층 역전: `client_opts`(L0)·`updater`(L0)가 `pot_provider`(L1 worker)를 역참조
+- 다운로더 팩토리: `downloader.py`가 3개 클래스(YtLoggerBridge/AnalyzeWorker/DownloadWorker)를 500줄에 담음
+- dialogs.py 응집도 낮음: UpdateWorker(QThread) + 대화상자 3종 동거
+- worker grab-bag: 추출 파이프라인 함수들이 `worker` 덩어리 객체를 첫 인자로 받음
+- MSG 규격 위반: target_downloader 오류 사유가 한국어 서술형
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| `po_client.py` | **신규 생성** — PO Token 서버 HTTP 클라이언트 L0 leaf. `server_ping/probe_server/fetch_po_token/extract_video_id/DEFAULT_HOST/POT` 이동. pot_provider는 재수출(내부호환), `client_opts/updater/target_downloader`는 po_client 직접 참조 |
+| `analyze_worker.py` | **신규 생성** — AnalyzeWorker 분리. controller 배선 변경 |
+| `yt_logger_bridge.py` | **신규 생성** — YtLoggerBridge 공용 어댑터 분리 (Analyze/Download 공유) |
+| `downloader.py` | DownloadWorker만 유지, 미사용 임포트(`import live_recorder as _lr`) 제거 |
+| `update_worker.py` | **신규 생성** — UpdateWorker + `_RAW_VERSION_CMDS` 분리. main 배선 변경 |
+| `dialogs.py` | UpdateWorker 블록 제거 (846줄 → 686줄) |
+| `target_downloader.py` | 오류 사유 전건 영문 1-3단어 태그화 (`age/bot restricted`, `format missing` 등) |
+| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 34개) |
+
+#### 검증
+- ✅ py_compile 전체 OK, smoke PASS, 런타임 READY 1건 유지
+- ✅ 계층 역전 해소: client_opts/updater/target_downloader → po_client(L0) 직접 참조
+- ✅ 다운로더 팩토리 분리: 3-way 독립 모듈
+
+#### 남은 트레이드오프
+- **worker grab-bag (D)**: ✅ dataclass 컨텍스트 추출 완료 — `dl_context.py`의 `DownloadContext` dataclass로 파이프라인 계약 명시화. `DownloadWorker.extract()`에서 컨텍스트 생성, 파이프라인 모듈(`target_downloader`, `progress_emitter`, `finalizer`)은 `ctx`만 받음. 타입 힌트로 IDE 지원·정적 검증 가능.
+
+- **pot_provider SRP 분리**: ✅ 3-웨이 분리 완료
+  - `node_provider.py` (Node.js 런타임 수급 — node_exe/npm_exe/node_ok/ensure_node_runtime)
+  - `pot_server.py` (bgutil 서버 빌드/기동 — ensure_node_server/_spawn_existing/built_server_js)
+  - `po_client.py` (PO Token HTTP 클라이언트 — L0 leaf, 이미 분리 완료)
+  - `pot_provider.py`는 3개 모듈을 재수출하는 facade + `POTProviderWorker(QThread)` 유지
+  - `ensure_node_runtime`이 `pot_server._download_with_progress`에 순환 참조 없이 접근하도록 함수 레벨 import 사용
+
+- **통합 테스트 추가**: ✅ `tests/test_download_pipeline.py` 신규 (12개 테스트)
+  - `TestDownloadContext`: dataclass 기본 속성·오류 수집 검증
+  - `TestEmitDl`/`emit_err`: 포맷 규격 검증
+  - `TestPotProviderFacade`: 재수출 검증 (node_provider/pot_server/po_client)
+  - `TestContextPipelineFlow`: ctx가 파이프라인 함수에 흐르는 흐름 검증
+
+### 2026-09-09 — 구조적 트레이드오프 5건 수술 + 모듈 분리 + dataclass 컨텍스트 추출
+
+#### 문제
+- 계층 역전: `client_opts`(L0)·`updater`(L0)가 `pot_provider`(L1 worker)를 역참조
+- 다운로더 팩토리: `downloader.py`가 3개 클래스(YtLoggerBridge/AnalyzeWorker/DownloadWorker)를 500줄에 담음
+- dialogs.py 응집도 낮음: UpdateWorker(QThread) + 대화상자 3종 동거
+- worker grab-bag: 추출 파이프라인 함수들이 `worker` 덩어리 객체를 첫 인자로 받음
+- MSG 규격 위반: target_downloader 오류 사유가 한국어 서술형
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| `dl_context.py` | **신규 생성** — `DownloadContext` dataclass로 파이프라인 계약 명시화. `DownloadWorker.extract()`에서 컨텍스트 생성, 파이프라인 모듈은 `ctx`만 받음. |
+| `po_client.py` | **신규 생성** — PO Token 서버 HTTP 클라이언트 L0 leaf. `server_ping/probe_server/fetch_po_token/extract_video_id/DEFAULT_HOST/PORT` 이동. pot_provider는 재수출(내부호환), `client_opts/updater/target_downloader`는 po_client 직접 참조 |
+| `analyze_worker.py` | **신규 생성** — AnalyzeWorker 분리. controller 배선 변경 |
+| `yt_logger_bridge.py` | **신규 생성** — YtLoggerBridge 공용 어댑터 분리 (Analyze/Download 공유) |
+| `downloader.py` | DownloadWorker만 유지, 미사용 임포트(`import live_recorder as _lr`) 제거 |
+| `update_worker.py` | **신규 생성** — UpdateWorker + `_RAW_VERSION_CMDS` 분리. main 배선 변경 |
+| `dialogs.py` | UpdateWorker 블록 제거 (846줄 → 686줄) |
+| `target_downloader.py` | 오류 사유 전건 영문 1-3단어 태그화 (`age/bot restricted`, `format missing` 등) |
+| `sync_mirrors.py` | 신규 4모듈 MIRROR_MODULES 추가 (총 34개) |
+
+#### 검증
+- ✅ py_compile 34개 모듈 OK, smoke PASS, 런타임 READY 1건 유지
+- ✅ 계층 역전 해소: client_opts/updater/target_downloader → po_client(L0) 직접 참조
+- ✅ 다운로더 팩토리 분리: 3-way 독립 모듈
+- ✅ dataclass 컨텍스트로 파이프라인 계약 명시화
+- ✅ pot_provider SRP 3-웨이 분리 + facade 재수출 검증
+- ✅ pytest 68 passed (56 existing + 12 new integration tests)
+
+#### 남은 과제
+
+| 모듈 | 변경 |
+|------|------|
+| `target_downloader.py` | `_is_youtube_live_url()` 경량 프리체크 도입 |
+
+### 2026-09-04 — MVC 4계층 완성 + Node.js 외부 참조
+
+| 모듈 | 변경 |
+|------|------|
+| `controller.py` | `DownloadController` → `MediaController(QObject)`. `spawn_analyzer()` 추가 |
+| `main.py` | AnalyzeWorker 직접 관리 제거 → Controller 시그널 포워딩 |
+| `pot_provider.py` | Node.js 22 번들 → 외부 참조 전환 |
+| `components.py` | `_ensure_ffmpeg_linux()` 신설 |
+
+### 2026-09-03 — TUI 레이아웃 + 로그 미니멀화 + 유령 로그 수리
+
+| 모듈 | 변경 |
+|------|------|
+| `theme.py` | Cascadia Mono 11px 통일, Flat 레이아웃 |
+| `progress_emitter.py` | MSG 영어 1-3단어로 축소 |
+| `main.py` | `_is_stale_analyze_signal()` 신설. 디바운스 500ms→900ms |
+| `log_console.py` | `is_tui_line()` 개선 (SPEC/SPEED 분리 인식) |
+
+### 2026-09-02 — PO Token 서버 번들 + 0% 스톨 픽스
+
+| 모듈 | 변경 |
+|------|------|
+| `pot_provider.py` | PO Token 서버 번들, `ensure_node_runtime()` 개선 |
+| `client_opts.py` | `_apply_pot_opts()` 추가, `throttledratelimit` 100KB/s |
+
+### 2026-09-10 — F12 중복 제거·raw 로그 버스·POT stale 감지 + 자동 리프레시
+
+#### 문제
+- F12 raw 로그에 POT readiness 로그 2중 출력 — `check_deps` 내 자체 판정 + 프리웜 별도 `pot_readiness(log_func)` 중복 호출
+- `pot_provider._note/_dbg`가 `self.log_full.emit` 직접 호출 → raw 버스 구독과 이중 적재. "모든 동작은 raw 스택에 쌓여야 한다"는 원칙이 흐트러짐
+- POT DEPS가 liveness(`server_ping`)만 판정 → 미기공 정상(lazy standby)이 `FAIL not running`으로 오해석
+- 프리웜이 stale 빌드를 감지해도 자동 리프레시 없이 방치 → lazy가 "언제든 작동 가능한 준비 상태"를 유지하지 못함
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| `raw_log.py` | **신규 생성** — raw(tag, msg) 단일 진입 → concise(메인 TUI)/full(F12)/history 3채널 팬아웃. 구독 전 호출도 history 적재(유실 방지). TUI 컬럼 라인은 화면에도, 나머지는 F12/history 전용 |
+| `pot_server.py(🤖 touched)` | `pot_readiness(log_func, check_stale=False, want_refresh=False)` 확장 — `latest_server_ver(timeout=3)` GitHub API로 로컬 `.version` vs 최신 태그 비교, stale 시 `False/stale` 표기. `want_refresh=True`면 "작동 가능한 준비됨"으로 간주 (reason에 `(refresh pending)` 표기) |
+| `pot_provider.py(🤖 touched)` | `POTProviderWorker.__init__(prewarm=False)` 모드 유지하되, prewarm 분기 `acquire/release_prewarm_lock(log_func)` 콜백 + detect stale 시 `rebuild=True`로 `ensure_node_server` 재실행 (자동 리프레시). `_note/_dbg` 직접 `log_full.emit` 제거 → raw 단일 경유 |
+| `update_worker.py(🤖 touched)` | `check_deps(log_func=lambda...)` 콜백으로 `_do_check` 내 별도 `_pot_readiness` 중복 호출 제거. CLI 원문 `cli_raw(label, *args, max_lines=6, max_width=160)` 절단 적용하여 ffmpeg `configuration:` 500자 원문 오버 제한 |
+| `updater.py(🤖 touched)` | `check_deps(log_func=None)` 시그니처 확장 + cli_raw max_lines/max_width |
+| `main.py(🤖 touched)` | `_maybe_prewarm_pot`(`check_stale=True, want_refresh=True`) → stale 시 "starting refresh"로 분기. `_on_prewarm_finished/_on_pot_finished` raw 적재. `_ensure_pot_for_info` `raw("pot-gate")` 판정 로그 |
+| `analyze_worker.py(🤖 touched)` | 게이트 판정 시 `raw("pot-gate", gated=... age_limit=... availability=...)` |
+| `HANDOVER.md(🤖 touched)` | 마지막 갱신 v3.1.2+ 표기, §6 하지 말 것 위반사례 5건 추가(로그 수동 흩뿌리기·워커가 포그라운드 import·laziness 고정·시그널 이중 emit·smoke 미통과 커밋), 아키텍처 맵 최신화 |
+| `tests/test_download_pipeline.py(🤖 touched)` | PID-liveness·live 홀더 비회수·콜백·raw 팬아웃·readiness stale·check_deps 단일 호출·cli_raw 절단 테스트 12개 추가 (전체 80건) |
+| `sync_mirrors.py(🤖 touched)` | MIRROR_MODULES에 `raw_log` 추가, 6개 `.md` 갱신 |
+
+#### 검증
+- py_compile raw_log/pot_server/pot_provider/main/update_worker/updater/analyze_worker/tests: OK
+- pytest 전체: 80 passed (pipeline 24건 포함)
+- smoke_test: PASS (MainWindow + SettingsDialog)
+- 런타임: `raw_log` 구독 정상, log_full 직접호출 없어져 F12 중복 해소, F12 `configuration:` 줄 160자+털 절단
+
+#### 남은 과제
+- stale 감지 시 네트워크 3초 — preflight timeout 예산. 실패 시 판정 유지(stale 미확인≠FAIL)는 유지
+- 프리웜 자동 리프레시는 "잠긴 사이 사전 제거 기능"에 대해 게이트/다운로드 시점 실패 처리와 별개 — 프리웜은 최신 빌드 확보 우선 (📖 HANDOVER §1.3)
+
+---
+
+### 2026-09-11 — F12 크래시 근절·raw 로그 버스 시그널 브리지·pot 서버 스폰 최적화·버튼 동작 검토
+
+#### 문제
+- F12 로그창 열자마자 렉/크래시 — `raw_log.raw()`가 **Qt 시그널이 아닌 직접 함수 호출**로 워커 스레드에서 UI 위젯(QTextEdit) 직접 조작 → GUI 스레드와 동시 접근으로 레이스→크래시
+- READY 이후에도 DEPS 로그 계속 출력(prewarm 단계 로그가 메인 콘솔로 유입) — prewarm 로그가 F12 전용(full_only)로 격리되지 않음
+- `pot_provider._note/_dbg`가 `self.line.emit` + `raw_log.raw()` 이중 전송 → 메인에 2회, F12에도 TUI 컬럼 유출
+- `_spawn_existing`가 `self.log_full.emit` 직접 넘김 → F12 중복 적재
+- pot 서버 스폰 45초 대기는 prewarm으로 기존 빌드 재사용 시에도 발생 — `_wait_port` 45초 폴링이 선행돼야 함
+- 분석/다운로드 중 pot 서버 가동 시 F1~F4/ESC/ENTER 버튼 동작 미정 — enter 입력 시 큐 꼬임으로 앱 정지
+- `DownloadContext`에 `log_concise` 속성 없음 → 다운로드 실패 (`'DownloadContext' object has no attribute 'log_concise'`)
+
+#### 해결
+| 모듈 | 변경 |
+|------|------|
+| `raw_log.py` | **시그널 브리지 전면 재작성** — `_RawHub(QObject)`에 `concise/full` 시그널, `subscribe_*`가 `_hub.*.connect(fn)`로 연결. `raw()`는 `log_history.log()` + `Signal.emit`만 수행 → QueuedConnection으로 GUI 스레드 안전 보장. `full_only` 파라미터 추가(TUI→concise 전용, non-TUI→full 전용, `full_only=True`→F12 전용) |
+| `pot_provider.py` | `_note`/`_dbg` **raw 단일 경유**로 통합. prewarm 모드 `full_only=True` + TUI 래핑 벗겨서 F12에 순수 메시지만. ffmpeg ensure prewarm에서 스킵(DEPS 단계에서 이미 확보). `_spawn_existing` 인자 `self.log_full.emit` → `self._dbg`로 통일. prewarm에서 ffmpeg ensure 스킵. `_spawn_existing` 인자 `log_full.emit` → `_dbg`로 교체 |
+| `pot_server.py` | `pot_readiness`에 `check_stale`/`want_refresh` 확장. `latest_server_ver(timeout=3)` 3초 타임아웃으로 GitHub API 호출. stale+want_refresh 시 ready=True로 자동 리프레시 유도 |
+| `update_worker.py` | `check_deps(log_func=...)` 단일 호출로 중복 standby 제거. `cli_raw(max_lines=6, max_width=160)` 절단 적용 |
+| `main.py` | `_maybe_prewarm_pot(check_stale=True, want_refresh=True)` stale 시 "starting refresh". `_on_pot_finished` raw 적재. `_ensure_pot_for_info` `raw("pot-gate")` 판정 로그 |
+| `analyze_worker.py` | 게이트 판정 시 `raw("pot-gate", gated=..., age_limit=..., availability=...)` |
+| `DownloadContext` | `log_concise` 속성 추가 (progress_emitter 연동용) |
+| `HANDOVER.md` | 마지막 갱신 v3.2+ 표기, §6 하지 말 것 위반사례 추가, 아키텍처 맵 최신화 |
+| `tests/test_download_pipeline.py` | raw 팬아웃·stale 감지·cli_raw 절단·락 콜백 등 12개 테스트 추가 (전체 80건) |
+| `dl_context.py(🤖 touched)` | `advance_target()` 신규 추가 — 타겟 진행 상태 단일 지점 갱신·속도계 초기화 |
+| `downloader.py(🤖 touched)` | `_emit_chzzk_header` 스텁 제거, `_reset_loop_state()` 단순화, `run()` 루프 `ctx.advance_target()`로 이중 대입 해소, `_live_proc` 추가·`terminate()/kill_live_process()`로 라이브 녹화 프로세스 정리 |
+| `target_downloader.py(🤖 touched)` | `ctx._emit_chzzk_header()` → `_pe.emit_chzzk_header()` 모듈 함수 직접 호출로 단일화 |
+| `main.py(🤖 touched)` | Phase 2 완료: `_maybe_prewarm_pot`, `_on_prewarm_finished`, `_on_pot_finished`, `_start_pot_provider`, `_ensure_pot_for_info` 전부 LogEvent + Channel 전환 |
+| `pot_provider.py(🤖 touched)` | Phase 2 완료: `_dbg`, `_note`, POT-FAIL 전부 LogEvent + Channel 전환 |
+| `update_worker.py(🤖 touched)` | Phase 2 완료: `raw_log.raw("pot-readiness", ...)` → LogEvent + Channel.FULL 전환 |
+| `log_event.py(🤖 touched)` | `to_log_line()` 메서드 추가 — `format_log_line` 시그니처와 안전 바인딩, `slots=True` 적용 |
+| `raw_log.py(🤖 touched)` | 다형성 브리지 — 시그니처 `(object, bool, bool)`/`(object, str)` 변경, 문자열→LogEvent 자동 승격, `_emit_event()` 정리 |
+| `log_console.py(🤖 touched)` | `format_log_line_for_event()` 신규 — LogEvent → TUI 컬럼 문자열 |
+| `pot_server.py(🤖 touched)` | `kill_process_on_port()` 신규 — 크로스플랫폼 좀비 프로세스 강제 종료 |
+| `po_client.py(🤖 touched)` | `server_ping()` PID 생존 확인 추가 |
+| `live_recorder.py(🤖 touched)` | `_live_proc` 저장 |
+| `downloader.py(🤖 touched)` | `_live_proc`, `terminate()/kill_live_process()` 추가 |
+
+#### 검증
+- py_compile raw_log/pot_server/pot_provider/main/update_worker/updater/analyze_worker/tests: OK
+- pytest 전체: 80 passed
+- smoke_test: PASS (MainWindow + SettingsDialog)
+- 런타임: `raw_log` 구독 정상, log_full 직접호출 없어져 F12 중복 해소, F12 `configuration:` 줄 160자+털 절단
+- `dl_context.py` / `downloader.py` / `target_downloader.py` / `main.py` / `pot_provider.py` / `pot_server.py` / `po_client.py` / `live_recorder.py` py_compile OK, pytest 80 passed
+
+#### 남은 과제
+- pot 서버 스폰 대기 시간 단축(45초 → 기존 빌드 재사용 시 즉시 바인딩 가능하도록)
+- 분석/다운로드 중 pot 서버 가동 시 버튼(F1~F4/ESC/ENTER) 동작 정의 및 큐 꼬임 방지
+
+---
+
+## 2026-09-10 — POT 서버 시동 raw_log 전수 기록 + 좀비 프로세스 식별 가능하게 보강
+
+### 문제
+`[prewarm] skip — server already running` 한 줄만 출력되고 **서버 시동/재사용 관련 모든 정보가 raw_log로 누출되지 않음** → 좀비 프로세스 여부 판별 불가
+
+### 해결
+| 모듈 | 변경 |
+|------|------|
+| `main.py` | `_maybe_prewarm_pot`: server_ping True 시 PID 정보(raw_log에 포함) 기록 |
+| `main.py` | `_start_pot_provider`: 시동 시작/완료/실패 전부 raw_log 기록 |
+| `main.py` | `_on_pot_finished`: outcome 메시지 raw_log 기록 |
+| `main.py` | `_on_prewarm_finished`: outcome 메시지 raw_log 기록 |
+| `po_client.py` | `server_ping()`에 PID 생존 확인 추가 (락 홀더 PID 죽으면 False 반환) |
+| `pot_server.py` | `kill_process_on_port()` 신규 — 크로스플랫폼 좀비 프로세스 강제 종료 |
+| `pot_provider.py` | `POTProviderWorker`에 `_server_proc` 저장, `terminate()/kill_server_process()` 추가 |
+| `live_recorder.py` | `record_live_stream()` 워커에 `_live_proc` 저장 |
+| `downloader.py` | `DownloadWorker`에 `_live_proc`, `terminate()/kill_live_process()` 추가 |
+| `main.py` | `closeEvent`에서 POT/라이브 워커의 프로세스 정리 추가 |
+
+### raw_log 기록 예시 (시동 성공 시)
+```
+[HH:MM:SS] [pot] starting POT server provider...
+[HH:MM:SS] [pot] POT server worker started
+[HH:MM:SS] [pot] gate finished ok=ok outcome=ok
+[HH:MM:SS] [pot] msg=pot server bound (127.0.0.1:4416)
+[HH:MM:SS] [pot-gate] gated=True age_limit=18 availability=needs_auth
+```
+
+### raw_log 기록 예시 (prewarm skip 시 — 정상 재사용)
+```
+[HH:MM:SS] [prewarm] skip — server already running (pid=12345)
+```
+→ PID가 실제 프로세스인지 `ps`/터미널로 확인 가능
+
+---
+
+## 10. 참고 문서
+
+- `CHANGELOG.md` — 버전별 변경 사항
+- `README.md` — 프로젝트 소개
+- `CLAUDE.md` — (폐지: 규약은 `.clinerules`로 통합)
+
+---
+
+## 2026-09-12 — 로그 버스 단일화 v3.3.0 (raw_log 단일 경로·플래그 라우팅·레거시 제거)
+
+### 이번 작업 변경분 (검증: py_compile 전체 + pytest 32 passed)
+- `raw_log.py` — `raw(tag, msg, is_status, is_error, to_tui)` 단일 진입 확정. 문자열은 LogEvent로 정규화(`rendered=True`), history는 raw 내부에서 정확히 1회 적재(`level=ERROR↔INFO`), `_hub.full.emit`(F12 전량) + `to_tui` 시 `_hub.concise.emit`(TUI 선택).
+- `main.py` — 버스 구독 2점(`subscribe_concise(_render_concise)` / `subscribe_full(_mirror_event_full)`). `_render_concise`가 LogEvent→컬럼 문자열 변환 + `no_wrap=True` 동봉 후 `console.append`. `append_concise_log`는 bus shim으로 전환(호출부 20곳 무수정). `append_full_log` 제거(호출부 0). 분석 성공 경로는 `format_log_line` 직접 호출 → `raw("anal", LogEvent(ANAL/OK…), to_tui=True)` 근원 라벨링. `chzzk_api/cookies/media/shutdown`의 직접 `log_history.log` 10곳 → bus reroute(`to_tui=False`, F12+history 전용).
+- `log_console.py` — `append(…, no_wrap)` → `_buffer{…, no_wrap}` → `_insert_clamped` → `_flow_lines(raw, no_wrap)` 플래그 체인. `_flow_lines`에서 콘텐츠 판정(`is_tui_line`) 퇴출, `is_tui_line`은 호환 shim으로 강등(호출부 0).
+- `log_bus.py` — 삭제(`git rm`, staged `D`). `import log_bus` 참조 0건 확인 후 폐기.
+- `tests/` — `test_log_console.py`에 `TestFlowLinesNoWrapFlag` 6건 추가. `test_coordinator.py` fixture의 죽은 `append_full_log` Mock 제거.
+- 행위 변화 1건: 미리 포맷된 LogEvent 문자열(pick 메뉴 등)은 wrap 대신 한 줄 유지 + `_render_clamp` `…` 절단. bare 문자열(yt-dlp 원본 등)은 기존대로 wrap.
+
+### DEPS (POT server 포함) 시그널 계약·호출 구조 (2026-09-12 실측)
+- 기동 시퀀스: `Main._start_update_check` → `UpdateWorker(check)` → `check_done(list)` → `Main._on_update_check_done`(결론 1줄 + `report_deps` + upgrade 워커 기동 + `ensure_ready("prewarm")`) → `UpdateWorker(upgrade)` → `upgrade_done(bool,str)` → `Coord.report_upgrade` → READY 게이트.
+- `check_done(list)`는 시그니처가 `(bool,str)`이 아니므로 Coordinator 직결 금지 — Main이 중계한다(교통 정리 불변식).
+- POT 수명주기: `POTManager.ensure_ready(mode)` 단일 스폰 가드. `prewarm`(staging, to_tui=False) 실행 중 `gate` 요청 → `_pending_gate=True`, prewarm 완료 후 gate 자동 재기동. Signal 2종: `pot_status_changed(starting/staging/staged/failed)` + `pot_finished(bool,str)` → Coordinator `_on_pot_finished` → `report_pot` → READY 게이트 입력.
+- POT 게이트(다운로드 시): `Main._ensure_pot_for_info(info)` — `age_limit>0` 또는 `availability∈{needs_auth,premium_only,subscriber_only,private}` → `raw("pot-gate", gated/age_limit/availability, to_tui=True)` 판정 로그 + `ensure_ready("gate")`. 기동 중이면 `_pending_download` 큐잉.
+- READY 게이트: `StartupState.can_emit_ready() = deps_ok ∧ upgrade_done ∧ pot_status∈{running,standby,staged} ∧ ¬ready_emitted` (멱등 1회). 15초 폴백 `force_unlock → report_ready("ready (fallback timeout)")`.
+
+### 회귀 방지 불변식 (v3.3.0 — §5에 11~15로 본편입, 아래는 초안)
+- 11. **로그 단일 진입**: 모든 로그는 `raw_log.raw()` 경유. `log_history.log` 직접 호출·`log_bus` 부활·워커 로그 시그널(`line/full/log_concise/log_full`) 신설 금지. history 적재는 raw 내부 1회가 유일.
+- 12. **플래그 라우팅**: TUI 노출은 `to_tui` 비트, 줄바꿈은 `no_wrap` 플래그로만 결정. 렌더 레이어에서 문자열 콘텐츠 판정(정규식·`is_tui_line`·`startswith` 분기) 부활 금지.
+
+- 13. **신호-보고 분리**: `check_done(list)` 등 결과 Signal은 Main이 중계 후 `report_*` 호출. Worker→Coordinator 직결 금지(시그널 교통 정리).
+- 14. **READY 멱등**: READY 발산은 `StartupState.can_emit_ready()` 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지.
+- 15. **잔재 정리**: `media/chzzk_api/cookies`의 `import log_history`는 미사용 잔재 — 직접 호출로 회귀 금지, 정리 시 import 행 삭제. `log_console.import re` 미사용 확인 후 제거 후보.
+
+### 프로젝트 전체 아키텍처 트리 (2026-09-12 실측, `wc -l *.py` 총 9745줄)
+```
+L4 View (Qt 위젯 보유)
+├── main.py(1281) ......... MainWindow — 진입점·UI 조립·버스 구독 2점(concise/full)
+├── dialogs.py(846) ....... ExitConfirmDialog / SettingsDialog / VerboseLogWindow(F12)
+├── log_console.py(832) ... ConciseLogConsole — append→_insert_clamped→_flow_lines→_render_clamp
+└── speed_window.py ....... DL 속도 샘플러
+L3 Control (QObject/Signal — Qt 소유)
+├── controller.py(217) .... MediaController — spawn_worker/spawn_analyzer
+├── startup_coordinator.py(137)  기동 게이트 — report_* + View행 Signal 3종 + raw("startup")
+├── startup_state.py(118) . READY 게이트 단일 진실(can_emit_ready)
+├── pot_manager.py(199) ... POT 수명주기 — ensure_ready(prewarm/gate) + Signal 2종
+├── downloader.py(164) .... DownloadWorker — finished_all만 잔존
+├── analyze_worker.py(354)  AnalyzeWorker — result_ready/error_occurred + pot-gate 판정
+├── update_worker.py(201) . UpdateWorker — check_done/upgrade_done + deps raw 발행
+└── pot_provider.py(177) .. POTProviderWorker facade — finished_signal
+L2 Service (QObject 아님 — plain)
+├── progress_emitter.py(182)  LogEvent 빌더 단일 출처(emit_event/emit_dl/emit_err/…)
+├── target_downloader.py(318)  다운로드 실행부(DownloadWorker 분할)
+├── finalizer.py .......... _finalize 분할 — TUI 컬럼 포맷 마무리
+├── live_recorder.py(221) . ffmpeg 라이브 녹화(_live_proc + kill)
+├── updater.py(423) ....... PyPI 조회+pip 업그레이드(최상단 stdlib only, node·ffmpeg CLI 캡처 lazy import)
+├── yt_logger_bridge.py ... yt-dlp logger → raw("ytdlp") 어댑터(시그널 없음)
+├── pot_server.py(760) .... bgutil 서버 수명주기(수급/빌드/기동/락/kill)
+├── po_client.py(103) ..... bgutil HTTP 순수 계층(server_ping PID 확인)
+├── node_provider.py(314) . Node.js 런타임 수급
+├── components.py(522) .... ffmpeg 자동 수급/관리
+├── dl_context.py(86) / worker_context.py  dataclass 컨텍스트
+└── log_history.py(95) .... 파일 로그 단일 소유자 — 직접 호출 금지(raw 경유만)
+L1 Model (순수 — Qt 금지)
+├── log_event.py .......... LogEvent{stage,status,platform,spec,msg,is_status,is_error,rendered}
+├── raw_log.py(82) ........ 단일 진입 raw() — 정규화·history 1회·full 전량·concise 선택
+├── config.py ............. default_config 23키 + _APP_VERSION + dl_config.json 병합
+├── theme.py(306) ......... QSS/색상 단일 정의
+├── utils.py .............. explorer/clean_ansi/filename_template
+├── dl_platform.py(111) ... URL 판정 + _short_platform/_dl_platform
+├── media.py(350) ......... 코덱랭크/포맷설명/remux/cleanup (+log_history 잔재 §5-15)
+├── chzzk_api.py(365) ..... 치지직 API 분석 (+log_history 잔재 §5-15)
+├── cookies.py(87) ........ 브라우저 쿠키 추출 (+log_history 잔재 §5-15)
+├── playlist.py ........... YT 채널 URL 정규화
+└── client_opts.py(125) ... player_client/쿠키 옵션 주입
+L0 Leaf (진입·검증·잡일 — import 대상 아님)
+├── smoke_test.py / tests/*.py(7종) / logs/ 일자별 산출물
+└── fix_*/list_arch/locate_arch/print_nonascii/read_arch/run_find/bump_version/sync_mirrors  # v3.3.0 이전 — 일회용 패치 스크립트 8종은 2026-09-12 삭제(`git rm`), bump_version/sync_mirrors는 현행 유지
+    src/chzzktube/__init__.py(스텁) · build/ dist/ mirrors/(산출물·미러, 소스 아님)
+```
+
+### 시그널 방향 트리 (로그 시그널 0 — 결과/게이트 시그널만 잔존)
+```
+워커(QThread) — 결과 전달 전용 Signal
+├── UpdateWorker: check_done(list)→Main._on_update_check_done / upgrade_done(bool,str)→Coord.report_upgrade
+├── AnalyzeWorker: result_ready(dict)/error_occurred(str)→Controller 중계→Main 슬롯
+├── DownloadWorker: finished_all / POTProviderWorker: finished_signal(bool,str)→POTManager
+└── yt-dlp logger: YtLoggerBridge — 시그널 없이 raw("ytdlp") 버스 직행
+raw 버스(raw_log.py, Qt Signal 브리지 2점 — 워커→GUI 스레드 전환)
+├── _hub.concise(LogEvent,is_status,is_error) → Main._render_concise → console.append(no_wrap=True)
+└── _hub.full(LogEvent,is_status) → Main._mirror_event_full → _mirror_full_log(F12 버퍼+stamp)
+기동 게이트(StartupCoordinator — View행 Signal 3종)
+├── ready_emitted(str,bool,str) + ui_unlocked() → Main (READY 1회, StartupState 멱등 가드)
+├── pot_status_changed(str) → Coordinator _on_pot_status passthrough → View
+└── POTManager: pot_status_changed(starting/staging/staged/failed) + pot_finished(bool,str)
+    → Coordinator _on_pot_finished → report_pot → READY 게이트 입력
+보고 진입점(함수 호출 — Signal 아님)
+└── Main._on_update_check_done → Coord.report_deps / Main → Coord.report_ready/force_unlock(15s 폴백)
+```

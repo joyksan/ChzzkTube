@@ -14,12 +14,28 @@ Hyper-Minimalist Modern TUI 미디어 추출기 — YouTube / 치지직(Chzzk) �
 
 ```bash
 # 가상환경 권장 (예: .venv)
-python main.py
+python main.py            # 루트 씬 런처 → chzzktube.ui.main_window.main()
 ```
 
 - `F12`: 전체 상세 로그(F12 창) 열기
 - `ESC / Enter`: URL 입력창 초기화 / 분석·다운로드 시작
 - 설정: `dl_config.json`(CONFIG_DIR) — 저장 경로·포맷·쿠키·업데이트 채널 등 23개 기본 키
+
+### 소스 구조 (레이어 패키지)
+
+```
+main.py                      # 씬 런처 (python main.py / PyInstaller 진입점)
+chzzktube/
+  ui/                        # L3 View (Qt 위젯) — main_window·dialogs·theme·log_console
+  control/                   # L2 오케스트레이터 — controller·startup_coordinator·pot_manager
+  workers/                   # L1 QThread — downloader·analyze_worker·update_worker
+  pipeline/                  # L0.5 파이프라인 함수 — target_downloader·finalizer·live_recorder
+  core/                      # L0 도메인/순수 — config·log_emitter(Qt-free)·media·utils 등
+  infra/                     # L0 인프라 — po_client·node_provider·pot_server·updater
+assets/                      # icon.ico · CascadiaMono 폰트 (spec datas 1:1)
+docs/                        # HANDOVER · CHANGELOG · 아키텍처 등
+mirrors/                     # sync_mirrors.py 생성 산출물 (.py → .md)
+```
 
 ### 빌드
 

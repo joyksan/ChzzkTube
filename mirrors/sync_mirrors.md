@@ -1,9 +1,9 @@
-# sync_mirrors.py - .py 소스 → mirrors/*.md 미러 자동 동기화 스크립트
+# sync_mirrors.py - .py source -> mirrors/*.md mirror auto-sync script
 """
-사용법:
-    python sync_mirrors.py              # 변경된 미러 파일 및 chzzktube_codebase.md 일괄 동기화
-    python sync_mirrors.py --check      # 변경 여부만 확인 (쓰지 않음)
-    python sync_mirrors.py main utils   # 특정 모듈만 대상 지정 (파일명 기준)
+Usage:
+    python sync_mirrors.py              # sync all changed mirror files and chzzktube_codebase.md bundle
+    python sync_mirrors.py --check      # check only (no writes)
+    python sync_mirrors.py main utils   # target specific modules (by file name)
 """
 
 import argparse
@@ -14,70 +14,89 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 MIRRORS_DIR = ROOT / "mirrors"
 
-# 미러 대상 (확장자 제외). .py → mirrors/*.md 로 복사된다.
-# 새 .py 모듈 추가 시 이 목록에도 반드시 추가할 것.
+# Mirror targets (extension excluded). .py -> mirrors/*.md
+# New .py modules MUST be added here too.
 MIRROR_MODULES = [
-    "analyze_worker",
-    "bump_version",
-    "chzzk_api",
-    "client_opts",
-    "components",
-    "config",
-    "controller",
-    "cookies",
-    "dialogs",
-    "dl_platform",
-    "dl_context",
-    "downloader",
-    "finalizer",
-    "live_recorder",
-    "log_console",
-    "log_event",
-    "log_history",
+    # root
     "main",
-    "media",
-    "node_provider",
-    "playlist",
-    "po_client",
-    "pot_manager",
-    "pot_provider",
-    "pot_server",
-    "progress_emitter",
-    "raw_log",
+    "bump_version",
     "smoke_test",
-    "speed_window",
-    "startup_coordinator",
-    "startup_state",
     "sync_mirrors",
-    "target_downloader",
-    "tool_log",
-    "theme",
-    "update_worker",
-    "updater",
-    "utils",
-    "yt_logger_bridge",
+    # chzzktube.ui
+    "chzzktube.ui.dialogs",
+    "chzzktube.ui.log_console",
+    "chzzktube.ui.main_window",
+    "chzzktube.ui.theme",
+    # chzzktube.control
+    "chzzktube.control.controller",
+    "chzzktube.control.pot_manager",
+    "chzzktube.control.startup_coordinator",
+    "chzzktube.control.startup_state",
+    # chzzktube.workers
+    "chzzktube.workers.analyze_worker",
+    "chzzktube.workers.downloader",
+    "chzzktube.workers.update_worker",
+    # chzzktube.pipeline
+    "chzzktube.pipeline.dl_context",
+    "chzzktube.pipeline.finalizer",
+    "chzzktube.pipeline.live_recorder",
+    "chzzktube.pipeline.progress_emitter",
+    "chzzktube.pipeline.target_downloader",
+    # chzzktube.core
+    "chzzktube.core.chzzk_api",
+    "chzzktube.core.client_opts",
+    "chzzktube.core.config",
+    "chzzktube.core.cookies",
+    "chzzktube.core.dl_platform",
+    "chzzktube.core.log_emitter",
+    "chzzktube.core.log_event",
+    "chzzktube.core.log_history",
+    "chzzktube.core.media",
+    "chzzktube.core.playlist",
+    "chzzktube.core.raw_log",
+    "chzzktube.core.speed_window",
+    "chzzktube.core.tool_log",
+    "chzzktube.core.utils",
+    "chzzktube.core.yt_logger_bridge",
+    # chzzktube.infra
+    "chzzktube.infra.components",
+    "chzzktube.infra.node_provider",
+    "chzzktube.infra.po_client",
+    "chzzktube.infra.pot_provider",
+    "chzzktube.infra.pot_server",
+    "chzzktube.infra.updater",
 ]
 
 
 def sync_module(name: str, dry_run: bool = False) -> int:
-    """단일 모듈의 .py → mirrors/*.md 미러를 갱신한다. (변경 시 1, 동일 시 0, 누락 시 2)"""
+    """Sync one module .py -> mirrors/*.md. (1=changed, 0=same, 2=missing)"""
     clean_name = name.removesuffix(".py")
 
-    src = ROOT / f"{clean_name}.py"
-    dst = MIRRORS_DIR / f"{clean_name}.md"
+    # Modules inside the chzzktube package live under chzzktube/<subpkg>/
+    if name.startswith("chzzktube."):
+        parts = clean_name.split(".")
+        # parts = ["chzzktube", "core", "yt_logger_bridge"]
+        # src = chzzktube/core/yt_logger_bridge.py
+        src = ROOT / "chzzktube" / Path(*parts[1:-1]) / f"{parts[-1]}.py"
+    else:
+        src = ROOT / f"{clean_name}.py"
+
+    # 미러 파일명은 flat 유지 — chzzktube/core/config.py → mirrors/config.md
+    # (기존 conventions 유지: HANDOVER 참조·미러 diff 시 basename 추적 용이)
+    dst = MIRRORS_DIR / f"{clean_name.split('.')[-1]}.md"
 
     if not src.exists():
-        print(f"[skip] {src.name} 없음 — 대상 미러 확인 불가")
+        print(f"[skip] {src.name} missing - target mirror not found")
         return 2
 
     content = src.read_bytes()
     if dst.exists() and dst.read_bytes() == content:
-        print(f"[동일] mirrors/{clean_name}.md 최신 상태")
+        print(f"[same] mirrors/{dst.name} up to date")
         return 0
 
-    action = "확인" if dry_run else "갱신"
+    action = "check" if dry_run else "update"
     print(
-        f"[{action}] {clean_name}.py -> mirrors/{clean_name}.md ({len(content)} bytes)"
+        f"[{action}] {clean_name}.py -> mirrors/{dst.name} ({len(content)} bytes)"
     )
     if not dry_run:
         MIRRORS_DIR.mkdir(parents=True, exist_ok=True)
@@ -86,7 +105,7 @@ def sync_module(name: str, dry_run: bool = False) -> int:
 
 
 def build_codebase_bundle():
-    """모든 .py 소스를 mirrors/chzzktube_codebase.md 단일 합본으로 번들링한다."""
+    """Bundle all .py sources into mirrors/chzzktube_codebase.md single file."""
     bundle_path = MIRRORS_DIR / "chzzktube_codebase.md"
     exclude_dirs = {
         ".git",
@@ -115,22 +134,22 @@ def build_codebase_bundle():
                     ) as infile:
                         outfile.write(infile.read())
                     outfile.write("\n```\n")
-    print(f"[생성] mirrors/{bundle_path.name} 합본 생성 완료")
+    print(f"[created] mirrors/{bundle_path.name} bundle")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="ChzzkTube .py 소스의 .md 미러 파일을 동기화한다."
+        description="ChzzkTube .py source .md mirror file sync tool."
     )
     parser.add_argument(
         "modules",
         nargs="*",
-        help="대상 모듈(예: main downloader). 미지정 시 전체 대상.",
+        help="target modules (e.g. main downloader). Default: all.",
     )
     parser.add_argument(
         "--check",
         action="store_true",
-        help="변경될 파일만 나열하고 실제 쓰기는 하지 않는다.",
+        help="check only (no writes)",
     )
     args = parser.parse_args()
 
@@ -141,9 +160,9 @@ def main() -> int:
     missing = sum(1 for r in results if r == 2)
 
     print("-" * 40)
-    print(f"총 {len(targets)}개 중 변경 {changed}개 / 누락 {missing}개")
+    print(f"total {len(targets)}: changed {changed} / missing {missing}")
 
-    # --check 모드가 아닐 때 단일 합본 파일도 함께 생성/최신화
+    # When not in --check mode, also generate/refresh the single bundle file
     if not args.check:
         build_codebase_bundle()
 

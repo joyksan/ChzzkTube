@@ -1,26 +1,26 @@
 """파이프라인 P0/P1 회귀 테스트 — NameError 크래시·계약 불일치 수리 검증.
 
 배경 (v3.4.0 패치 2 — LEGACY_AUDIT §A/§B/§C):
-- finalizer/downloader가 `_dl_platform`을 import 없이 사용 → 배치 완료/취소·
+- chzzktube.pipeline.finalizer/downloader가 `_dl_platform`을 import 없이 사용 → 배치 완료/취소·
   SKIP 틱에서 NameError → `finished_all` 미발화 → UI 영구 락업 (P0-1/3)
 - target_downloader가 정의 없는 `_chzzk_filename`을 호출 → 치지직 다운로드 전부 실패 (P0-2)
-- pot_manager `_note/_dbg`의 발행 시점 `[:120]` 절단 — LOGGING_POLICY §3/§4 위반 (C1)
+- chzzktube.control.pot_manager `_note/_dbg`의 발행 시점 `[:120]` 절단 — LOGGING_POLICY §3/§4 위반 (C1)
 - live_recorder가 proc를 DownloadContext에 부착하는데 worker만 보던 정리 계약 (A4)
 - main의 needs_pot 3중 중복 판정식 단일화 (E1)
 """
+import chzzktube
 from collections import deque
 from types import SimpleNamespace
 
-import raw_log
+import chzzktube.core.raw_log as raw_log
+import chzzktube.ui.main_window as main_module
+from chzzktube.workers.downloader import DownloadWorker, _dl_platform as _dl_platform_dl
+from chzzktube.pipeline.finalizer import _dl_platform as _dl_platform_fin, finalize
+from chzzktube.control.pot_manager import _POTWorker
+from chzzktube.pipeline.target_downloader import _chzzk_filename
 
-import main as main_module
-from downloader import DownloadWorker, _dl_platform as _dl_platform_dl
-from finalizer import _dl_platform as _dl_platform_fin, finalize
-from pot_manager import _POTWorker
-from target_downloader import _chzzk_filename
 
-
-# ── P0-1: finalizer 배치 마감 NameError ───────────────────────────────
+# ── P0-1: chzzktube.pipeline.finalizer 배치 마감 NameError ───────────────────────────────
 
 class _Sig:
     def __init__(self):
@@ -43,7 +43,7 @@ def _ctx(canceled=False):
 
 def test_finalizer_finalize_success_no_nameerror(monkeypatch):
     """성공 배치 마감 — 구 NameError 지점(scope 계산) 통과 후 finished_all 발화."""
-    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
+    monkeypatch.setattr(chzzktube.core.raw_log, "raw", lambda *a, **k: None)
     ctx = _ctx()
     ok = finalize(ctx, 1, [], 1)
     assert ok is True
@@ -54,7 +54,7 @@ def test_finalizer_finalize_cancel_emits_abort(monkeypatch):
     """취소 마감 — ABORT scope 계산(구 NameError 지점) 통과 + 실패 카운트 발화."""
     events = []
     monkeypatch.setattr(
-        raw_log, "raw", lambda *a, **k: events.append(a[1] if len(a) > 1 else None))
+        chzzktube.core.raw_log, "raw", lambda *a, **k: events.append(a[1] if len(a) > 1 else None))
     ctx = _ctx(canceled=True)
     ok = finalize(ctx, 1, [("https://x", "boom")], 0)
     assert ok is False
@@ -108,9 +108,9 @@ def test_needs_pot_contract():
 # ── C1: POT 발행 원문 보존 ────────────────────────────────────────────
 
 def test_pot_note_preserves_full_msg(monkeypatch):
-    from log_event import LogEvent
+    from chzzktube.core.log_event import LogEvent
     captured = []
-    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: captured.append(a))
+    monkeypatch.setattr(chzzktube.core.raw_log, "raw", lambda *a, **k: captured.append(a))
     worker = _POTWorker(mode="gate")
     long = "x" * 300
     worker._note(long)
@@ -131,7 +131,7 @@ class _Proc:
 
 
 def test_kill_live_process_handles_ctx_proc(monkeypatch):
-    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
+    monkeypatch.setattr(chzzktube.core.raw_log, "raw", lambda *a, **k: None)
     worker = DownloadWorker(["https://youtu.be/abcDEFghijk"], {},
                             {"canceled": False, "skip": False}, "auto", "auto")
     p_worker, p_ctx = _Proc(), _Proc()
@@ -176,9 +176,9 @@ def test_mirror_full_log_index_advances_only_when_visible():
 # ── B5/B1/B2: 죽은 코드 제거 가드 ────────────────────────────────────
 
 def test_removed_dead_symbols():
-    import progress_emitter
-    assert not hasattr(progress_emitter, "emit_live_header")
-    assert not hasattr(progress_emitter, "_apply_client_opts")
-    import pot_manager
-    assert not hasattr(pot_manager, "POTProviderWorker")
+    import chzzktube.pipeline.progress_emitter as progress_emitter
+    assert not hasattr(chzzktube.pipeline.progress_emitter, "emit_live_header")
+    assert not hasattr(chzzktube.pipeline.progress_emitter, "_apply_client_opts")
+    import chzzktube.control.pot_manager as pot_manager
+    assert not hasattr(chzzktube.control.pot_manager, "POTProviderWorker")
     assert _chzzk_filename({}, {}, {}) == "chzzk.mp4"

@@ -3,15 +3,16 @@
 [커버리지]
 - DownloadContext: 속도 창·메타 로깅 플래그 상태 변화
 - emit_dl / emit_err: 포맷 규격 (stage/status/platform/spec/speed/pct/bar)
-- pot_provider facade: node_provider/pot_server 함수 재수출 확인
+- chzzktube.infra.pot_provider facade: chzzktube.infra.node_provider/chzzktube.infra.pot_server 함수 재수출 확인
 """
+import chzzktube
 from contextlib import contextmanager
 from unittest.mock import Mock, patch
 
 import pytest
 
-from dl_context import DownloadContext
-from log_console import format_log_line, format_log_line_for_event, emit_dl, emit_err
+from chzzktube.pipeline.dl_context import DownloadContext
+from chzzktube.core.log_emitter import format_log_line, format_log_line_for_event, emit_dl, emit_err
 
 
 def _rendered(event):
@@ -23,12 +24,12 @@ def _rendered(event):
 def patch_cli_raw_output(fake_out):
     """updater.cli_raw의 subprocess 실행을 우회 — 출력 가공 로직만 검증."""
     import subprocess
-    import updater
+    import chzzktube.infra.updater as updater
     fake_proc = Mock()
     fake_proc.stdout = fake_out
     fake_proc.stderr = ""
     with patch.object(subprocess, "run", return_value=fake_proc), \
-         patch.object(updater, "_cli_base", return_value=["ffmpeg"]):
+         patch.object(chzzktube.infra.updater, "_cli_base", return_value=["ffmpeg"]):
         yield
 
 
@@ -92,41 +93,39 @@ class TestEmitErr:
 
 
 class TestPotProviderFacade:
-    """pot_provider facade: node_provider/pot_server 함수 재수출 검증."""
+    """chzzktube.infra.pot_provider facade: chzzktube.infra.node_provider/chzzktube.infra.pot_server 함수 재수출 검증."""
 
     def test_reexports_from_node_provider(self):
-        """facade가 node_provider 함수들을 올바르게 재수출하는지 확인."""
-        import pot_provider
-        import node_provider
-
+        """facade가 chzzktube.infra.node_provider 함수들을 올바르게 재수출하는지 확인."""
+        import chzzktube.infra.pot_provider as pot_provider
+        import chzzktube.infra.node_provider as node_provider
         for name in ["node_exe", "node_major_version", "npm_exe", "node_ok",
                       "ensure_node_runtime", "bundled_npm_ok"]:
-            assert hasattr(pot_provider, name), f"pot_provider.{name} missing"
-            assert getattr(pot_provider, name) is getattr(node_provider, name), \
+            assert hasattr(chzzktube.infra.pot_provider, name), f"pot_provider.{name} missing"
+            assert getattr(chzzktube.infra.pot_provider, name) is getattr(chzzktube.infra.node_provider, name), \
                 f"pot_provider.{name} is not node_provider.{name}"
 
     def test_reexports_from_pot_server(self):
-        """facade가 pot_server 함수들을 올바르게 재수출하는지 확인."""
-        import pot_provider
-        import pot_server
-
+        """facade가 chzzktube.infra.pot_server 함수들을 올바르게 재수출하는지 확인."""
+        import chzzktube.infra.pot_provider as pot_provider
+        import chzzktube.infra.pot_server as pot_server
         for name in ["server_home", "latest_server_ver", "server_installed_ver",
                       "built_server_js", "pot_readiness", "_spawn_existing", "ensure_node_server",
                       "download_and_install_source"]:
-            assert hasattr(pot_provider, name), f"pot_provider.{name} missing"
-            assert getattr(pot_provider, name) is getattr(pot_server, name), \
+            assert hasattr(chzzktube.infra.pot_provider, name), f"pot_provider.{name} missing"
+            assert getattr(chzzktube.infra.pot_provider, name) is getattr(chzzktube.infra.pot_server, name), \
                 f"pot_provider.{name} is not pot_server.{name}"
 
     def test_pot_readiness_contract(self):
         """pot_readiness: 네트워크·Popen 없이 (bool, str) 반환."""
-        from pot_server import pot_readiness
+        from chzzktube.infra.pot_server import pot_readiness
         ready, reason = pot_readiness()
         assert isinstance(ready, bool)
         assert isinstance(reason, str) and reason != ""
 
     def test_deps_pot_readiness_labels(self):
         """check_deps POT 분기: FAIL 오경보 금지 — OK running / SKIP *."""
-        import updater
+        import chzzktube.infra.updater as updater
         results = dict((label, (status, msg)) for label, status, msg in updater.check_deps())
         assert "pot" in results
         status, msg = results["pot"]
@@ -139,7 +138,7 @@ class TestPotProviderFacade:
     def test_prewarm_lock_mutual_exclusion(self):
         """acquire_prewarm_lock: O_EXCL 원자 생성 상호배제 + 해제 후 재획득."""
         import os
-        import pot_server
+        import chzzktube.infra.pot_server as pot_server
         try:
             os.remove(pot_server._prewarm_lock_path())
         except OSError:
@@ -161,7 +160,7 @@ class TestPotProviderFacade:
         """죽은 PID + mtime 30분 초과 stale 락은 회수되어 획득 가능."""
         import os
         import time
-        import pot_server
+        import chzzktube.infra.pot_server as pot_server
         path = pot_server._prewarm_lock_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -175,19 +174,19 @@ class TestPotProviderFacade:
     def test_pot_readiness_stale(self):
         """pot_readiness(check_stale): 버전 불일치 시 stale reason."""
         from unittest.mock import patch
-        import pot_server
-        with patch.object(pot_server, "built_server_js", return_value="/tmp/main.js"), \
-             patch("node_provider.node_exe", return_value="/tmp/node"), \
-             patch.object(pot_server, "server_installed_ver", return_value="1.3.1"), \
-             patch.object(pot_server, "latest_server_ver", return_value="1.3.2"):
+        import chzzktube.infra.pot_server as pot_server
+        with patch.object(chzzktube.infra.pot_server, "built_server_js", return_value="/tmp/main.js"), \
+             patch("chzzktube.infra.node_provider.node_exe", return_value="/tmp/node"), \
+             patch.object(chzzktube.infra.pot_server, "server_installed_ver", return_value="1.3.1"), \
+             patch.object(chzzktube.infra.pot_server, "latest_server_ver", return_value="1.3.2"):
             ready, reason = pot_server.pot_readiness(check_stale=True)
             assert ready is False
             assert "stale" in reason
         # 네트워크 실패(None) 시 판정 유지
-        with patch.object(pot_server, "built_server_js", return_value="/tmp/main.js"), \
-             patch("node_provider.node_exe", return_value="/tmp/node"), \
-             patch.object(pot_server, "server_installed_ver", return_value="1.3.1"), \
-             patch.object(pot_server, "latest_server_ver", return_value=None):
+        with patch.object(chzzktube.infra.pot_server, "built_server_js", return_value="/tmp/main.js"), \
+             patch("chzzktube.infra.node_provider.node_exe", return_value="/tmp/node"), \
+             patch.object(chzzktube.infra.pot_server, "server_installed_ver", return_value="1.3.1"), \
+             patch.object(chzzktube.infra.pot_server, "latest_server_ver", return_value=None):
             ready, reason = pot_server.pot_readiness(check_stale=True)
             assert ready is True
             assert reason == "standby"
@@ -195,11 +194,11 @@ class TestPotProviderFacade:
     def test_check_deps_single_call(self):
         """check_deps(log_func): POT 판정+로그 단일 호출 (중복 standby 금지)."""
         from unittest.mock import patch
-        import updater
+        import chzzktube.infra.updater as updater
         notes = []
-        with patch("pot_server.built_server_js", return_value="/tmp/main.js"), \
-             patch("node_provider.node_exe", return_value="/tmp/node"), \
-             patch("po_client.server_ping", return_value=False):
+        with patch("chzzktube.infra.pot_server.built_server_js", return_value="/tmp/main.js"), \
+             patch("chzzktube.infra.node_provider.node_exe", return_value="/tmp/node"), \
+             patch("chzzktube.infra.po_client.server_ping", return_value=False):
             results = dict(
                 (label, (status, msg))
                 for label, status, msg in updater.check_deps(log_func=notes.append)
@@ -209,7 +208,7 @@ class TestPotProviderFacade:
 
     def test_cli_raw_returns_full_output(self):
         """cli_raw: 수집층은 원문 전량 반환 (절취는 truncate_for_full_log가 담당)."""
-        import updater
+        import chzzktube.infra.updater as updater
         long_line = "configuration: " + "x" * 500
         with patch_cli_raw_output(long_line + "\nline2\nline3"):
             cmdline, out = updater.cli_raw("ffmpeg", "-version")
@@ -220,7 +219,7 @@ class TestPotProviderFacade:
 
     def test_truncate_for_full_log(self):
         """truncate_for_full_log: F12 적재 시 장문 줄 절단 + max_lines 꼬리."""
-        import updater
+        import chzzktube.infra.updater as updater
         long_line = "configuration: " + "x" * 500
         cut = updater.truncate_for_full_log(long_line + "\nline2\nline3",
                                             max_lines=2, max_width=160)
@@ -231,7 +230,7 @@ class TestPotProviderFacade:
     def test_pid_alive_self(self):
         """_pid_alive: 자기 PID는 살아있음, 존재 불가 PID는 죽음."""
         import os
-        import pot_server
+        import chzzktube.infra.pot_server as pot_server
         assert pot_server._pid_alive(os.getpid()) is True
         assert pot_server._pid_alive(999999) is False
         assert pot_server._pid_alive(None) is False
@@ -241,7 +240,7 @@ class TestPotProviderFacade:
         """살아있는 홀더의 락은 mtime이 오래돼도 회수 금지."""
         import os
         import time
-        import pot_server
+        import chzzktube.infra.pot_server as pot_server
         try:
             os.remove(pot_server._prewarm_lock_path())
         except OSError:
@@ -260,7 +259,7 @@ class TestPotProviderFacade:
     def test_prewarm_lock_log_callback(self):
         """log_func 콜백: 획득/해제 경로에서 호출됨."""
         import os
-        import pot_server
+        import chzzktube.infra.pot_server as pot_server
         try:
             os.remove(pot_server._prewarm_lock_path())
         except OSError:
@@ -277,7 +276,7 @@ class TestPotProviderFacade:
 
         구 병렬-분리 계약(full_only 존재)은 v3.3.0에서 폐기 — 채널은 to_tui 1비트.
         """
-        import raw_log
+        import chzzktube.core.raw_log as raw_log
         concise_got, full_got = [], []
         raw_log.subscribe_concise(lambda m, is_status=False, is_error=False: concise_got.append(m))
         raw_log.subscribe_full(lambda m, t=None: full_got.append(m))
@@ -295,13 +294,12 @@ class TestPotProviderFacade:
         assert full_got and "plain detail message" in full_got[-1].msg
 
     def test_reexports_from_po_client(self):
-        """facade가 po_client 함수들을 올리바르게 재수출하는지 확인."""
-        import pot_provider
-        import po_client
-
+        """facade가 chzzktube.infra.po_client 함수들을 올리바르게 재수출하는지 확인."""
+        import chzzktube.infra.pot_provider as pot_provider
+        import chzzktube.infra.po_client as po_client
         for name in ["DEFAULT_HOST", "DEFAULT_PORT", "probe_server", "fetch_po_token"]:
-            assert hasattr(pot_provider, name), f"pot_provider.{name} missing"
-            assert getattr(pot_provider, name) is getattr(po_client, name), \
+            assert hasattr(chzzktube.infra.pot_provider, name), f"pot_provider.{name} missing"
+            assert getattr(chzzktube.infra.pot_provider, name) is getattr(chzzktube.infra.po_client, name), \
                 f"pot_provider.{name} is not po_client.{name}"
 
 

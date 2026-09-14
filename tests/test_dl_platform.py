@@ -1,7 +1,8 @@
-"""dl_platform 단위 테스트 — URL 판정/축약 순수 함수."""
+"""chzzktube.core.dl_platform 단위 테스트 — URL 판정/축약 순수 함수."""
+import chzzktube
 import pytest
 
-from dl_platform import _dl_platform, _short_platform, detect_content_type
+from chzzktube.core.dl_platform import _dl_platform, _short_platform, detect_content_type
 
 
 class TestShortPlatform:

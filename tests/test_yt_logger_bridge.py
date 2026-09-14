@@ -1,4 +1,4 @@
-"""yt_logger_bridge 캐리지 리턴/\r 청크 처리 회귀 테스트.
+"""chzzktube.core.yt_logger_bridge 캐리지 리턴/\r 청크 처리 회귀 테스트.
 
 [검증]
 - 한 콜백 안 \r 반복 → 마지막 스냅샷만 발행 (중간 조각 폐기)
@@ -6,9 +6,10 @@
 - warning/error는 버퍼에 갇히지 않고 즉시 보존
 - progress tick 0.5초 스로틀 (2Hz 상한)
 """
+import chzzktube
 from unittest.mock import patch
 
-from yt_logger_bridge import YtLoggerBridge
+from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 
 
 def _bridge():
@@ -44,16 +45,15 @@ def test_warning_immediate_not_buffered():
 
 
 def test_progress_throttle_blocks_rapid_ticks():
-    import raw_log
-
+    import chzzktube.core.raw_log as raw_log
     b = YtLoggerBridge()
     b._last_progress = None
     b._last_progress_at = 0.0
-    with patch.object(raw_log, "raw") as raw:
+    with patch.object(chzzktube.core.raw_log, "raw") as raw:
         b._emit_progress("[download]  1%")
         b._emit_progress("[download]  2%")  # 0.5s 내 → 2Hz 드롭
         assert raw.call_count == 1
     b._last_progress_at = 0.0  # 경과 강제 후 재발행
-    with patch.object(raw_log, "raw") as raw:
+    with patch.object(chzzktube.core.raw_log, "raw") as raw:
         b._emit_progress("[download]  3%")
         assert raw.call_count == 1

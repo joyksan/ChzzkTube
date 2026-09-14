@@ -1,9 +1,10 @@
-"""startup_coordinator 단위 테스트 — 기동 시퀀스 게이트 로직."""
+"""chzzktube.control.startup_coordinator 단위 테스트 — 기동 시퀀스 게이트 로직."""
+import chzzktube
 from unittest.mock import Mock
 
 import pytest
 
-from startup_coordinator import StartupCoordinator
+from chzzktube.control.startup_coordinator import StartupCoordinator
 
 
 @pytest.fixture

@@ -100,7 +100,7 @@ def _stage_pruned_server(stage_root):
 # pot_provider.server_home() 은 포터블에서 <exe>/_internal/bgutil-ytdlp-pot-provider 를
 # 사용하므로, 서버 빌드물을 이 위치로 심어야 자동 기동된다. exe 폴더 밖은 쓰지 않는다.
 _server_src = os.path.join(os.path.expanduser("~"), "bgutil-ytdlp-pot-provider")
-_datas = [("icon.ico", ".")]
+_datas = [("assets/icon.ico", ".")]
 if os.path.isfile(os.path.join(_server_src, "server", "build", "main.js")):
     # 런타임 deps 만 프루닝한 서버 빌드물 (node_modules 포함 — 빌드 생략 가능)
     _staged = _stage_pruned_server(os.path.join(SPECPATH, "_pot_stage"))
@@ -119,6 +119,10 @@ if _plugin_src and os.path.isdir(_plugin_src):
     # yt_dlp_plugins 네임스페이스 플러그인(getpot_bgutil*) — yt-dlp PO Provider Framework
     _datas.append((_plugin_src, "yt_dlp_plugins"))
     print("[spec] 플러그인 번들:", _plugin_src)
+
+# 폰트 번들
+_datas.append(("assets/CascadiaMono-VariableFont_wght.ttf", "."))
+_datas.append(("assets/CascadiaMono-Italic-VariableFont_wght.ttf", "."))
 
 _hiddenimports = [
     "yt_dlp_plugins.extractor.getpot_bgutil",
@@ -158,7 +162,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['icon.ico'],
+    icon=['assets/icon.ico'],
 )
 coll = COLLECT(
     exe,

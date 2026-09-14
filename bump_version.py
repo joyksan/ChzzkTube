@@ -2,7 +2,7 @@
 import re
 import sys
 
-FILE_PATH = "config.py"
+FILE_PATH = "chzzktube/core/config.py"
 try:
     with open(FILE_PATH, "r", encoding="utf-8") as f:
         content = f.read()

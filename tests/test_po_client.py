@@ -1,10 +1,11 @@
-"""po_client 단위 테스트 — 순수 HTTP 클라이언트 계층."""
+"""chzzktube.infra.po_client 단위 테스트 — 순수 HTTP 클라이언트 계층."""
+import chzzktube
 import json
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-from po_client import (
+from chzzktube.infra.po_client import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     extract_video_id,
@@ -15,7 +16,7 @@ from po_client import (
 
 
 class TestServerPing:
-    @patch("po_client.urllib.request.urlopen")
+    @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_ping_success(self, mock_urlopen):
         resp = MagicMock()
         resp.status = 200
@@ -23,7 +24,7 @@ class TestServerPing:
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
         assert server_ping() is True
 
-    @patch("po_client.urllib.request.urlopen")
+    @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_ping_failure(self, mock_urlopen):
         mock_urlopen.side_effect = Exception("connection refused")
         assert server_ping() is False
@@ -46,7 +47,7 @@ class TestExtractVideoId:
 
 
 class TestFetchPoToken:
-    @patch("po_client.urllib.request.urlopen")
+    @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_fetch_success(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = json.dumps({"poToken": "test_token_123"}).encode()
@@ -54,7 +55,7 @@ class TestFetchPoToken:
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
         assert fetch_po_token("imTeMjjlHUs") == "test_token_123"
 
-    @patch("po_client.urllib.request.urlopen")
+    @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_fetch_no_token(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = json.dumps({"poToken": ""}).encode()
@@ -62,7 +63,7 @@ class TestFetchPoToken:
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
         assert fetch_po_token("imTeMjjlHUs") is None
 
-    @patch("po_client.urllib.request.urlopen")
+    @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_fetch_error(self, mock_urlopen):
         mock_urlopen.side_effect = Exception("server down")
         assert fetch_po_token("imTeMjjlHUs") is None
