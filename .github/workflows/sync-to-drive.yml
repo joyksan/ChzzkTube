@@ -47,6 +47,7 @@ jobs:
             --include "mirrors/**" \
             --include "README.md" \
             --include "CHANGELOG.md" \
+            --include "HANDOVER.md" \
             --exclude "*" \
             --delete-excluded \
             --transfers 8 \
