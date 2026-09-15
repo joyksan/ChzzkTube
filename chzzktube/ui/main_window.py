@@ -1397,6 +1397,14 @@ def main() -> int:
     진입점 계약: PyInstaller `Analysis(['main.py'])` 및 `python main.py` 가
     이 함수를 호출한다. (GUI 컨텍스트 조립은 여기서만 책임진다.)
     """
+    # [진단] pip 오버레이 출처 1줄 — venv 소유/오버레이 우선 계약 가시화.
+    # (main.py가 이미 bootstrap했지만 `python -m` 직행 시 여기가 유일 보장점)
+    try:
+        from chzzktube.infra.pylib_bootstrap import bootstrap as _bootstrap
+
+        _pylib = _bootstrap()
+    except Exception:
+        _pylib = ""
     # [히스토리] 미처리 예외 전체 트레이스백을 히스토리 파일로 유출 — 디버깅 1차 증거
     sys.excepthook = lambda t, v, tb: log_history.exception("미처리 예외", t, v, tb)
     if platform.system() == "Windows":
@@ -1417,6 +1425,31 @@ def main() -> int:
     # 기본 폰트 미지정 시 Qt가 제네릭 'Sans Serif' 별칭을 탐색하며
     # "Populating font family aliases took ~100ms" 경고/지연이 발행된다.
     app.setFont(QFont("Cascadia Mono", 11))
+
+    # [진단] pip 오버레이 출처 — .pylib/ 존재 시 DEPS 첫머리에 1줄.
+    # (venv 소유/오버레이 우선 계약 가시화 — HANDOVER §pip 업데이트 모델)
+    try:
+        if _pylib and os.path.isdir(_pylib):
+            try:
+                pkgs = sorted(
+                    d.name
+                    for d in os.scandir(_pylib)
+                    if d.is_dir() and d.name.endswith(".dist-info")
+                )
+            except Exception:
+                pkgs = []
+            _suffix = f" [{', '.join(pkgs)}]" if pkgs else " [empty]"
+            from chzzktube.core import raw_log as _raw_log
+            from chzzktube.core.log_emitter import emit_component as _emit_component
+            _raw_log.raw(
+                "deps",
+                _emit_component(
+                    "DEPS", "OK", "PYLIB", f"overlay: {_pylib}{_suffix}"
+                ),
+                to_tui=True,
+            )
+    except Exception:
+        pass
 
     win = MainWindow()
     win.show()

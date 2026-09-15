@@ -363,71 +363,67 @@ def _extract_from_whl(whl_path, dest_dir):
         return False
 
 def _frozen_upgrade_ytdlp(channel="stable"):
-    """PyInstaller frozen build: yt-dlp를 직접 다운로드하여 교체.
-    Stable: PyPI release whl에서 yt-dlp.exe 추출.
-    Nightly: GitHub nightly-builds release에서 yt-dlp.exe 다운로드.
+    """yt-dlp 직접 다운로드 → 프로젝트 오버레이(.pylib/)에 교체.
+
+    dev/frozen 공통: venv(site-packages, uv 소유)는 절대 건드리지 않는다.
+    Stable: PyPI release whl에서 yt-dlp 라이브러리 전체(yt_dlp/ 패키지 +
+    yt_dlp-*.dist-info)를 오버레이에 해제 — 오버레이가 항상 우선한다.
+    Nightly: GitHub nightly-builds release에서 yt-dlp 실행파일 다운로드
+    → 오버레이 루트에 yt-dlp{.exe} 저장 (frozen에서 _cli_base가 PATH 찾기).
     """
     suffix = _exe_suffix()
-    try:
-        import yt_dlp
-        ytdlp_dir = os.path.dirname(yt_dlp.__file__)
-    except Exception:
-        return 1, "yt-dlp not found"
-    dest = os.path.join(os.path.dirname(ytdlp_dir), f"yt-dlp{suffix}")
-
     if channel == "nightly":
         url = _NIGHTLY_API.format(_ext=suffix)
-    else:
-        url = _get_pypi_whl_url("yt-dlp")
-        if not url:
-            return 1, "No whl found on PyPI"
-        # whl에서 yt-dlp.exe 추출
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                whl_path = os.path.join(tmp, "yt-dlp.whl")
-                if not _download_to(url, whl_path):
-                    return 1, "whl download failed"
-                import zipfile
-                with zipfile.ZipFile(whl_path) as zf:
-                    for name in zf.namelist():
-                        if name.endswith(f"yt-dlp{suffix}"):
-                            with zf.open(name) as src, open(dest, "wb") as dst:
-                                shutil.copyfileobj(src, dst)
-                            return 0, f"updated to {channel}"
-            return 1, "yt-dlp binary not found in whl"
-        except Exception as e:
-            return 1, f"whl extract failed: {e}"
+        overlay = _overlay_root()
+        if not overlay:
+            return 1, "overlay dir unavailable"
+        dest = os.path.join(overlay, f"yt-dlp{suffix}")
+        if _download_to(url, dest):
+            return 0, f"updated to {channel} (overlay)"
+        return 1, "download failed"
 
-    if _download_to(url, dest):
-        return 0, f"updated to {channel}"
-    return 1, "download failed"
+    url = _get_pypi_whl_url("yt-dlp")
+    if not url:
+        return 1, "No whl found on PyPI"
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            whl_path = os.path.join(tmp, "yt-dlp.whl")
+            if not _download_to(url, whl_path):
+                return 1, "whl download failed"
+            overlay = _overlay_root()
+            if not overlay:
+                return 1, "overlay dir unavailable"
+            if _extract_pylib_whl(whl_path, overlay, "yt_dlp-"):
+                _refresh_overlay_sys_path()
+                return 0, f"updated to {channel} (overlay)"
+        return 1, "whl extract failed"
+    except Exception as e:
+        return 1, f"whl extract failed: {e}"
 
-def _extract_streamlink_whl(whl_path, site_root):
-    """streamlink whl을 site-packages **루트**에 해제하고 구 dist-info를 정리한다.
+def _extract_pylib_whl(whl_path, pylib_root, prefix):
+    """프로젝트 오버레이(.pylib/)에 whl 해제 + 구 dist-info 정리 (순수·테스트 가능).
 
-    [수리 v3.4.0] 기존 _frozen_upgrade_streamlink는 whl을 pkg_dir(=streamlink/
-    코드 폴더 내부)에 풀어 importlib.metadata가 읽는 streamlink-*.dist-info 가
-    구버전(예: 8.5.0) 그대로 남았다 → is_outdated()가 항상 True → 매 기동마다
-    'update streamlink updated' 반복 루프가 돌았다.
-
-    올바른 해제 위치는 site-packages 루트(streamlink/ 코드 + streamlink-<ver>
-    .dist-info/ 메타데이터가 나란히 놓이는 곳)다. 구 dist-info는 제거해
-    importlib.metadata가 신규 버전을 단일 판독하도록 보장한다.
-
-    반환: 성공 여부. (순수 함수 — 테스트 가능)
+    venv(site-packages, uv 소유)는 절대 건드리지 않는다. 해제 후
+    sys.path 선두(.pylib/)의 오버레이 복사가 venv보다 항상 우선한다.
+    prefix: "streamlink-" 또는 "yt_dlp-" — 구 dist-info(glob) 스캔용.
     """
     import zipfile
     keep_dist = None
     try:
         with zipfile.ZipFile(whl_path) as zf:
+            # [정확 판정] whl(zip)에는 디렉터리 엔트리가 없다 — 파일 경로의
+            # 첫 세그먼트로 dist-info 이름을 얻어야 한다. (과거 "…/"
+            # endswith 판정은 항상 None이 되어 구 dist-info 정리가
+            # 통째로 스킵 → 버전 메타데이터가 옛 값으로 남아 무한 업데이트)
             for name in zf.namelist():
-                if name.endswith(".dist-info/") and name.startswith("streamlink-"):
-                    keep_dist = name.rstrip("/")
-        if not _extract_from_whl(whl_path, site_root):
+                if name.startswith(prefix) and ".dist-info/" in name:
+                    keep_dist = name.split("/", 1)[0]
+                    break
+        if not _extract_from_whl(whl_path, pylib_root):
             return False
         if keep_dist:
             import glob
-            for old in glob.glob(os.path.join(site_root, "streamlink-*.dist-info")):
+            for old in glob.glob(os.path.join(pylib_root, f"{prefix}*.dist-info")):
                 if os.path.basename(old) != keep_dist:
                     shutil.rmtree(old, ignore_errors=True)
         return True
@@ -435,19 +431,50 @@ def _extract_streamlink_whl(whl_path, site_root):
         return False
 
 
-def _frozen_upgrade_streamlink():
-    """PyInstaller frozen build: streamlink를 직접 다운로드하여 교체.
+def _extract_streamlink_whl(whl_path, site_root):
+    """[레거시 shim] 구 호출부 호환 — 새 코드는 _extract_pylib_whl 사용."""
+    return _extract_pylib_whl(whl_path, site_root, "streamlink-")
 
-    PyPI whl에서 패키지 전체를 site-packages에 압축 해제 — 코드 폴더가 아닌
-    site-packages **루트**에 풀어야 streamlink-<ver>.dist-info 메타데이터가
-    importlib.metadata에 반영된다 (_extract_streamlink_whl 참고).
+
+def _overlay_root():
+    """인앱 업데이트 해제 대상 — 프로젝트 오버레이(.pylib/).
+
+    venv는 uv 소유 → 손대지 않는다. 부트스트랩이 이 경로를 sys.path 선두에
+    두므로 오버레이가 항상 우선 적용된다.
     """
     try:
-        import streamlink
-        pkg_dir = os.path.dirname(streamlink.__file__)
-    except Exception:
-        return 1, "streamlink not found"
+        from chzzktube.core.config import pylib_overlay_path
 
+        path = os.path.abspath(pylib_overlay_path())
+    except Exception:
+        return ""
+    try:
+        os.makedirs(path, exist_ok=True)
+    except Exception:
+        return ""
+    return path
+
+
+def _refresh_overlay_sys_path():
+    try:
+        path = _overlay_root()
+        if not path:
+            return
+        if path not in sys.path:
+            sys.path.insert(0, path)
+        import importlib
+
+        importlib.invalidate_caches()
+    except Exception:
+        pass
+
+
+def _frozen_upgrade_streamlink():
+    """streamlink 직접 다운로드 → 프로젝트 오버레이(.pylib/)에 교체.
+
+    dev/frozen 공통: venv(site-packages, uv 소유)는 절대 건드리지 않는다.
+    해제 후 sys.path 선두의 오버레이 복사가 항상 우선한다.
+    """
     whl_url = _get_pypi_whl_url("streamlink")
     if not whl_url:
         return 1, "No whl found on PyPI"
@@ -457,10 +484,12 @@ def _frozen_upgrade_streamlink():
             whl_path = os.path.join(tmp, "streamlink.whl")
             if not _download_to(whl_url, whl_path):
                 return 1, "whl download failed"
-            if _extract_streamlink_whl(whl_path, os.path.dirname(pkg_dir)):
-                import importlib
-                importlib.invalidate_caches()
-                return 0, "updated to latest"
+            overlay = _overlay_root()
+            if not overlay:
+                return 1, "overlay dir unavailable"
+            if _extract_pylib_whl(whl_path, overlay, "streamlink-"):
+                _refresh_overlay_sys_path()
+                return 0, "updated to latest (overlay)"
         return 1, "whl extract failed"
     except Exception as e:
         return 1, f"streamlink update failed: {e}"
@@ -468,7 +497,8 @@ def _frozen_upgrade_streamlink():
 def upgrade_packages(packages, channel="stable"):
     """직접 다운로드 방식으로 패키지 업데이트 (Dev/Frozen 통합).
 
-    [v3.1.0 변경] Dev 환경에서도 pip 대신 직접 다운로드 경로 사용.
+    [v3.4.0 변경] 해제 대상은 프로젝트 오버레이(.pylib/) — venv(site-packages,
+    uv 소유)는 절대 건드리지 않는다. 요약 문자열에 "(overlay)" 표기.
     이유: 포터블 빌드와 Dev에서 동일한 코드 경로를 타야 디버깅이 가능.
     pip install은 빌드 시에만 사용 (PyInstaller 번들 시점).
 

@@ -9,6 +9,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+# 프로젝트 로컬 pip 오버레이 (.pylib) — venv는 uv 소유 유지, 인앱 업데이터는 여기만 씀
+.pylib/
+
 # 환경변수 및 보안 파일
 .env
 

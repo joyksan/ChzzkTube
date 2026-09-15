@@ -526,6 +526,12 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
   - Dev 환경: `_frozen_upgrade_ytdlp()`, `_frozen_upgrade_streamlink()` 직접 호출
   - 포터블(PyInstaller): PyPI whl에서 yt-dlp 바이너리 직접 다운로드 후 교체 (Stable) / GitHub nightly-builds release 다운로드 (Nightly)
   - 이유: Dev와 포터블이 동일한 코드 경로를 타야 디버깅 가능. Frozen과 Dev가 분기되면, 사용자에게서만 발생하는 버그를 Dev에서 재현하지 못함.
+- **[v3.4.0] 해제 대상 = 프로젝트 로컬 오버레이 `.pylib/` (venv 불가침)**: 인앱 업데이터는 `venv/site-packages`(uv 소유)를 **절대 수정하지 않는다**. 대신 `<repo>/.pylib/`에 whl을 해제하고, 진입점 부트스트랩(`chzzktube.infra.pylib_bootstrap.bootstrap()`)이 이 경로를 `sys.path` 선두에 올려 오버레이 복사가 항상 우선한다(importlib.metadata 포함).
+  - 경로 계약: `<repo>/.pylib` 고정, `CHZZKTUBE_PYLIB_DIR` 환경변수로만 오버라이드 (frozen/CI 진단용)
+  - **이유 1**: uv가 `uv run`/`uv sync` 시 락으로 되돌리므로 venv 직접 수정은 소유권 충돌 + "매 기동 업데이트" 무한 루프를 유발했다(2026-09-15 실측)
+  - **이유 2**: 포터블 원칙("실행 폴더 밖은 쓰지 않는다")과 정합 — 바이너리(node/ffmpeg/PO 서버)는 이미 `writable_base()`/`components/`를 사용. 이원화를 통일
+  - **가시성**: `.pylib`에 dist-info가 있으면 기동 시 `DEPS │ OK │ PYLIB │ overlay: <path> [dist-info…]` 1줄로 어느 복사본이 이겼는지 표기
+  - **주의**: 오버레이는 락핀보다 우선한다 — 사용자가 의도적으로 하위 버전을 고정해도 오버레이가 이긴다. 정리하려면 `.pylib/` 삭제(=다음 기동 시 재수급)
 - **버전 확인 (2분기 구조, v3.1.1)**: dev 는 실제 CLI 실행(.venv/bin/yt-dlp --version → 원문 F12), frozen 은 PYZ 임베드라 importlib.metadata 폴백 — 판정 로직은 updater.check_deps 단일화. **F12 = raw 원문 전용(갱신형 포함), 메인 = TUI 컬럼 가공**. 두 로그가 같은 정보를 이중으로 띄우지 않는다 (교체 원칙). Nightly 채널은 설정 UI 에서 실제 반영 — stale 채널 전환 시 다운그레이드 감지 포함.
 - **업데이트 실패 시**: 기존 버전 유지, 다음 실행 시 재시도
 - **bgutil (PO 토큰 서버)**: GitHub 태그 릴리즈에서 자동 수급, pot_provider가 별도 관리

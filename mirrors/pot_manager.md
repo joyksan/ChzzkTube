@@ -167,11 +167,21 @@ class POTManager(QObject):
         self._retiring: list = []
 
     def _retire(self, worker) -> None:
-        """워커를 finished(run() 완전 반환)까지 보관 후 deleteLater로 정리."""
-        if worker is None or worker.isFinished():
+        """워커를 finished(run() 완전 반환)까지 보관 후 deleteLater로 정리.
+
+        Qt 시그널이 없는 테스트 더블(SimpleNamespace 등)은 보관 대상에서
+        제외한다 — 실제 QThread만 수명 보증 대상이다.
+        """
+        if worker is None:
             return
-        worker.finished.connect(worker.deleteLater)
-        worker.finished.connect(lambda w=worker: self._drop_retired(w))
+        is_finished = getattr(worker, "isFinished", None)
+        if callable(is_finished) and is_finished():
+            return
+        finished = getattr(worker, "finished", None)
+        if finished is None:
+            return
+        finished.connect(worker.deleteLater)
+        finished.connect(lambda w=worker: self._drop_retired(w))
         self._retiring.append(worker)
 
     def _drop_retired(self, worker) -> None:

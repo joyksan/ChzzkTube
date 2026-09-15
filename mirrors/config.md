@@ -41,6 +41,26 @@ ICON_PATH = os.path.join(BASE_DIR, "assets", "icon.ico")
 FONT_PATH = os.path.join(BASE_DIR, "assets", "CascadiaMono-VariableFont_wght.ttf")
 LOG_DIR = os.path.join(CONFIG_DIR, "logs")
 
+def _pylib_root():
+    """프로젝트 로컬 pip 오버레이 루트 (<repo>/.pylib).
+
+    [소유권 분리] venv(site-packages)는 uv 소유로 간주하고 앱이 직접 수정하지
+    않는다. 인앱 업데이터는 이 디렉터리에만 whl을 해제하고, 부트스트랩이
+    sys.path 선두에 둬 오버레이 복사가 항상 우선한다.
+
+    환경 변수 CHZZKTUBE_PYLIB_DIR 로 강제 지정 가능 (CI/진단용).
+    """
+    env = os.environ.get("CHZZKTUBE_PYLIB_DIR")
+    if env:
+        return env
+    return os.path.join(_repo_root(), ".pylib")
+
+
+def pylib_overlay_path():
+    """개발 진입점(main.py / smoke_test.py)이 sys.path에 올릴 오버레이 경로."""
+    return _pylib_root()
+
+
 def default_config():
     """기본 설정 딕셔너리 생성. (download_path 는 현재 설정 디렉토리 기준)"""
     return {

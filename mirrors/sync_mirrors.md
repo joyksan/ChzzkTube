@@ -64,6 +64,7 @@ MIRROR_MODULES = [
     "chzzktube.infra.po_client",
     "chzzktube.infra.pot_provider",
     "chzzktube.infra.pot_server",
+    "chzzktube.infra.pylib_bootstrap",
     "chzzktube.infra.updater",
 ]
 
