@@ -17,6 +17,9 @@ MIRRORS_DIR = ROOT / "mirrors"
 # Mirror targets (extension excluded). .py -> mirrors/*.md
 # New .py modules MUST be added here too.
 MIRROR_MODULES = [
+    # docs
+    "docs.CHANGELOG",
+    "docs.HANDOVER",
     # root
     "main",
     "bump_version",

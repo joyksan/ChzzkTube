@@ -15,32 +15,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5.1.0
 
-      # 1. mirrors/chzzktube_codebase.md 생성
-      - name: Generate Codebase Bundle
+      - name: Set up Python
+        uses: actions/setup-python@v6.3.0
+        with:
+          python-version: '3.12'
+
+      # mirrors/chzzktube_codebase.md 번들 생성 (sync_mirrors.py 재사용)
+      - name: Generate Mirrors & Codebase Bundle
         run: |
-          python - << 'EOF'
-          import os
-          from pathlib import Path
-
-          output_dir = Path("mirrors")
-          output_dir.mkdir(parents=True, exist_ok=True)
-          output_file = output_dir / "chzzktube_codebase.md"
-          
-          exclude_dirs = {".git", ".github", ".venv", "venv", "__pycache__", ".pytest_cache", "build", "dist", "tests", "mirrors"}
-
-          with open(output_file, "w", encoding="utf-8") as outfile:
-              outfile.write("# ChzzkTube Project Full Codebase\n\n")
-              for root, dirs, files in os.walk("."):
-                  dirs[:] = [d for d in dirs if d not in exclude_dirs]
-                  for file in sorted(files):
-                      if file.endswith(".py"):
-                          rel_path = os.path.relpath(os.path.join(root, file), ".")
-                          outfile.write(f"\n## File: {rel_path}\n\n```python\n")
-                          with open(os.path.join(root, file), "r", encoding="utf-8", errors="ignore") as infile:
-                              outfile.write(infile.read())
-                          outfile.write("\n```\n")
-          print("mirrors/chzzktube_codebase.md created successfully.")
-          EOF
+          python sync_mirrors.py
 
       - name: Install Rclone
         run: |
@@ -57,7 +40,7 @@ jobs:
           root_folder_id = ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           EOL
 
-      # 2. mirrors/** (합본 + 개별 35개) 및 루트 문서 동기화
+      # mirrors/** (합본 + 개별 미러) 및 루트 문서 동기화
       - name: Sync Markdown files to Google Drive
         run: |
           rclone sync . gdrive: \
