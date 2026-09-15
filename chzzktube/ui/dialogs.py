@@ -166,24 +166,33 @@ class CookieSelectDialog(QDialog):
                 self.selected_type = "cookie_file"
                 self.selected_path = path
                 self.accept()
-        else:
-            if b_type in ["chrome", "edge", "whale", "chromium", "brave", "vivaldi"]:
-                try:
-                    import yt_dlp.cookies
-                    yt_dlp.cookies.extract_cookies_from_browser(b_type)
-                except Exception as ex:
-                    show_info_message(
-                        self,
-                        "Error",
-                        f"Failed to read browser ({b_type}) cookies.\n\nThe browser may be running, or\nsecurity policy (permission denied) blocks access.",
-                        detail=str(ex),
-                        is_error=True,
-                    )
-                    return
+            return
 
-            self.selected_type = b_type
-            self.selected_path = ""
-            self.accept()
+        supported_browsers = {"chrome", "edge", "whale", "chromium", "brave", "vivaldi"}
+        if b_type in supported_browsers:
+            try:
+                # [해결] 런타임 안정성과 정적 분석기 무결성을 동시에 보장하는 동적 안전 추출
+                import importlib
+                cookies_mod = importlib.import_module("yt_dlp.cookies")
+                extract_fn = getattr(cookies_mod, "extract_cookies_from_browser", None)
+                if not callable(extract_fn):
+                    raise RuntimeError("extract_cookies_from_browser entrypoint not found in yt-dlp")
+
+                extract_fn(b_type)
+            except Exception as ex:
+                show_info_message(
+                    self,
+                    "Error",
+                    f"Failed to read browser ({b_type}) cookies.\n\n"
+                    "The browser may be running, or security policy blocks access.",
+                    detail=str(ex),
+                    is_error=True,
+                )
+                return
+
+        self.selected_type = b_type
+        self.selected_path = ""
+        self.accept()
 
 
 class ActionCountdownDialog(QDialog):
