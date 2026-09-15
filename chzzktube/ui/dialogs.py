@@ -1,5 +1,10 @@
 ##### 팝업 다이얼로그 모음
+from __future__ import annotations
+
+import datetime
+import importlib
 import os
+import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
@@ -20,8 +25,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import chzzktube.ui.theme as theme
 import chzzktube.core.config as config
+from chzzktube.core.cookies import get_browser_cookies
+import chzzktube.ui.theme as theme
 
 if TYPE_CHECKING:
     from chzzktube.ui.main_window import MainWindow
@@ -80,27 +86,21 @@ class CustomComboBox(QComboBox):
 
 # 2026-09-15 가로 폭 360 -> 280으로 수정
 class ExitConfirmDialog(QDialog):
+    """[교정] 컴팩트 280x125 규격, 칠흑 배경, 텍스트 완전 중앙 정렬"""
     def __init__(self, parent=None, is_running=False):
         super().__init__(parent)
         self.is_running = is_running
         self.setWindowTitle("ChzzkTube")
-        # [교정] 좌우로 휑하던 폭을 360 -> 280으로 축소, 컴팩트한 비례 구축
         self.setFixedSize(280, 125)
-        self.setWindowFlags(
-            self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
-        )
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet(theme.DIALOG_BG_QSS)
 
         vbox = QVBoxLayout(self)
         vbox.setSpacing(14)
         vbox.setContentsMargins(16, 16, 16, 16)
 
-        if self.is_running:
-            msg = "⚠️ A download is in progress.\nStop and exit ChzzkTube?"
-        else:
-            msg = "Exit ChzzkTube?"
+        msg = "⚠️ A download is in progress.\nStop and exit ChzzkTube?" if self.is_running else "Exit ChzzkTube?"
 
-        # [교정] 텍스트 완전 중앙 정렬 적용
         lbl = QLabel(msg)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setWordWrap(True)
@@ -120,7 +120,6 @@ class ExitConfirmDialog(QDialog):
 
         btn_box.addWidget(btn_exit)
         btn_box.addWidget(btn_cancel)
-
         vbox.addLayout(btn_box)
 
 
@@ -168,27 +167,26 @@ class CookieSelectDialog(QDialog):
                 self.accept()
             return
 
-        supported_browsers = {"chrome", "edge", "whale", "chromium", "brave", "vivaldi"}
-        if b_type in supported_browsers:
-            try:
-                # [해결] 런타임 안정성과 정적 분석기 무결성을 동시에 보장하는 동적 안전 추출
-                import importlib
-                cookies_mod = importlib.import_module("yt_dlp.cookies")
-                extract_fn = getattr(cookies_mod, "extract_cookies_from_browser", None)
-                if not callable(extract_fn):
-                    raise RuntimeError("extract_cookies_from_browser entrypoint not found in yt-dlp")
+        else:
+            if b_type in ["chrome", "edge", "whale", "chromium", "brave", "vivaldi"]:
+                try:
+                    yt_cookies = importlib.import_module("yt_dlp.cookies")
+                    extract_fn = getattr(yt_cookies, "extract_cookies_from_browser", None)
+                    if callable(extract_fn):
+                        extract_fn(b_type)
+                except Exception as ex:  # noqa: BLE001
+                    show_info_message(
+                        self,
+                        "Error",
+                        f"Failed to read browser ({b_type}) cookies.\n\nThe browser may be running, or\nsecurity policy (permission denied) blocks access.",
+                        detail=str(ex),
+                        is_error=True,
+                    )
+                    return
 
-                extract_fn(b_type)
-            except Exception as ex:
-                show_info_message(
-                    self,
-                    "Error",
-                    f"Failed to read browser ({b_type}) cookies.\n\n"
-                    "The browser may be running, or security policy blocks access.",
-                    detail=str(ex),
-                    is_error=True,
-                )
-                return
+            self.selected_type = b_type
+            self.selected_path = ""
+            self.accept()
 
         self.selected_type = b_type
         self.selected_path = ""
@@ -196,44 +194,39 @@ class CookieSelectDialog(QDialog):
 
 
 class ActionCountdownDialog(QDialog):
+    """[교정] 칠흑 배경(#0d0d0d) 동화, 둥근 모서리 박멸, 플랫 TUI 스타일 재구축"""
     def __init__(self, action_type, parent=None):
         super().__init__(parent)
         self.action_type = action_type
         self.remaining_seconds = 60
-        action_names = {
-            "sleep": "sleep",
-            "shutdown": "PC shutdown",
-            "exit_app": "exit",
-        }
-        self.action_name = action_names.get(action_type, "unknown action")
+        action_names = {"sleep": "sleep", "shutdown": "PC shutdown", "exit_app": "exit"}
+        self.action_name = action_names.get(action_type, "action")
+
         self.setWindowTitle("Post-Download Action")
-        self.setFixedSize(380, 160)
-        self.setStyleSheet("background-color: #121212; color: #ffffff;")
+        self.setFixedSize(300, 125)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setStyleSheet(theme.DIALOG_BG_QSS)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
 
         self.lbl_msg = QLabel(
             f"Download complete.\n<b>{self.remaining_seconds}s</b> until [<b>{self.action_name}</b>] runs."
         )
         self.lbl_msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_msg.setStyleSheet("font-size: 13px; color: #e0e0e0;")
+        self.lbl_msg.setStyleSheet("font-size: 11px; color: #e0e0e0; line-height: 1.4;")
         layout.addWidget(self.lbl_msg)
 
         btn_layout = QHBoxLayout()
-        btn_layout.setSpacing(10)
+        btn_layout.setSpacing(8)
 
         self.btn_now = QPushButton("Run Now")
-        self.btn_now.setStyleSheet(
-            "QPushButton { background-color: #c62828; color: white; font-weight: bold; padding: 6px; border-radius: 6px; border: none; } QPushButton:hover { background-color: #e53935; } QPushButton:pressed { background-color: #b71c1c; }"
-        )
+        self.btn_now.setStyleSheet(theme.BTN_EXIT_DANGER_QSS)
         self.btn_now.clicked.connect(self.execute_now)
 
         self.btn_cancel = QPushButton("Cancel")
-        self.btn_cancel.setStyleSheet(
-            "QPushButton { background-color: #2b2b2b; color: #e3e3e3; border: 1px solid #3d3d3d; font-weight: bold; padding: 6px; border-radius: 6px; } QPushButton:hover { background-color: #353535; border-color: #4a4a4a; }"
-        )
+        self.btn_cancel.setStyleSheet(theme.BTN_NEUTRAL_QSS)
         self.btn_cancel.clicked.connect(self.cancel_action)
 
         btn_layout.addWidget(self.btn_now)
@@ -265,13 +258,14 @@ class ActionCountdownDialog(QDialog):
 
 
 class CookieViewerDialog(QDialog):
+    """[교정] 10px 고밀도 TUI 뷰어 및 플랫 Close 버튼"""
     def __init__(self, title_text, content_text, parent=None):
         super().__init__(parent)
         self.setWindowTitle(title_text)
-        self.setFixedSize(650, 500)
+        self.setFixedSize(650, 480)
         self.setStyleSheet(theme.DIALOG_BG_QSS)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(10)
 
         self.te_content = QTextEdit(self)
@@ -283,9 +277,10 @@ class CookieViewerDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
 
-        btn_close = QPushButton("Close")
-        btn_close.setFixedWidth(90)
-        btn_close.setStyleSheet(theme.BTN_CLOSE_QSS)
+        btn_close = QPushButton("[ Close ]")
+        btn_close.setProperty("class", "tui-tag")
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.setStyleSheet(theme.TUI_STYLE)
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
         layout.addLayout(btn_layout)
@@ -298,9 +293,9 @@ class CookieViewerDialog(QDialog):
 class SettingsDialog(QDialog):
     """하이퍼미니멀 모던 TUI 스타일 설정 패널 (Flat, Monospace, Borderless)."""
 
-    def __init__(self, parent: "MainWindow | None" = None, is_running: bool = False):
+    def __init__(self, parent: MainWindow | None = None, is_running: bool = False):
         super().__init__(parent)
-        self.parent_win: "MainWindow | None" = parent
+        self.parent_win: MainWindow | None = parent  # [교정] 따옴표 제거로 UP037 박멸
         self.cfg = (
             parent.cfg
             if parent and hasattr(parent, "cfg")
@@ -636,8 +631,7 @@ class SettingsDialog(QDialog):
 
     # ── 비즈니스 로직 & 내부 헬퍼 ──────────────────────────────
     def update_filename_preview(self):
-        import datetime
-        today = datetime.datetime.now()
+        today = datetime.datetime.now().astimezone()
         date_dash = today.strftime("%Y-%m-%d")
         date_compact = today.strftime("%Y%m%d")
 
@@ -694,12 +688,13 @@ class SettingsDialog(QDialog):
         if cookie_src == "cookie_file" and os.path.exists(self.cfg.get("cookie_file_path", "")):
             try:
                 with open(self.cfg["cookie_file_path"], "r", encoding="utf-8") as f:
-                    content = f.read(5000) + ("\n... (생략)" if os.path.getsize(self.cfg["cookie_file_path"]) > 5000 else "")
-            except Exception as ex:
+                    file_size = os.path.getsize(self.cfg["cookie_file_path"])
+                    content = f.read(5000) + ("\n... (생략)" if file_size > 5000 else "")
+            except Exception as ex:  # noqa: BLE001
                 content = f"파일 읽기 오류: {ex}"
         elif cookie_src not in ["none", "auto"]:
             try:
-                from chzzktube.core.cookies import get_browser_cookies
+                # [교정] 인라인 import get_browser_cookies 제거
                 cookie_data = get_browser_cookies()
                 if cookie_data:
                     lines = []
@@ -711,8 +706,9 @@ class SettingsDialog(QDialog):
                     content = f"[{cookie_src}] 브라우저 추출 전체 쿠키 목록:\n\n" + "\n".join(lines)
                 else:
                     content = f"[{cookie_src}] 브라우저에서 쿠키를 가져오지 못했습니다. (브라우저 실행 중 또는 권한 문제)"
-            except Exception as ex:
+            except Exception as ex:  # noqa: BLE001
                 content = f"쿠키 조회 중 오류 발생: {ex}"
+
         viewer = CookieViewerDialog("쿠키 뷰어 (상세)", content, self)
         viewer.exec()
 
@@ -767,28 +763,32 @@ class VerboseLogWindow(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Full Log (F12)")
         self.resize(760, 480)
+        self.setStyleSheet(theme.DIALOG_BG_QSS)
 
         self.te = QTextEdit(self)
         self.te.setReadOnly(True)
         self.te.setStyleSheet(theme.TE_CONTENT_QSS)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
         layout.addWidget(self.te)
 
         btn_row = QHBoxLayout()
         self.lbl_info = QLabel("")
-        self.lbl_info.setStyleSheet(theme.DLG_STATUS_QSS)
-        btn_close = QPushButton("Close")
-        btn_close.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+        self.lbl_info.setStyleSheet("color: #888888; font-size: 11px;")
+        btn_close = QPushButton("[ Close: Esc ]")
+        btn_close.setProperty("class", "tui-tag")
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.setStyleSheet(theme.TUI_STYLE)
         btn_close.clicked.connect(self.close)
+
         btn_row.addWidget(self.lbl_info)
         btn_row.addStretch(1)
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
 
     def append(self, msg, is_status=False):
-        """Mirror raw text — timestamps pre-applied by _mirror_full_log."""
         if not msg:
             return
         if is_status:
@@ -804,6 +804,5 @@ class VerboseLogWindow(QDialog):
         self.lbl_info.setText(f"mirroring — {self.te.document().blockCount()} lines")
 
     def set_content(self, text):
-        """Replace all content at once (initial display)."""
         self.te.setPlainText(text)
         self.lbl_info.setText(f"buffer — {self.te.document().blockCount()} lines")

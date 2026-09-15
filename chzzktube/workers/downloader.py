@@ -2,25 +2,26 @@
 """배치 다운로드 실행 워커 (DownloadWorker).
 
 - 대상 평탄화·개별 분기(_td), 진행 틱(_pe), 배치 마감(_fin)을 worker 인자
-  방식으로 호출하는 껝데기 오케스트레이션.
+  방식으로 호출하는 껍데기 오케스트레이션.
 - [분리] YtLoggerBridge·AnalyzeWorker → analyze_worker.py / yt_logger_bridge.py.
   라우팅·종속 헬퍼는 각각의 전용 모듈에서만 import한다 (미사용 임포트 금지).
 """
-import os
 import yt_dlp
-
-# [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
-# 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).
-yt_dlp.plugins.plugin_dirs.value = []
-
 from PySide6.QtCore import QThread, Signal
+
+import chzzktube.core.raw_log as raw_log
 from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.speed_window import SpeedWindow
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
-import chzzktube.core.raw_log as raw_log
-import chzzktube.pipeline.progress_emitter as progress_emitter
-import chzzktube.pipeline.target_downloader as target_downloader
-import chzzktube.pipeline.finalizer as finalizer
+import chzzktube.pipeline.finalizer as _fin
+import chzzktube.pipeline.progress_emitter as _pe
+import chzzktube.pipeline.target_downloader as _td
+
+# [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
+# 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).
+# 모든 최상단 import가 끝난 직후, 클래스 정의 전에 배치하여 E402를 원천 차단한다.
+yt_dlp.plugins.plugin_dirs.value = []
+
 class DownloadWorker(QThread):
     # [v3.3.0] 로그는 raw 버스(raw_log.raw) 단일 경유 — log_concise/log_full 시그널 폐기.
     finished_all = Signal(int, int)
@@ -124,7 +125,8 @@ class DownloadWorker(QThread):
 
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
+            # 워커 최상위 안전망이므로 BLE001 무시 명시
             if "CANCELED_BY_USER" in str(ex) or "중지되었습니다" in str(ex) or self.state["canceled"]:
                 pass
             else:
@@ -133,13 +135,7 @@ class DownloadWorker(QThread):
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 
     def kill_live_process(self):
-        """[A4] 라이브 녹화 프로세스 정리 — worker·ctx 양쪽 핸들을 모두 킬.
-
-        live_recorder.record_live_stream은 proc를 DownloadContext._live_proc에
-        부착한다(worker가 아님). worker 자체 핸들만 보던 기존 terminate는
-        실제 라이브 프로세스를 놓쳤다 — closeEvent의 kill_live_process 호출이
-        이제 실제로 동작한다.
-        """
+        """[A4] 라이브 녹화 프로세스 정리 — worker·ctx 양쪽 핸들을 모두 킬."""
         handles = (self._live_proc, getattr(getattr(self, "_ctx", None), "_live_proc", None))
         for proc in handles:
             if proc is None:
@@ -148,11 +144,17 @@ class DownloadWorker(QThread):
                 proc.kill()
                 raw_log.raw(
                     "dl",
-                    _pe.emit_event("DL", "WARN", "FFMP",
-                                   "killed live recorder on worker terminate", is_error=True),
+                    _pe.emit_event(
+                        "DL",
+                        "WARN",
+                        "FFMP",
+                        "killed live recorder on worker terminate",
+                        is_error=True,
+                    ),
                     to_tui=True,
                 )
-            except Exception:
+            except OSError:
+                # 프로세스가 이미 종료되었거나 권한 부족일 때만 안전하게 무시
                 pass
         self._live_proc = None
 

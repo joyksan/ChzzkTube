@@ -31,6 +31,6 @@ try:
         print("[Labmem 004 ERROR] config.py에서 _APP_VERSION 패턴을 찾지 못했습니다!")
         sys.exit(1)
 
-except Exception as e:
+except (OSError, re.error) as e:
     print(f"[Labmem 004 CRITICAL] 오류 발생: {e}")
     sys.exit(1)

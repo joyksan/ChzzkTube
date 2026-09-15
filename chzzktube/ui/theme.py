@@ -3,12 +3,12 @@
 
 ### 색상 팔레트 (fzf-inspired dark terminal)
 BG_WINDOW = "#0d0d0d"        # 메인/다이얼로그 콘솔 톤
-BG_SURFACE = "#252525"       # 패널 배경
+BG_SURFACE = "#1a1a1a"       # 패널 배경
 BG_CONSOLE = "#0d0d0d"       # 콘솔 배경
-BG_HOVER = "#2a2a2a"         # 호버 배경
-FG_TEXT = "#e3e3e3"          # 기본 전경
+BG_HOVER = "#252526"         # 호버 배경
+FG_TEXT = "#cccccc"          # 기본 전경
 FG_DIM = "#888888"           # 딤 텍스트
-BORDER = "#444444"           # 테두리
+BORDER = "#282828"           # 테두리
 ACCENT = "#4ec9b0"           # 액센트 (청록)
 ACCENT_ALT = "#ce9178"       # 보조 액센트 (주황)
 ERROR = "#e06c75"            # 에러 레드 (soft pastel — Atom One Dark)
@@ -75,16 +75,15 @@ QTextEdit {{
     color: {FG_TEXT};
     border: 1px solid {BORDER};
     border-radius: 0px;
-    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
-    padding: 4px;
+    padding: 6px;
 }}
 QScrollBar:vertical {{ border: none; background: transparent; width: 6px; }}
 QScrollBar::handle:vertical {{ background: {BORDER}; min-height: 20px; border-radius: 0px; }}
-QScrollBar::handle:vertical:hover {{ background: #555555; }}
+QScrollBar::handle:vertical:hover {{ background: #444444; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}
 """
+TE_CONTENT_QSS = CONSOLE_LOG_QSS
 
 ### 간결 로그 색 위계
 LOG_COLOR_SUCCESS = SUCCESS
@@ -117,10 +116,10 @@ QPushButton:disabled {{ background-color: #1a1a1a; color: #555555; border-color:
 ### 다이얼로그 QSS
 MSGBOX_QSS = f"""
 QMessageBox {{ background-color: {BG_WINDOW}; }}
-QLabel {{ color: {FG_TEXT}; font-size: 12px; font-family: 'Cascadia Mono', monospace; padding: 8px 16px; }}
-QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 16px; font-family: 'Cascadia Mono', monospace; min-width: 70px; }}
+QLabel {{ color: {FG_TEXT}; padding: 8px 16px; }}
+QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 6px 16px; min-width: 70px; }}
 QPushButton:hover {{ background-color: {BG_HOVER}; border-color: {ACCENT}; }}
-QTextEdit {{ background-color: {BG_CONSOLE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; font-family: 'Cascadia Mono', monospace; font-size: 11px; padding: 4px; }}
+QTextEdit {{ background-color: {BG_CONSOLE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px; }}
 """
 
 ### 설정 다이얼로그 — 모던 TUI 패널
@@ -166,11 +165,10 @@ QPushButton:hover {
 }
 """
 
-DIALOG_BG_QSS = f"background-color: {BG_WINDOW}; color: {FG_TEXT}; font-family: 'Cascadia Mono', monospace;"
-TE_CONTENT_QSS = CONSOLE_LOG_QSS
-
-DLG_SECTION_TITLE_QSS = f"font-weight: bold; font-size: 12px; border: none; background: transparent; color: {ACCENT}; font-family: 'Cascadia Mono', monospace;"
-DLG_STATUS_QSS = f"color: {FG_DIM}; font-size: 11px; border: none; background: transparent; font-family: 'Cascadia Mono', monospace;"
+DIALOG_BG_QSS = f"background-color: {BG_WINDOW}; color: {FG_TEXT}; font-size: 11px;"
+TE_CONTENT_QSS = f"background-color: {BG_CONSOLE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px;"
+DLG_SECTION_TITLE_QSS = f"font-weight: bold; border: none; background: transparent; color: {ACCENT};"
+DLG_STATUS_QSS = f"color: {FG_DIM}; border: none; background: transparent;"
 DLG_GHOST_BTN_QSS = f"""
 QPushButton {{ background-color: {BG_SURFACE}; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px 10px; font-size: 11px; font-family: 'Cascadia Mono', monospace; }}
 QPushButton:hover {{ background-color: {BG_HOVER}; border-color: {ACCENT}; }}
@@ -188,16 +186,14 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: tran
 
 ### MainWindow TUI 스타일 (Hyper-Minimal Modern TUI — flat, borderless, mono)
 ### ──────────────────────────────────────────────────────────────
+# ── TUI_STYLE (메인 윈도우 및 설정창 공용) ──
 TUI_STYLE = """
-/* Core Dark Palette & Monospace Typography — Cascadia Mono unified */
 QWidget, QMainWindow {
     background-color: #0d0d0d;
     color: #cccccc;
-    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
 }
 
-/* ── Flat Panels: no border, no radius ── */
 QGroupBox.tui-panel {
     border: none;
     border-radius: 0px;
@@ -215,7 +211,6 @@ QGroupBox.tui-panel::title {
     font-size: 1px;
 }
 
-/* ── Section separators (1px subtle lines) ── */
 QFrame.tui-separator {
     background-color: #1a1a1a;
     max-height: 1px;
@@ -227,7 +222,6 @@ QPushButton[class="tui-tag"] {
     background-color: transparent;
     border: none;
     color: #ce9178;
-    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
     padding: 2px 6px;
 }
@@ -242,7 +236,6 @@ QPushButton[class="tui-tag"]:pressed {
     color: #4ec9b0;
 }
 
-/* ── URL Input: flat underline style ── */
 QLineEdit#url_input::placeholder { color: #555555; }
 
 QLineEdit#url_input {
@@ -250,7 +243,6 @@ QLineEdit#url_input {
     border: none;
     border-bottom: 1px solid #333333;
     color: #dcdcdc;
-    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
     padding: 4px 0px 4px 0px;
     selection-background-color: #264f78;
@@ -264,14 +256,13 @@ QPlainTextEdit#console_log, QTextEdit#console_log {
     background-color: #0d0d0d;
     border: none;
     color: #d4d4d4;
-    font-family: 'Cascadia Mono', monospace;
     font-size: 11px;
     line-height: 1.3;
 }
 
 QScrollBar:vertical {
     border: none;
-    background: #121212;
+    background: #0d0d0d;
     width: 6px;
 }
 
@@ -290,8 +281,23 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 }
 """
 
+# ── 플랫 TUI 버튼 3종 (11px 일괄 매칭) ──
+BTN_EXIT_DANGER_QSS = f"""
+QPushButton {{ background-color: transparent; color: {ERROR}; border: 1px solid #5a1d1d; border-radius: 0px; padding: 4px 12px; font-size: 11px; }}
+QPushButton:hover {{ background-color: #3a1515; border-color: {ERROR}; }}
+QPushButton:pressed {{ background-color: #2a0f0f; }}
+"""
 
+BTN_NEUTRAL_QSS = f"""
+QPushButton {{ background-color: transparent; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px 12px; font-size: 11px; }}
+QPushButton:hover {{ background-color: {BG_HOVER}; border-color: #555555; color: #ffffff; }}
+QPushButton:pressed {{ background-color: #141414; }}
+"""
 
+DLG_GHOST_BTN_QSS = f"""
+QPushButton {{ background-color: #141414; color: {FG_TEXT}; border: 1px solid {BORDER}; border-radius: 0px; padding: 4px 10px; font-size: 11px; }}
+QPushButton:hover {{ background-color: {BG_HOVER}; border-color: {ACCENT}; color: {ACCENT}; }}
+"""
 
 ### 호환 참조 (main.py / dialogs.py 가 참조하는 이름 — 새 팔레트로 연결)
 BAR_PANEL_QSS = f"background-color: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 0px;"
