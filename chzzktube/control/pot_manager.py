@@ -177,7 +177,9 @@ class POTManager(QObject):
         self._worker = worker
         worker.finished_signal.connect(self._on_worker_finished)
         worker.start()
-        self.pot_status_changed.emit("prewarm")
+        # [모드별 토큰] gate="starting" / prewarm="prewarm" — Coordinator가
+        # 이 토큰을 raw 버스에 로그로 남긴다 (의미 왜곡 방지).
+        self.pot_status_changed.emit("starting" if mode == "gate" else "prewarm")
 
     def _on_worker_finished(self, ok: bool, msg: str):
         # Qt may deliver this callback after cancel(); ignore stale workers.
@@ -201,7 +203,9 @@ class POTManager(QObject):
             else:
                 return
 
-        self.pot_status_changed.emit("staged" if ok else "failed")
+        # [토큰 정합] 상태 토큰은 실제 _mode("staged"/"ready")를 그대로 emit —
+        # gate 성공을 "staged"로 잘못 보고하던 잠재 버그 수리.
+        self.pot_status_changed.emit(self._mode if ok else "failed")
         # [READY 게이트 계약] pot_finished의 msg는 상태 토큰("staged"/"ready"/"failed")으로만
         # 발행한다 — StartupCoordinator.report_pot이 정확 일치로 READY를 판정한다.
         # 사람이 읽는 상세 메시지("prewarm staged", "pot server bound ...")는

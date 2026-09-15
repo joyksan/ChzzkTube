@@ -296,7 +296,15 @@ def truncate_for_full_log(out, max_lines=6, max_width=160):
 
 
 def _ffmpeg_version(path, timeout=3):
-    """`ffmpeg -version` 첫 줄에서 버전 추출 (예: '7.1.1'). 실패 시 None."""
+    """`ffmpeg -version`에서 숫자 코어 버전(MAJOR.MINOR[.PATCH]) 추출. 실패 시 None.
+
+    - 표준/홈브루: 'ffmpeg version 9.0.1' → 9.0.1
+    - extra version/빌드 태그/일자(YYYMMDD) 접미는 정규식으로 절단:
+      '9.0.1_1'·'7.1.1-20240815-g…' → 9.0.1 · 7.1.1
+      (homebrew bottle Cellar/ffmpeg/9.0.1_1 처럼 configuration 줄에만
+      extra version이 드러나는 경우도 그대로 대응)
+    - 첫 줄 미매치(N-일자 빌드 등) 시 configuration 줄 폴백: '…/ffmpeg/9.0.1_1'
+    """
     try:
         import re
         out = subprocess.run(
@@ -308,8 +316,12 @@ def _ffmpeg_version(path, timeout=3):
             timeout=timeout,
             creationflags=_NO_WINDOW if os.name == "nt" else 0,
         )
-        line = (out.stdout or out.stderr or "").splitlines()[0]
-        m = re.search(r"version\s+([0-9][0-9.]*)", line)
+        text = (out.stdout or out.stderr or "")
+        # 1) 표준 첫 줄 — 숫자 코어 3단만 (extra version 접미부 미포함)
+        m = re.search(r"ffmpeg version\s+(\d+(?:\.\d+){1,2})", text)
+        if not m:
+            # 2) configuration 줄 폴백 — --prefix=…/ffmpeg/9.0.1_1
+            m = re.search(r"ffmpeg[/\\\-](\d+(?:\.\d+){1,2})(?![0-9.])", text)
         return m.group(1) if m else None
     except Exception:
         return None
@@ -390,9 +402,45 @@ def _frozen_upgrade_ytdlp(channel="stable"):
         return 0, f"updated to {channel}"
     return 1, "download failed"
 
+def _extract_streamlink_whl(whl_path, site_root):
+    """streamlink whl을 site-packages **루트**에 해제하고 구 dist-info를 정리한다.
+
+    [수리 v3.4.0] 기존 _frozen_upgrade_streamlink는 whl을 pkg_dir(=streamlink/
+    코드 폴더 내부)에 풀어 importlib.metadata가 읽는 streamlink-*.dist-info 가
+    구버전(예: 8.5.0) 그대로 남았다 → is_outdated()가 항상 True → 매 기동마다
+    'update streamlink updated' 반복 루프가 돌았다.
+
+    올바른 해제 위치는 site-packages 루트(streamlink/ 코드 + streamlink-<ver>
+    .dist-info/ 메타데이터가 나란히 놓이는 곳)다. 구 dist-info는 제거해
+    importlib.metadata가 신규 버전을 단일 판독하도록 보장한다.
+
+    반환: 성공 여부. (순수 함수 — 테스트 가능)
+    """
+    import zipfile
+    keep_dist = None
+    try:
+        with zipfile.ZipFile(whl_path) as zf:
+            for name in zf.namelist():
+                if name.endswith(".dist-info/") and name.startswith("streamlink-"):
+                    keep_dist = name.rstrip("/")
+        if not _extract_from_whl(whl_path, site_root):
+            return False
+        if keep_dist:
+            import glob
+            for old in glob.glob(os.path.join(site_root, "streamlink-*.dist-info")):
+                if os.path.basename(old) != keep_dist:
+                    shutil.rmtree(old, ignore_errors=True)
+        return True
+    except Exception:
+        return False
+
+
 def _frozen_upgrade_streamlink():
     """PyInstaller frozen build: streamlink를 직접 다운로드하여 교체.
-    PyPI whl에서 패키지 전체를 site-packages에 압축 해제.
+
+    PyPI whl에서 패키지 전체를 site-packages에 압축 해제 — 코드 폴더가 아닌
+    site-packages **루트**에 풀어야 streamlink-<ver>.dist-info 메타데이터가
+    importlib.metadata에 반영된다 (_extract_streamlink_whl 참고).
     """
     try:
         import streamlink
@@ -409,7 +457,9 @@ def _frozen_upgrade_streamlink():
             whl_path = os.path.join(tmp, "streamlink.whl")
             if not _download_to(whl_url, whl_path):
                 return 1, "whl download failed"
-            if _extract_from_whl(whl_path, pkg_dir):
+            if _extract_streamlink_whl(whl_path, os.path.dirname(pkg_dir)):
+                import importlib
+                importlib.invalidate_caches()
                 return 0, "updated to latest"
         return 1, "whl extract failed"
     except Exception as e:

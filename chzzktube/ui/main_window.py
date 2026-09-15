@@ -519,14 +519,14 @@ class MainWindow(QMainWindow):
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
                     log_console.emit_event(
-                        "SYS", "OK", "TXT", f"{len(lines)} URLs"
+                        "SYS", "OK", "MAIN", f"TXT — {len(lines)} URLs"
                     ),
                     is_status=False,
                     is_error=False,
                 )
         except Exception:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "TXT", "read fail"),
+                log_console.emit_event("SYS", "FAIL", "MAIN", "TXT read fail"),
                 is_status=False,
                 is_error=True,
             )

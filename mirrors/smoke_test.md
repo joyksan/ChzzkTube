@@ -23,6 +23,15 @@ def test_main():
 
     app = QApplication(sys.argv)
 
+    # [Sans Serif 별칭 탐색 제거] 실제 main()과 동일한 앱 폰트 고정 —
+    # Qt 제네릭 'Sans Serif' 별칭 탐색(100ms+) 경고를 smoke에서도 차단.
+    from PySide6.QtGui import QFont, QFontDatabase
+    from chzzktube.core.config import BASE_DIR
+    font_path = os.path.join(BASE_DIR, "assets", "CascadiaMono-VariableFont_wght.ttf")
+    if os.path.exists(font_path):
+        QFontDatabase.addApplicationFont(font_path)
+    app.setFont(QFont("Cascadia Mono", 11))
+
     # 윈도우 인스턴스 생성
     try:
         win = MainWindow()

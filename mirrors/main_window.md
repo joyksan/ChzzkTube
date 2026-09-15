@@ -519,14 +519,14 @@ class MainWindow(QMainWindow):
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
                     log_console.emit_event(
-                        "SYS", "OK", "TXT", f"{len(lines)} URLs"
+                        "SYS", "OK", "MAIN", f"TXT — {len(lines)} URLs"
                     ),
                     is_status=False,
                     is_error=False,
                 )
         except Exception:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "TXT", "read fail"),
+                log_console.emit_event("SYS", "FAIL", "MAIN", "TXT read fail"),
                 is_status=False,
                 is_error=True,
             )
@@ -690,7 +690,7 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "", "analyzing..."),
+            log_console.emit_event("ANAL", "RUN", "YT", "analyzing..."),
             is_status=True,
             is_error=False,
         )
@@ -1204,7 +1204,7 @@ class MainWindow(QMainWindow):
         self.ctrl.begin_download()
 
         self.append_concise_log(
-            log_console.emit_event("DL", "RUN", "", "downloading..."),
+            log_console.emit_event("DL", "RUN", "YT", "downloading..."),
             is_status=True,
             is_error=False,
         )
@@ -1258,7 +1258,7 @@ class MainWindow(QMainWindow):
         self._pick_targets = [url]
         self._pick_pending = True
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "", "analyzing formats..."),
+            log_console.emit_event("ANAL", "RUN", "YT", "analyzing formats..."),
             is_status=True,
             is_error=False,
         )
@@ -1333,7 +1333,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_skip()
             self.append_concise_log(
-                log_console.emit_event("DL", "SKIP", "", "skip requested"),
+                log_console.emit_event("DL", "SKIP", "MAIN", "skip requested"),
                 is_status=False,
                 is_error=False,
             )
@@ -1381,6 +1381,11 @@ def main() -> int:
     font_path = os.path.join(BASE_DIR, "assets", "CascadiaMono-VariableFont_wght.ttf")
     if os.path.exists(font_path):
         QFontDatabase.addApplicationFont(font_path)
+
+    # [Sans Serif 별칭 탐색 제거] 앱 폰트를 Cascadia Mono로 고정 — QApplication
+    # 기본 폰트 미지정 시 Qt가 제네릭 'Sans Serif' 별칭을 탐색하며
+    # "Populating font family aliases took ~100ms" 경고/지연이 발행된다.
+    app.setFont(QFont("Cascadia Mono", 11))
 
     win = MainWindow()
     win.show()

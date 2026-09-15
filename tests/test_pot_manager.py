@@ -63,6 +63,29 @@ def test_use_existing_marks_ready():
     assert m.is_ready() is True
 
 
+def test_gate_ok_emits_ready_status_token():
+    """[회귀 v3.4.0] gate 성공 시 pot_status_changed도 실제 모드 "ready"를 emit.
+
+    기존엔 무조건 "staged"를 emit해 gate 완료를 prewarm 완료로 오보고했다
+    (Coordinator 토글 로그가 "staged — lazy standby"로 잘못 기록됨).
+    """
+    _app()
+    m = _manager("gate")
+    got = []
+    m.pot_status_changed.connect(got.append)
+    m._on_worker_finished(True, "ignored runtime detail")
+    assert got and got[-1] == "ready"
+
+
+def test_prewarm_ok_emits_staged_status_token():
+    _app()
+    m = _manager("prewarm")
+    got = []
+    m.pot_status_changed.connect(got.append)
+    m._on_worker_finished(True, "ignored runtime detail")
+    assert got and got[-1] == "staged"
+
+
 def test_prewarm_pending_gate_auto_starts_gate():
     """prewarm 완료 + pending gate → QTimer로 gate 워커 자동 재기동."""
     from unittest.mock import patch

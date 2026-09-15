@@ -89,7 +89,25 @@ class StartupCoordinator(QObject):
     # ── POTManager 시그널 핸들러 ──────────────────────────────
 
     def _on_pot_status(self, status: str):
+        # View로만 포워드하던 것을 raw 버스에도 태워 TUI/F12/history에 남긴다.
+        # [토글 계약] 시동 → 가동 → lazy 대기 전환이 메인/풀 로그에 모두 기록된다
+        # (앱 동작 전량 기록 원칙 — HANDOVER §9).
         self.pot_status_changed.emit(status)
+        from chzzktube.core.raw_log import raw
+        from chzzktube.core.log_emitter import emit_event
+        _POT_TOGGLE = {
+            "prewarm":  ("RUN",  "server staging..."),
+            "starting": ("RUN",  "server starting..."),
+            "staged":   ("OK",   "server staged — lazy standby"),
+            "ready":    ("OK",   "server running"),
+            "failed":   ("FAIL", "server failed"),
+        }
+        st, msg = _POT_TOGGLE.get(status, ("RUN", str(status)))
+        raw(
+            "startup",
+            emit_event("POT", st, "POT", msg, is_error=(st == "FAIL")),
+            to_tui=True,
+        )
 
     def _on_pot_finished(self, ok: bool, msg: str):
         self.report_pot(ok, msg)

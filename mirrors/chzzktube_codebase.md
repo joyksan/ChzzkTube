@@ -91,6 +91,15 @@ def test_main():
 
     app = QApplication(sys.argv)
 
+    # [Sans Serif 별칭 탐색 제거] 실제 main()과 동일한 앱 폰트 고정 —
+    # Qt 제네릭 'Sans Serif' 별칭 탐색(100ms+) 경고를 smoke에서도 차단.
+    from PySide6.QtGui import QFont, QFontDatabase
+    from chzzktube.core.config import BASE_DIR
+    font_path = os.path.join(BASE_DIR, "assets", "CascadiaMono-VariableFont_wght.ttf")
+    if os.path.exists(font_path):
+        QFontDatabase.addApplicationFont(font_path)
+    app.setFont(QFont("Cascadia Mono", 11))
+
     # 윈도우 인스턴스 생성
     try:
         win = MainWindow()
@@ -2347,14 +2356,14 @@ class MainWindow(QMainWindow):
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
                     log_console.emit_event(
-                        "SYS", "OK", "TXT", f"{len(lines)} URLs"
+                        "SYS", "OK", "MAIN", f"TXT — {len(lines)} URLs"
                     ),
                     is_status=False,
                     is_error=False,
                 )
         except Exception:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "TXT", "read fail"),
+                log_console.emit_event("SYS", "FAIL", "MAIN", "TXT read fail"),
                 is_status=False,
                 is_error=True,
             )
@@ -2518,7 +2527,7 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "", "analyzing..."),
+            log_console.emit_event("ANAL", "RUN", "YT", "analyzing..."),
             is_status=True,
             is_error=False,
         )
@@ -3032,7 +3041,7 @@ class MainWindow(QMainWindow):
         self.ctrl.begin_download()
 
         self.append_concise_log(
-            log_console.emit_event("DL", "RUN", "", "downloading..."),
+            log_console.emit_event("DL", "RUN", "YT", "downloading..."),
             is_status=True,
             is_error=False,
         )
@@ -3086,7 +3095,7 @@ class MainWindow(QMainWindow):
         self._pick_targets = [url]
         self._pick_pending = True
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "", "analyzing formats..."),
+            log_console.emit_event("ANAL", "RUN", "YT", "analyzing formats..."),
             is_status=True,
             is_error=False,
         )
@@ -3161,7 +3170,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_skip()
             self.append_concise_log(
-                log_console.emit_event("DL", "SKIP", "", "skip requested"),
+                log_console.emit_event("DL", "SKIP", "MAIN", "skip requested"),
                 is_status=False,
                 is_error=False,
             )
@@ -3209,6 +3218,11 @@ def main() -> int:
     font_path = os.path.join(BASE_DIR, "assets", "CascadiaMono-VariableFont_wght.ttf")
     if os.path.exists(font_path):
         QFontDatabase.addApplicationFont(font_path)
+
+    # [Sans Serif 별칭 탐색 제거] 앱 폰트를 Cascadia Mono로 고정 — QApplication
+    # 기본 폰트 미지정 시 Qt가 제네릭 'Sans Serif' 별칭을 탐색하며
+    # "Populating font family aliases took ~100ms" 경고/지연이 발행된다.
+    app.setFont(QFont("Cascadia Mono", 11))
 
     win = MainWindow()
     win.show()
@@ -6548,7 +6562,15 @@ def truncate_for_full_log(out, max_lines=6, max_width=160):
 
 
 def _ffmpeg_version(path, timeout=3):
-    """`ffmpeg -version` 첫 줄에서 버전 추출 (예: '7.1.1'). 실패 시 None."""
+    """`ffmpeg -version`에서 숫자 코어 버전(MAJOR.MINOR[.PATCH]) 추출. 실패 시 None.
+
+    - 표준/홈브루: 'ffmpeg version 9.0.1' → 9.0.1
+    - extra version/빌드 태그/일자(YYYMMDD) 접미는 정규식으로 절단:
+      '9.0.1_1'·'7.1.1-20240815-g…' → 9.0.1 · 7.1.1
+      (homebrew bottle Cellar/ffmpeg/9.0.1_1 처럼 configuration 줄에만
+      extra version이 드러나는 경우도 그대로 대응)
+    - 첫 줄 미매치(N-일자 빌드 등) 시 configuration 줄 폴백: '…/ffmpeg/9.0.1_1'
+    """
     try:
         import re
         out = subprocess.run(
@@ -6560,8 +6582,12 @@ def _ffmpeg_version(path, timeout=3):
             timeout=timeout,
             creationflags=_NO_WINDOW if os.name == "nt" else 0,
         )
-        line = (out.stdout or out.stderr or "").splitlines()[0]
-        m = re.search(r"version\s+([0-9][0-9.]*)", line)
+        text = (out.stdout or out.stderr or "")
+        # 1) 표준 첫 줄 — 숫자 코어 3단만 (extra version 접미부 미포함)
+        m = re.search(r"ffmpeg version\s+(\d+(?:\.\d+){1,2})", text)
+        if not m:
+            # 2) configuration 줄 폴백 — --prefix=…/ffmpeg/9.0.1_1
+            m = re.search(r"ffmpeg[/\\\-](\d+(?:\.\d+){1,2})(?![0-9.])", text)
         return m.group(1) if m else None
     except Exception:
         return None
@@ -6642,9 +6668,45 @@ def _frozen_upgrade_ytdlp(channel="stable"):
         return 0, f"updated to {channel}"
     return 1, "download failed"
 
+def _extract_streamlink_whl(whl_path, site_root):
+    """streamlink whl을 site-packages **루트**에 해제하고 구 dist-info를 정리한다.
+
+    [수리 v3.4.0] 기존 _frozen_upgrade_streamlink는 whl을 pkg_dir(=streamlink/
+    코드 폴더 내부)에 풀어 importlib.metadata가 읽는 streamlink-*.dist-info 가
+    구버전(예: 8.5.0) 그대로 남았다 → is_outdated()가 항상 True → 매 기동마다
+    'update streamlink updated' 반복 루프가 돌았다.
+
+    올바른 해제 위치는 site-packages 루트(streamlink/ 코드 + streamlink-<ver>
+    .dist-info/ 메타데이터가 나란히 놓이는 곳)다. 구 dist-info는 제거해
+    importlib.metadata가 신규 버전을 단일 판독하도록 보장한다.
+
+    반환: 성공 여부. (순수 함수 — 테스트 가능)
+    """
+    import zipfile
+    keep_dist = None
+    try:
+        with zipfile.ZipFile(whl_path) as zf:
+            for name in zf.namelist():
+                if name.endswith(".dist-info/") and name.startswith("streamlink-"):
+                    keep_dist = name.rstrip("/")
+        if not _extract_from_whl(whl_path, site_root):
+            return False
+        if keep_dist:
+            import glob
+            for old in glob.glob(os.path.join(site_root, "streamlink-*.dist-info")):
+                if os.path.basename(old) != keep_dist:
+                    shutil.rmtree(old, ignore_errors=True)
+        return True
+    except Exception:
+        return False
+
+
 def _frozen_upgrade_streamlink():
     """PyInstaller frozen build: streamlink를 직접 다운로드하여 교체.
-    PyPI whl에서 패키지 전체를 site-packages에 압축 해제.
+
+    PyPI whl에서 패키지 전체를 site-packages에 압축 해제 — 코드 폴더가 아닌
+    site-packages **루트**에 풀어야 streamlink-<ver>.dist-info 메타데이터가
+    importlib.metadata에 반영된다 (_extract_streamlink_whl 참고).
     """
     try:
         import streamlink
@@ -6661,7 +6723,9 @@ def _frozen_upgrade_streamlink():
             whl_path = os.path.join(tmp, "streamlink.whl")
             if not _download_to(whl_url, whl_path):
                 return 1, "whl download failed"
-            if _extract_from_whl(whl_path, pkg_dir):
+            if _extract_streamlink_whl(whl_path, os.path.dirname(pkg_dir)):
+                import importlib
+                importlib.invalidate_caches()
                 return 0, "updated to latest"
         return 1, "whl extract failed"
     except Exception as e:
@@ -10117,14 +10181,14 @@ class _POTWorker(QThread):
         - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
         """
         if self.mode == "prewarm":
-            raw_log.raw("pot", str(msg), is_status=is_status, is_error=is_error)
+            raw_log.raw("POT", str(msg), is_status=is_status, is_error=is_error)
             return
         stage = "SYS" if is_error else "POT"
         status = "FAIL" if is_error else ("RUN" if is_status else "OK")
         event = LogEvent(stage=stage, status=status, scope="POT",
                          msg=str(msg),
                          is_status=is_status, is_error=is_error)
-        raw_log.raw("pot", event, to_tui=True)
+        raw_log.raw("POT", event, to_tui=True)
 
     def _dbg(self, msg):
         """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지).
@@ -10134,11 +10198,11 @@ class _POTWorker(QThread):
         - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
         """
         if self.mode == "prewarm":
-            raw_log.raw("pot-DEBUG", str(msg))
+            raw_log.raw("POT-DEBUG", str(msg))
         else:
             event = LogEvent(stage="POT", status="RUN", scope="POT",
                              msg=str(msg))
-            raw_log.raw("pot", event, to_tui=True)
+            raw_log.raw("POT", event, to_tui=True)
     
     def _run(self):
         from chzzktube.infra.pot_server import probe_server, latest_server_ver, server_installed_ver
@@ -10237,7 +10301,9 @@ class POTManager(QObject):
         self._worker = worker
         worker.finished_signal.connect(self._on_worker_finished)
         worker.start()
-        self.pot_status_changed.emit("starting" if mode == "gate" else "staging")
+        # [모드별 토큰] gate="starting" / prewarm="prewarm" — Coordinator가
+        # 이 토큰을 raw 버스에 로그로 남긴다 (의미 왜곡 방지).
+        self.pot_status_changed.emit("starting" if mode == "gate" else "prewarm")
 
     def _on_worker_finished(self, ok: bool, msg: str):
         # Qt may deliver this callback after cancel(); ignore stale workers.
@@ -10261,7 +10327,9 @@ class POTManager(QObject):
             else:
                 return
 
-        self.pot_status_changed.emit("staged" if ok else "failed")
+        # [토큰 정합] 상태 토큰은 실제 _mode("staged"/"ready")를 그대로 emit —
+        # gate 성공을 "staged"로 잘못 보고하던 잠재 버그 수리.
+        self.pot_status_changed.emit(self._mode if ok else "failed")
         # [READY 게이트 계약] pot_finished의 msg는 상태 토큰("staged"/"ready"/"failed")으로만
         # 발행한다 — StartupCoordinator.report_pot이 정확 일치로 READY를 판정한다.
         # 사람이 읽는 상세 메시지("prewarm staged", "pot server bound ...")는
@@ -10403,7 +10471,25 @@ class StartupCoordinator(QObject):
     # ── POTManager 시그널 핸들러 ──────────────────────────────
 
     def _on_pot_status(self, status: str):
+        # View로만 포워드하던 것을 raw 버스에도 태워 TUI/F12/history에 남긴다.
+        # [토글 계약] 시동 → 가동 → lazy 대기 전환이 메인/풀 로그에 모두 기록된다
+        # (앱 동작 전량 기록 원칙 — HANDOVER §9).
         self.pot_status_changed.emit(status)
+        from chzzktube.core.raw_log import raw
+        from chzzktube.core.log_emitter import emit_event
+        _POT_TOGGLE = {
+            "prewarm":  ("RUN",  "server staging..."),
+            "starting": ("RUN",  "server starting..."),
+            "staged":   ("OK",   "server staged — lazy standby"),
+            "ready":    ("OK",   "server running"),
+            "failed":   ("FAIL", "server failed"),
+        }
+        st, msg = _POT_TOGGLE.get(status, ("RUN", str(status)))
+        raw(
+            "startup",
+            emit_event("POT", st, "POT", msg, is_error=(st == "FAIL")),
+            to_tui=True,
+        )
 
     def _on_pot_finished(self, ok: bool, msg: str):
         self.report_pot(ok, msg)

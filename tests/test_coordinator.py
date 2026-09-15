@@ -68,3 +68,52 @@ class TestForceUnlock:
         coord.report_ready(True, "second")
         # 두 번째 호출은 무시
         assert coord._ready_emitted is True
+
+
+class TestPotStatusBusWiring:
+    """[회귀 v3.4.0] pot_status_changed → raw 버스 배선 검증.
+
+    기존엔 Coordinator가 Signal만 포워드하고 아무도 로그로 남기지 않아
+    POT 시동→가동→lazy 전환 토글이 메인/풀 로그에 전부 누락됐다
+    (앱 동작 전량 기록 원칙 위반). 이제는 raw 버스에 반드시 기록된다.
+    """
+
+    def test_pot_status_wired_to_raw_bus(self):
+        import time
+
+        import chzzktube.core.raw_log as raw_log
+
+        events = []
+        raw_log.subscribe_concise(
+            lambda ev, is_status, is_error: events.append(ev)
+        )
+        coord = StartupCoordinator(Mock())
+        coord._on_pot_status("staged")
+
+        deadline = time.time() + 2.0
+        while time.time() < deadline and not events:
+            time.sleep(0.02)
+        assert events, "POT 상태 변경이 raw 버스에 기록되지 않음"
+        ev = events[-1]
+        assert ev.stage == "POT"
+        assert ev.status == "OK"
+        assert "lazy" in ev.msg
+
+    def test_pot_failed_maps_to_fail_status(self):
+        import time
+
+        import chzzktube.core.raw_log as raw_log
+
+        events = []
+        raw_log.subscribe_concise(
+            lambda ev, is_status, is_error: events.append(ev)
+        )
+        coord = StartupCoordinator(Mock())
+        coord._on_pot_status("failed")
+
+        deadline = time.time() + 2.0
+        while time.time() < deadline and not events:
+            time.sleep(0.02)
+        ev = [e for e in events if getattr(e, "stage", "") == "POT"][-1]
+        assert ev.status == "FAIL"
+        assert ev.is_error is True
