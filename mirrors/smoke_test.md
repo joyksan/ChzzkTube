@@ -36,6 +36,7 @@ def test_main():
     from chzzktube.ui.main_window import MainWindow
 
     app = _setup_app()
+    assert app is not None  # [교정] 미사용 변수 경고 해소 및 App 인스턴스 생존 단언
 
     try:
         win = MainWindow()

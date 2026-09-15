@@ -110,6 +110,7 @@ def test_main():
     from chzzktube.ui.main_window import MainWindow
 
     app = _setup_app()
+    assert app is not None  # [교정] 미사용 변수 경고 해소 및 App 인스턴스 생존 단언
 
     try:
         win = MainWindow()
@@ -429,7 +430,7 @@ if __name__ == "__main__":
 import os
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -593,24 +594,33 @@ class CookieSelectDialog(QDialog):
                 self.selected_type = "cookie_file"
                 self.selected_path = path
                 self.accept()
-        else:
-            if b_type in ["chrome", "edge", "whale", "chromium", "brave", "vivaldi"]:
-                try:
-                    import yt_dlp.cookies
-                    yt_dlp.cookies.extract_cookies_from_browser(b_type)
-                except Exception as ex:
-                    show_info_message(
-                        self,
-                        "Error",
-                        f"Failed to read browser ({b_type}) cookies.\n\nThe browser may be running, or\nsecurity policy (permission denied) blocks access.",
-                        detail=str(ex),
-                        is_error=True,
-                    )
-                    return
+            return
 
-            self.selected_type = b_type
-            self.selected_path = ""
-            self.accept()
+        supported_browsers = {"chrome", "edge", "whale", "chromium", "brave", "vivaldi"}
+        if b_type in supported_browsers:
+            try:
+                # [해결] 런타임 안정성과 정적 분석기 무결성을 동시에 보장하는 동적 안전 추출
+                import importlib
+                cookies_mod = importlib.import_module("yt_dlp.cookies")
+                extract_fn = getattr(cookies_mod, "extract_cookies_from_browser", None)
+                if not callable(extract_fn):
+                    raise RuntimeError("extract_cookies_from_browser entrypoint not found in yt-dlp")
+
+                extract_fn(b_type)
+            except Exception as ex:
+                show_info_message(
+                    self,
+                    "Error",
+                    f"Failed to read browser ({b_type}) cookies.\n\n"
+                    "The browser may be running, or security policy blocks access.",
+                    detail=str(ex),
+                    is_error=True,
+                )
+                return
+
+        self.selected_type = b_type
+        self.selected_path = ""
+        self.accept()
 
 
 class ActionCountdownDialog(QDialog):
@@ -1235,9 +1245,6 @@ class VerboseLogWindow(QDialog):
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
 from collections import deque
-import re
-import time
-import unicodedata
 from chzzktube.ui.theme import (
     LOG_COLOR_ACCENT,
     LOG_COLOR_DIM,
