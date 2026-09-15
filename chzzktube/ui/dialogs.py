@@ -1,6 +1,7 @@
 ##### 팝업 다이얼로그 모음
 import os
-import chzzktube.infra.updater as updater
+from typing import TYPE_CHECKING
+
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
@@ -9,7 +10,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -19,11 +19,18 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
 import chzzktube.ui.theme as theme
+import chzzktube.core.config as config
+
+if TYPE_CHECKING:
+    from chzzktube.ui.main_window import MainWindow
+
 try:
     import winsound
 except ImportError:
     winsound = None
+
 
 def show_info_message(parent, title, text, detail=None, is_error=False):
     msg_box = QMessageBox(parent)
@@ -71,32 +78,37 @@ class CustomComboBox(QComboBox):
             self.setItemData(self.count() - 1, userData)
 
 
+# 2026-09-15 가로 폭 360 -> 280으로 수정
 class ExitConfirmDialog(QDialog):
     def __init__(self, parent=None, is_running=False):
         super().__init__(parent)
         self.is_running = is_running
         self.setWindowTitle("ChzzkTube")
-        self.setFixedSize(360, 130)
+        # [교정] 좌우로 휑하던 폭을 360 -> 280으로 축소, 컴팩트한 비례 구축
+        self.setFixedSize(280, 125)
         self.setWindowFlags(
             self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint
         )
-        vbox = QVBoxLayout(self)
-        vbox.setSpacing(15)
-        vbox.setContentsMargins(20, 20, 20, 20)
+        self.setStyleSheet(theme.DIALOG_BG_QSS)
 
-        # 1. 상태별 문구 직관화 (따옴표 제거 및 명확한 의도 전달)
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(14)
+        vbox.setContentsMargins(16, 16, 16, 16)
+
         if self.is_running:
             msg = "⚠️ A download is in progress.\nStop and exit ChzzkTube?"
         else:
             msg = "Exit ChzzkTube?"
 
+        # [교정] 텍스트 완전 중앙 정렬 적용
         lbl = QLabel(msg)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setWordWrap(True)
-        lbl.setStyleSheet("font-size: 12px; color: #e3e3e3; line-height: 1.4;")
+        lbl.setStyleSheet("font-size: 11px; color: #e3e3e3; line-height: 1.4;")
         vbox.addWidget(lbl)
 
         btn_box = QHBoxLayout()
-        btn_box.setSpacing(10)
+        btn_box.setSpacing(8)
 
         btn_exit = QPushButton("Exit")
         btn_exit.setStyleSheet(theme.BTN_EXIT_DANGER_QSS)
@@ -271,18 +283,27 @@ class CookieViewerDialog(QDialog):
 
 
 # [raw 상세 로그] DEPS 확인 시 실제 CLI를 실행해 셸에서 친 것과 동일한 원문을
+# 2026-09-15 모던 TUI 하이퍼미니멀리즘 전면 개편
 # F12 상세 로그에 기록한다. yt-dlp --version → '2026.08.19', streamlink
 # --version → 'streamlink 8.5.0' 식의 터미널 출력 그대로.
 class SettingsDialog(QDialog):
-    def __init__(self, parent=None, is_running=False):
+    """하이퍼미니멀 모던 TUI 스타일 설정 패널 (Flat, Monospace, Borderless)."""
+
+    def __init__(self, parent: "MainWindow | None" = None, is_running: bool = False):
         super().__init__(parent)
-        self.parent_win = parent
-        self.cfg = parent.cfg
+        self.parent_win: "MainWindow | None" = parent
+        self.cfg = (
+            parent.cfg
+            if parent and hasattr(parent, "cfg")
+            else config.load_config()
+        )
         self.is_running = is_running
-        self._loading = True  # 초기 값 주입 중에는 저장 스킵
-        self.setWindowTitle("설정")
-        self.setFixedSize(480, 640)
-        self.setStyleSheet( "QDialog { background-color: #0d0d0d; color: #d4d4d4; }" "QLabel { color: #cccccc; font-size: 11px; }" "QLabel[role=\"key\"] { color: #4ec9b0; font-weight: bold; }" "QCheckBox { color: #d4d4d4; spacing: 6px; }" "QCheckBox::indicator { width: 14px; height: 14px; border: 1px solid #2a2a2a; background: #161616; border-radius: 2px; }" "QCheckBox::indicator:checked { background: #4ec9b0; border-color: #4ec9b0; }" "QPushButton { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; padding: 4px 12px; font-size: 11px; }" "QPushButton:hover { border-color: #4ec9b0; color: #4ec9b0; }" "QPushButton:disabled { color: #555555; border-color: #1a1a1a; }" "QComboBox { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; padding: 4px 8px; font-size: 11px; }" "QComboBox:hover { border-color: #4ec9b0; }" "QComboBox::drop-down { border: none; width: 18px; }" "QComboBox QAbstractItemView { background: #161616; color: #d4d4d4; border: 1px solid #2a2a2a; selection-background-color: #264f78; outline: none; }" )
+        self._loading = True
+
+        self.setWindowTitle("Settings")
+        self.setFixedSize(660, 680)
+        self.setStyleSheet(theme.TUI_STYLE)
+
         self.init_ui()
         self.load_settings()
         self._loading = False
@@ -290,439 +311,321 @@ class SettingsDialog(QDialog):
     def closeEvent(self, event):
         event.accept()
 
+    # ── 자체 방어적 위임 메서드 ───────────────────────────────
+    def save_cfg(self):
+        if self.parent_win and hasattr(self.parent_win, "save_cfg"):
+            self.parent_win.save_cfg()
+        else:
+            config.save_config(self.cfg)
+
+    def update_ui_state(self):
+        if self.parent_win and hasattr(self.parent_win, "update_ui_state"):
+            self.parent_win.update_ui_state()
+
+    # ── [복구] 누락되었던 TUI 빌더 헬퍼 4종 ────────────────────
+    def _tui_sep(self):
+        """1px 단색 TUI 구분선 생성."""
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet("background-color: #1a1a1a; max-height: 1px; min-height: 1px; border: none;")
+        return line
+
+    def _sec_header(self, text):
+        """아스키 스타일 섹션 헤더 라벨 생성."""
+        lbl = QLabel(f"// {text}")
+        lbl.setStyleSheet("color: #4ec9b0; font-weight: bold; font-size: 11px; padding-top: 6px;")
+        return lbl
+
+    def _key_label(self, text, width=120):
+        """키 라벨 고정폭 생성."""
+        lbl = QLabel(text)
+        lbl.setFixedWidth(width)
+        lbl.setStyleSheet("color: #888888; font-size: 11px;")
+        return lbl
+
+    def _make_combo(self, options):
+        """TUI 스타일 드롭다운 콤보박스 생성."""
+        cb = CustomComboBox()
+        cb.setStyleSheet("""
+            QComboBox { background-color: #141414; color: #d4d4d4; border: 1px solid #282828; padding: 3px 8px; font-size: 11px; }
+            QComboBox:hover { border-color: #4ec9b0; }
+            QComboBox::drop-down { border: none; width: 14px; }
+            QComboBox QAbstractItemView { background-color: #141414; color: #d4d4d4; border: 1px solid #333333; selection-background-color: #1d3a34; selection-color: #4ec9b0; outline: none; }
+        """)
+        for k, v in options:
+            cb.addItem(v, k)
+        return cb
+
+    # ── UI 조립 ───────────────────────────────────────────────
     def init_ui(self):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        # 1. 상단 스크롤 영역
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setStyleSheet(theme.SETTINGS_SCROLL_QSS)
+
         body = QWidget()
+        body.setStyleSheet("background-color: #0d0d0d;")
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)
 
         layout = QVBoxLayout(body)
-        layout.setSpacing(10)
-        layout.setContentsMargins(16, 14, 16, 14)
-        # TUI 패널 일체화 — 다크 콘솔 + 민트 액센트
+        layout.setSpacing(8)
+        layout.setContentsMargins(20, 14, 20, 14)
 
-        def make_combo(options, width):
-            cb = CustomComboBox()
-            cb.setFixedWidth(width)
-            for k, v in options:
-                cb.addItem(v, k)
-            return cb
+        # ── 1. CONTAINER & FORMAT ──
+        layout.addWidget(self._sec_header("CONTAINER & FORMAT"))
+        layout.addWidget(self._tui_sep())
 
-        row1 = QHBoxLayout()
-        _sec1 = QGroupBox("Container")
-        _sec1.setProperty("class", "tui-panel")
-        _sec1.setLayout(row1)
-        row1.addWidget(QLabel("Container"))
-        row1.addStretch()
-        self.cb_container = make_combo(
-            [
-                ("mkv", "mkv (general / full subtitle support)"),
-                ("mp4", "mp4 (mobile & universal player)"),
-                ("webm", "webm (web upload & efficient)"),
-            ],
-            250,
-        )
+        r_cont = QHBoxLayout()
+        r_cont.addWidget(self._key_label("Container"))
+        self.cb_container = self._make_combo([
+            ("mkv", "mkv (universal subtitle)"),
+            ("mp4", "mp4 (broad compatibility)"),
+            ("webm", "webm (web efficient)"),
+        ])
         self.cb_container.currentIndexChanged.connect(
             lambda: self._apply_change("container", self.cb_container.currentData())
         )
-        row1.addWidget(self.cb_container)
-        layout.addWidget(_sec1)
+        r_cont.addWidget(self.cb_container, 1)
+        layout.addLayout(r_cont)
 
-        cookie_box = QFrame()
-        cookie_box.setObjectName("cookie_section")
-        cookie_box.setProperty("class", "tui-panel")
-        try:
-            cookie_box.setTitle("Cookie")
-        except Exception:
-            pass
-        cookie_box.setObjectName("cookie_box")
-        cookie_box.setStyleSheet(
-            "QFrame#cookie_box { border: 1px solid #3d3d3d; border-radius: 6px; background-color: #1e1e1e; }"
-        )
-        cookie_layout = QVBoxLayout(cookie_box)
-        cookie_layout.setContentsMargins(12, 10, 12, 10)
-        cookie_layout.setSpacing(8)
-
-        cookie_lbl = QLabel("Cookie (age / membership)")
-        cookie_lbl.setStyleSheet(theme.DLG_SECTION_TITLE_QSS)
-        cookie_layout.addWidget(cookie_lbl)
-
-        self.lbl_cookie_status = QLabel(self._cookie_status_text())
-        self.lbl_cookie_status.setStyleSheet(theme.DLG_STATUS_QSS)
-        cookie_layout.addWidget(self.lbl_cookie_status)
-
-        c_hlay = QHBoxLayout()
-        c_hlay.setSpacing(8)
-        self.cookie_buttons = []
-        for text, func in [
-            ("View...", self.view_cookie),
-            ("Load...", self.load_cookie),
-            ("Reset", self.reset_cookie),
-        ]:
-            btn = self._ghost_btn(text, func)
-            self.cookie_buttons.append(btn)
-            c_hlay.addWidget(btn, 1)
-        cookie_layout.addLayout(c_hlay)
-
-        yt_hlay = QHBoxLayout()
-        yt_hlay.setSpacing(8)
-        yt_hlay.addWidget(QLabel("YouTube Client"))
-        yt_hlay.addStretch()
-        self.cb_yt_client = make_combo(
-            [
-                ("auto", "auto (default)"),
-                ("tv", "tv (age-gated recommended)"),
-                ("web_safari", "web_safari (session invalid)"),
-                ("tv_simply", "tv_simply"),
-                ("mweb", "mweb"),
-            ],
-            210,
-        )
-        self.cb_yt_client.currentIndexChanged.connect(
-            lambda: self._apply_change(
-                "yt_player_client", self.cb_yt_client.currentData()
-            )
-        )
-        yt_hlay.addWidget(self.cb_yt_client)
-        cookie_layout.addLayout(yt_hlay)
-        layout.addWidget(cookie_box)
-
-        opt_lbl = QLabel("Download Options")
-        opt_lbl.setStyleSheet(theme.DLG_SECTION_TITLE_QSS)
-        layout.addWidget(opt_lbl)
-
-        self.chk_sub = QCheckBox()
-        self.chk_audio = QCheckBox()
-        self.chk_dedup = QCheckBox()
-        self.chk_fast = QCheckBox()
-        self.chk_auto_open = QCheckBox()
-        self.chk_sound = QCheckBox()
-        self.chk_thumb = QCheckBox()
-        self.chk_chapters = QCheckBox()
-
-        self.chk_sub.toggled.connect(
-            lambda v: self._apply_change("embed_subtitles", v)
-        )
-        self.chk_thumb.toggled.connect(
-            lambda v: self._apply_change("embed_thumbnail", v)
-        )
-        self.chk_chapters.toggled.connect(
-            lambda v: self._apply_change("embed_chapters", v)
-        )
-        self.chk_audio.toggled.connect(self._on_audio_only_toggled)
-        self.chk_dedup.toggled.connect(
-            lambda v: self._apply_change("remove_duplicates", v)
-        )
-        self.chk_fast.toggled.connect(lambda v: self._apply_change("fast_download", v))
-        self.chk_auto_open.toggled.connect(
-            lambda v: self._apply_change("auto_open_folder", v)
-        )
-        self.chk_sound.toggled.connect(lambda v: self._apply_change("play_sound", v))
-
-        chk_items = [
-            (self.chk_sub, "Embed subtitles (SRT auto-convert + merge)"),
-            (self.chk_thumb, "Embed thumbnail (cover art)"),
-            (self.chk_chapters, "Embed chapters + metadata"),
-            (self.chk_audio, "Audio only (MP3)"),
-            (self.chk_dedup, "Auto-remove duplicate URLs"),
-            (self.chk_fast, "Fast segmented download (5 threads)"),
-            (self.chk_auto_open, "Open folder on finish"),
-            (self.chk_sound, "Play completion sound"),
-        ]
-
-        chk_style = """
-            QCheckBox {
-                background: transparent;
-                border: none;
-                outline: none;
-            }
-            QCheckBox::indicator:unchecked {
-                width: 14px;
-                height: 14px;
-                border: 1.5px solid #888888;
-                border-radius: 3px;
-                background-color: #1e1e1e;
-                image: none;
-            }
-            QCheckBox[custom_hover="true"]::indicator:unchecked {
-                width: 14px;
-                height: 14px;
-                border: 1.5px solid #d4d4d4;
-                border-radius: 3px;
-                background-color: #d4d4d4;
-                image: none;
-            }
-            QCheckBox::indicator:checked {
-                width: 14px;
-                height: 14px;
-                border: 1.5px solid #d4d4d4;
-                border-radius: 3px;
-                background-color: #d4d4d4;
-                image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%231e1e1e' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
-            }
-            QCheckBox[custom_hover="true"]::indicator:checked {
-                width: 14px;
-                height: 14px;
-                border: 1.5px solid #ffffff;
-                border-radius: 3px;
-                background-color: #ffffff;
-                image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%231e1e1e' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
-            }
-        """
-
-        def update_chk_style(c):
-            c.style().unpolish(c)
-            c.style().polish(c)
-
-        for chk, text in chk_items:
-            chk.setStyleSheet(chk_style)
-            chk.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            chk.setProperty("custom_hover", False)
-            chk.setProperty("suppress_hover", False)
-
-            lbl = QLabel(text)
-            lbl.setStyleSheet(
-                "color: #d4d4d4; background: transparent; font-size: 12px;"
-            )
-            lbl.setCursor(Qt.CursorShape.PointingHandCursor)
-            lbl.mousePressEvent = lambda event, c=chk: (
-                c.toggle() if c.isEnabled() else None
-            )
-
-            chk.toggled.connect(
-                lambda checked, c=chk: (
-                    (
-                        c.setProperty("suppress_hover", True),
-                        c.setProperty("custom_hover", False),
-                        update_chk_style(c),
-                    )
-                    if not checked
-                    else None
-                )
-            )
-
-            row_widget = QFrame()
-            row_widget.setStyleSheet(
-                "QFrame { background: transparent; border: none; }"
-            )
-            row_chk = QHBoxLayout(row_widget)
-            row_chk.setSpacing(8)
-            row_chk.setContentsMargins(0, 2, 0, 2)
-            row_chk.addWidget(chk)
-            row_chk.addWidget(lbl)
-            row_chk.addStretch()
-
-            def on_enter(e, c=chk):
-                if not c.property("suppress_hover"):
-                    c.setProperty("custom_hover", True)
-                    update_chk_style(c)
-
-            def on_leave(e, c=chk):
-                c.setProperty("suppress_hover", False)
-                c.setProperty("custom_hover", False)
-                update_chk_style(c)
-
-            row_widget.enterEvent = on_enter
-            row_widget.leaveEvent = on_leave
-
-            layout.addWidget(row_widget)
-
-        row2 = QHBoxLayout()
-        _sec2 = QGroupBox("Video Quality")
-        _sec2.setProperty("class", "tui-panel")
-        _sec2.setLayout(row2)
-        row2.addWidget(QLabel("작업 완료 후 동작"))
-        row2.addStretch()
-        self.cb_completion = make_combo(
-            [
-                ("none", "사용 안 함"),
-                ("sleep", "절전 모드 진입"),
-                ("shutdown", "PC 자동 종료"),
-                ("exit_app", "프로그램 종료"),
-            ],
-            250,
-        )
-        self.cb_completion.currentIndexChanged.connect(
-            lambda: self._apply_change(
-                "completion_action", self.cb_completion.currentData()
-            )
-        )
-        row2.addWidget(self.cb_completion)
-        layout.addWidget(_sec2)
-
-        row3 = QHBoxLayout()
-        _sec3 = QGroupBox("Format Picker")
-        _sec3.setProperty("class", "tui-panel")
-        _sec3.setLayout(row3)
-        row3.addWidget(QLabel("해상도 제한"))
-        row3.addStretch()
-        self.cb_max_res = make_combo(
-            [
-                ("none", "(무제한)"),
-                ("2160", "4K (2160p)"),
-                ("1440", "2K (1440p)"),
-                ("1080", "1080p"),
-                ("720", "720p"),
-                ("480", "480p"),
-                ("360", "360p"),
-            ],
-            140,
-        )
+        r_res = QHBoxLayout()
+        r_res.addWidget(self._key_label("Max Resolution"))
+        self.cb_max_res = self._make_combo([
+            ("none", "None (Source Max)"),
+            ("2160", "4K (2160p)"),
+            ("1440", "2K (1440p)"),
+            ("1080", "1080p"),
+            ("720", "720p"),
+            ("480", "480p"),
+            ("360", "360p"),
+        ])
         self.cb_max_res.currentIndexChanged.connect(
             lambda: self._apply_change("max_video_res", self.cb_max_res.currentData())
         )
-        row3.addWidget(self.cb_max_res)
-        row3.addSpacing(12)
-        self.chk_pick = QCheckBox("포맷 직접 고르기 (최고 품질 off)")
-        self.chk_pick.toggled.connect(lambda on: self._apply_change("pick_format", on))
-        row3.addWidget(self.chk_pick)
-        layout.addWidget(_sec3)
+        r_res.addWidget(self.cb_max_res, 1)
 
-        sl_row = QHBoxLayout()
-        _sec_sl = QGroupBox("Streamlink / Post-proc")
-        _sec_sl.setProperty("class", "tui-panel")
-        _sec_sl.setLayout(sl_row)
-        sl_row.addWidget(QLabel("Streamlink 화질"))
-        sl_row.addStretch()
-        self.cb_slq = make_combo(
-            [
-                ("best", "best (auto)"),
-                ("1080p60,1080p,best", "1080p60 → 1080p → best"),
-                ("1080p,best", "1080p → best"),
-                ("720p,best", "720p → best"),
-                ("480p,best", "480p → best"),
-                ("worst", "worst (data-save)"),
-            ],
-            190,
-        )
+        self.chk_pick = QCheckBox("Manual Select")
+        self.chk_pick.setStyleSheet("color: #d4d4d4; font-size: 11px;")
+        self.chk_pick.toggled.connect(lambda on: self._apply_change("pick_format", on))
+        r_res.addWidget(self.chk_pick)
+        layout.addLayout(r_res)
+
+        r_sl = QHBoxLayout()
+        r_sl.addWidget(self._key_label("Streamlink / Sub"))
+        self.cb_slq = self._make_combo([
+            ("best", "best (auto)"),
+            ("1080p60,1080p,best", "1080p60 fallback"),
+            ("720p,best", "720p fallback"),
+            ("worst", "worst (save data)"),
+        ])
         self.cb_slq.currentIndexChanged.connect(
             lambda: self._apply_change("streamlink_quality", self.cb_slq.currentData())
         )
-        sl_row.addWidget(self.cb_slq)
-        sl_row.addSpacing(12)
-        sl_row.addWidget(QLabel("자막 언어"))
-        self.cb_sublangs = make_combo(
-            [
-                ("all", "all"),
-                ("ko,en", "ko + en"),
-                ("ko", "ko"),
-                ("en", "en"),
-            ],
-            110,
-        )
+        r_sl.addWidget(self.cb_slq, 2)
+
+        self.cb_sublangs = self._make_combo([
+            ("all", "Sub: all"),
+            ("ko,en", "Sub: ko+en"),
+            ("ko", "Sub: ko"),
+            ("en", "Sub: en"),
+        ])
         self.cb_sublangs.currentIndexChanged.connect(
             lambda: self._apply_change("subtitle_langs", self.cb_sublangs.currentData())
         )
-        sl_row.addWidget(self.cb_sublangs)
-        sl_row.addSpacing(12)
-        sl_row.addWidget(QLabel("병렬 조각"))
-        self.cb_frags = make_combo(
-            [
-                (4, "4 (default)"),
-                (1, "1 (sequential)"),
-                (2, "2"),
-                (8, "8"),
-                (16, "16"),
-            ],
-            110,
-        )
+        r_sl.addWidget(self.cb_sublangs, 1)
+
+        self.cb_frags = self._make_combo([
+            (4, "Frag: 4"),
+            (1, "Frag: 1"),
+            (8, "Frag: 8"),
+            (16, "Frag: 16"),
+        ])
         self.cb_frags.currentIndexChanged.connect(
             lambda: self._apply_change("concurrent_fragments", self.cb_frags.currentData())
         )
-        sl_row.addWidget(self.cb_frags)
-        layout.addWidget(_sec_sl)
+        r_sl.addWidget(self.cb_frags, 1)
+        layout.addLayout(r_sl)
 
-        format_layout = QHBoxLayout()
-        _sec_filename = QGroupBox("Filename")
-        _sec_filename.setProperty("class", "tui-panel")
-        _flay = QVBoxLayout(_sec_filename)
-        _flay.setContentsMargins(10, 6, 10, 6)
-        _flay.setSpacing(6)
-        _flay.addWidget(QLabel("파일명 형식"))
-        format_layout.addStretch()
-        self.cb_prefix = make_combo(
-            [
-                ("none", "(없음)"),
-                ("uploader", "[채널명]"),
-                ("date_dash_uploader", "YYYY-MM-DD [채널명]"),
-                ("date_compact_uploader", "YYYYMMDD [채널명]"),
-                ("date_dash", "YYYY-MM-DD"),
-                ("date_compact", "YYYYMMDD"),
-            ],
-            140,
+        # ── 2. COOKIE & CLIENT ──
+        layout.addSpacing(6)
+        layout.addWidget(self._sec_header("COOKIE & CLIENT"))
+        layout.addWidget(self._tui_sep())
+
+        r_cookie = QHBoxLayout()
+        r_cookie.addWidget(self._key_label("Cookie Source"))
+        self.lbl_cookie_status = QLabel(self._cookie_status_text())
+        self.lbl_cookie_status.setStyleSheet("color: #ce9178; font-size: 11px;")
+        r_cookie.addWidget(self.lbl_cookie_status, 1)
+
+        self.cookie_buttons = []
+        for text, func in [("View", self.view_cookie), ("Load", self.load_cookie), ("Reset", self.reset_cookie)]:
+            btn = QPushButton(f"[ {text} ]")
+            btn.setStyleSheet(theme.TUI_STYLE)
+            btn.setProperty("class", "tui-tag")
+            btn.clicked.connect(func)
+            self.cookie_buttons.append(btn)
+            r_cookie.addWidget(btn)
+        layout.addLayout(r_cookie)
+
+        r_client = QHBoxLayout()
+        r_client.addWidget(self._key_label("YT Player Client"))
+        self.cb_yt_client = self._make_combo([
+            ("auto", "auto (default)"),
+            ("tv", "tv (age-gated safe)"),
+            ("web_safari", "web_safari"),
+            ("tv_simply", "tv_simply"),
+            ("mweb", "mweb"),
+        ])
+        self.cb_yt_client.currentIndexChanged.connect(
+            lambda: self._apply_change("yt_player_client", self.cb_yt_client.currentData())
         )
+        r_client.addWidget(self.cb_yt_client, 1)
+        layout.addLayout(r_client)
+
+        # ── 3. DOWNLOAD OPTIONS ──
+        layout.addSpacing(6)
+        layout.addWidget(self._sec_header("DOWNLOAD OPTIONS"))
+        layout.addWidget(self._tui_sep())
+
+        self.chk_sub = QCheckBox("Embed subtitles (SRT auto-convert + merge)")
+        self.chk_thumb = QCheckBox("Embed thumbnail (cover art)")
+        self.chk_chapters = QCheckBox("Embed chapters + metadata")
+        self.chk_audio = QCheckBox("Audio only (extract MP3)")
+        self.chk_dedup = QCheckBox("Auto-remove duplicate URLs")
+        self.chk_fast = QCheckBox("Fast segmented download (multi-thread)")
+        self.chk_auto_open = QCheckBox("Open download folder on finish")
+        self.chk_sound = QCheckBox("Play notification sound on complete")
+
+        self.chk_sub.toggled.connect(lambda v: self._apply_change("embed_subtitles", v))
+        self.chk_thumb.toggled.connect(lambda v: self._apply_change("embed_thumbnail", v))
+        self.chk_chapters.toggled.connect(lambda v: self._apply_change("embed_chapters", v))
+        self.chk_audio.toggled.connect(self._on_audio_only_toggled)
+        self.chk_dedup.toggled.connect(lambda v: self._apply_change("remove_duplicates", v))
+        self.chk_fast.toggled.connect(lambda v: self._apply_change("fast_download", v))
+        self.chk_auto_open.toggled.connect(lambda v: self._apply_change("auto_open_folder", v))
+        self.chk_sound.toggled.connect(lambda v: self._apply_change("play_sound", v))
+
+        chk_grid = QHBoxLayout()
+        chk_col1 = QVBoxLayout()
+        chk_col2 = QVBoxLayout()
+        chk_col1.setSpacing(6)
+        chk_col2.setSpacing(6)
+
+        for w in [self.chk_sub, self.chk_thumb, self.chk_chapters, self.chk_audio]:
+            w.setStyleSheet("color: #d4d4d4; font-size: 11px;")
+            chk_col1.addWidget(w)
+
+        for w in [self.chk_dedup, self.chk_fast, self.chk_auto_open, self.chk_sound]:
+            w.setStyleSheet("color: #d4d4d4; font-size: 11px;")
+            chk_col2.addWidget(w)
+
+        chk_grid.addLayout(chk_col1)
+        chk_grid.addSpacing(14)
+        chk_grid.addLayout(chk_col2)
+        layout.addLayout(chk_grid)
+
+        # ── 4. AUTOMATION & UPDATE ──
+        layout.addSpacing(6)
+        layout.addWidget(self._sec_header("AUTOMATION & UPDATE"))
+        layout.addWidget(self._tui_sep())
+
+        r_comp = QHBoxLayout()
+        r_comp.addWidget(self._key_label("Post-Action"))
+        self.cb_completion = self._make_combo([
+            ("none", "None (Idle)"),
+            ("sleep", "Enter Sleep Mode"),
+            ("shutdown", "Shutdown Computer"),
+            ("exit_app", "Exit Program"),
+        ])
+        self.cb_completion.currentIndexChanged.connect(
+            lambda: self._apply_change("completion_action", self.cb_completion.currentData())
+        )
+        r_comp.addWidget(self.cb_completion, 1)
+        layout.addLayout(r_comp)
+
+        r_upd = QHBoxLayout()
+        r_upd.addWidget(self._key_label("Update Channel"))
+        self.cb_update_channel = self._make_combo([
+            ("stable", "Stable (Release)"),
+            ("nightly", "Nightly (Latest bypass)"),
+        ])
+        self.cb_update_channel.currentIndexChanged.connect(
+            lambda: self._apply_change("update_channel", self.cb_update_channel.currentData())
+        )
+        r_upd.addWidget(self.cb_update_channel, 1)
+
+        self.chk_auto_update = QCheckBox("Check updates on launch")
+        self.chk_auto_update.setStyleSheet("color: #d4d4d4; font-size: 11px;")
+        self.chk_auto_update.toggled.connect(lambda on: self._apply_change("auto_update_check", on))
+        r_upd.addWidget(self.chk_auto_update)
+        layout.addLayout(r_upd)
+
+        # ── 5. FILENAME TEMPLATE ──
+        layout.addSpacing(6)
+        layout.addWidget(self._sec_header("FILENAME TEMPLATE"))
+        layout.addWidget(self._tui_sep())
+
+        r_fn = QHBoxLayout()
+        r_fn.addWidget(self._key_label("Pattern"))
+        self.cb_prefix = self._make_combo([
+            ("none", "Prefix: None"),
+            ("uploader", "Prefix: [Channel]"),
+            ("date_dash_uploader", "Prefix: YYYY-MM-DD [Channel]"),
+            ("date_compact_uploader", "Prefix: YYYYMMDD [Channel]"),
+            ("date_dash", "Prefix: YYYY-MM-DD"),
+            ("date_compact", "Prefix: YYYYMMDD"),
+        ])
         self.cb_prefix.currentIndexChanged.connect(
             lambda: self._apply_change("filename_prefix", self.cb_prefix.currentData())
         )
-        format_layout.addWidget(self.cb_prefix)
+        r_fn.addWidget(self.cb_prefix, 2)
 
-        lbl_title = QLabel("제목")
-        lbl_title.setFixedWidth(45)
-        lbl_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_title.setStyleSheet(
-            "font-weight: bold; background: transparent; border: none;"
-        )
-        format_layout.addWidget(lbl_title)
-
-        self.cb_suffix = make_combo(
-            [
-                ("id_res_fps", "[ID] [해상도] [fps]"),
-                ("id_res", "[ID] [해상도]"),
-                ("id", "[ID]"),
-            ],
-            130,
-        )
+        self.cb_suffix = self._make_combo([
+            ("id_res_fps", "Suffix: [ID] [Res] [fps]"),
+            ("id_res", "Suffix: [ID] [Res]"),
+            ("id", "Suffix: [ID]"),
+        ])
         self.cb_suffix.currentIndexChanged.connect(
             lambda: self._apply_change("filename_suffix", self.cb_suffix.currentData())
         )
-        format_layout.addWidget(self.cb_suffix)
-        _flay.addLayout(format_layout)
+        r_fn.addWidget(self.cb_suffix, 2)
+        layout.addLayout(r_fn)
 
-        self.lbl_filename_preview = QLabel("미리보기  :  동영상제목.mp4")
-        self.lbl_filename_preview.setStyleSheet(
-            "color: #64b5f6; font-size: 11px; padding-left: 2px;"
-        )
-        _flay.addWidget(self.lbl_filename_preview)
-        layout.addWidget(_sec_filename)
+        self.lbl_filename_preview = QLabel("Preview : title.mp4")
+        self.lbl_filename_preview.setStyleSheet("color: #4ec9b0; font-size: 11px; padding-left: 120px;")
+        layout.addWidget(self.lbl_filename_preview)
 
         self.cb_prefix.currentIndexChanged.connect(self.update_filename_preview)
         self.cb_suffix.currentIndexChanged.connect(self.update_filename_preview)
         self.cb_container.currentIndexChanged.connect(self.update_filename_preview)
-        self.update_filename_preview()
-
-        # ── Update Channel 섹션 ──
-        update_row = QHBoxLayout()
-        _sec_update = QGroupBox("Update Channel")
-        _sec_update.setProperty("class", "tui-panel")
-        _sec_update.setLayout(update_row)
-        update_row.addWidget(QLabel("채널"))
-        update_row.addStretch()
-        self.cb_update_channel = make_combo(
-            [
-                ("stable", "Stable (안정)"),
-                ("nightly", "Nightly (최신 우회)"),
-            ],
-            140,
-        )
-        self.cb_update_channel.currentIndexChanged.connect(
-            lambda: self._apply_change("update_channel", self.cb_update_channel.currentData())
-        )
-        update_row.addWidget(self.cb_update_channel)
-        update_row.addSpacing(12)
-        self.chk_auto_update = QCheckBox("시작 시 자동 확인")
-        self.chk_auto_update.toggled.connect(lambda on: self._apply_change("auto_update_check", on))
-        update_row.addWidget(self.chk_auto_update)
-        layout.addWidget(_sec_update)
 
         layout.addStretch()
 
+        # 2. 하단 고정 풋터 액션 바
+        outer.addWidget(self._tui_sep())
+
+        footer = QWidget()
+        footer.setStyleSheet("background-color: #0d0d0d;")
+        footer_layout = QHBoxLayout(footer)
+        footer_layout.setContentsMargins(18, 8, 18, 10)
+        footer_layout.addStretch()
+
+        btn_done = QPushButton("[ Close: Esc ]")
+        btn_done.setProperty("class", "tui-tag")
+        btn_done.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_done.clicked.connect(self.close)
+        footer_layout.addWidget(btn_done)
+
+        outer.addWidget(footer)
+
+    # ── 비즈니스 로직 & 내부 헬퍼 ──────────────────────────────
     def update_filename_preview(self):
         import datetime
         today = datetime.datetime.now()
@@ -731,9 +634,9 @@ class SettingsDialog(QDialog):
 
         prefix_map = {
             "none": "",
-            "uploader": "[채널명] ",
-            "date_dash_uploader": f"{date_dash} [채널명] ",
-            "date_compact_uploader": f"{date_compact} [채널명] ",
+            "uploader": "[Channel] ",
+            "date_dash_uploader": f"{date_dash} [Channel] ",
+            "date_compact_uploader": f"{date_compact} [Channel] ",
             "date_dash": f"{date_dash} ",
             "date_compact": f"{date_compact} ",
         }
@@ -744,9 +647,8 @@ class SettingsDialog(QDialog):
         }
         p_text = prefix_map.get(self.cb_prefix.currentData(), "")
         s_text = suffix_map.get(self.cb_suffix.currentData(), "")
-        ext = self.cb_container.currentData()
-        preview_str = f"미리보기  :  {p_text}동영상제목{s_text}.{ext}"
-        self.lbl_filename_preview.setText(preview_str)
+        ext = self.cb_container.currentData() or "mp4"
+        self.lbl_filename_preview.setText(f"Preview : {p_text}Video_Title{s_text}.{ext}")
 
     def load_settings(self):
         def set_combo(cb, val):
@@ -775,20 +677,15 @@ class SettingsDialog(QDialog):
         self.chk_auto_open.setChecked(self.cfg.get("auto_open_folder", True))
         self.chk_sound.setChecked(self.cfg.get("play_sound", True))
         self.chk_auto_update.setChecked(self.cfg.get("auto_update_check", True))
+        self.update_filename_preview()
 
     def view_cookie(self):
         cookie_src = self.cfg.get("browser_cookie", "none")
         content = "로드된 쿠키가 없습니다."
-        if cookie_src == "cookie_file" and os.path.exists(
-            self.cfg.get("cookie_file_path", "")
-        ):
+        if cookie_src == "cookie_file" and os.path.exists(self.cfg.get("cookie_file_path", "")):
             try:
                 with open(self.cfg["cookie_file_path"], "r", encoding="utf-8") as f:
-                    content = f.read(5000) + (
-                        "\n... (생략)"
-                        if os.path.getsize(self.cfg["cookie_file_path"]) > 5000
-                        else ""
-                    )
+                    content = f.read(5000) + ("\n... (생략)" if os.path.getsize(self.cfg["cookie_file_path"]) > 5000 else "")
             except Exception as ex:
                 content = f"파일 읽기 오류: {ex}"
         elif cookie_src not in ["none", "auto"]:
@@ -815,27 +712,16 @@ class SettingsDialog(QDialog):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.cfg["browser_cookie"] = dlg.selected_type
             self.cfg["cookie_file_path"] = dlg.selected_path
-            self.parent_win.save_cfg()
+            self.save_cfg()
             self._refresh_cookie_status()
-            show_info_message(
-                self, "성공", f"쿠키 설정이 완료되었습니다.\n({dlg.selected_type})"
-            )
+            show_info_message(self, "성공", f"쿠키 설정이 완료되었습니다.\n({dlg.selected_type})")
 
     def reset_cookie(self):
         self.cfg["browser_cookie"] = "none"
         self.cfg["cookie_file_path"] = ""
-        self.parent_win.save_cfg()
+        self.save_cfg()
         self._refresh_cookie_status()
         show_info_message(self, "초기화", "쿠키가 초기화되었습니다.")
-
-    def _ghost_btn(self, text, handler):
-        btn = QPushButton(text)
-        btn.setEnabled(not self.is_running)
-        btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn.setFixedHeight(28)
-        btn.setStyleSheet(theme.DLG_GHOST_BTN_QSS)
-        btn.clicked.connect(handler)
-        return btn
 
     def _cookie_status_text(self):
         src = self.cfg.get("browser_cookie", "none")
@@ -856,11 +742,13 @@ class SettingsDialog(QDialog):
         if getattr(self, "_loading", False):
             return
         self.cfg[key] = value
-        self.parent_win.save_cfg()
+        self.save_cfg()
 
     def _on_audio_only_toggled(self, on):
         self._apply_change("audio_only", on)
-        self.parent_win.update_ui_state()
+        self.update_ui_state()
+
+
 class VerboseLogWindow(QDialog):
     """상세(Full Detailed) 로그 전용 서브 윈도우 — 메인 뷰에서 상세 로그 탭을
     분리해 접근한다(F12). MainWindow가 외부로 유출하는 상세 로그를 그대로

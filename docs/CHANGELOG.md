@@ -1,3 +1,12 @@
+### 2026-09-15 - v3.5.1 : UI/다이얼로그 전면 규격 교정 및 모던 TUI 개편
+
+  - `ExitConfirmDialog`: 폭 축소(360×130 → 280×125) 및 경고 텍스트 중앙 정렬(`AlignCenter`) 적용으로 비례 안정화.
+  - `SettingsDialog`: 구형 프레임(`QGroupBox`) 전면 철거, 1px TUI 라인(`_tui_sep`)과 아스키 섹션 헤더(`// SECTION`) 기반 하이퍼미니멀 스타일로 재구축.
+  - `SettingsDialog`: 윈도우 크기 최적화(560×660 fixed) 및 2열 체크박스 그리드 여백 확보로 텍스트 잘림 현상 방지.
+  - `SettingsDialog`: 하단 풋터 액션 바(`[ Close: Esc ]`)를 스크롤 영역 외부로 격리 분리하여 하단 패딩 및 조형미 확보.
+  - `SettingsDialog`: `save_cfg` 및 `update_ui_state` 자체 위임 메서드를 추가하여 부모 창 의존성 완화(독립 실행 및 테스트 안전성 확보).
+  - 코드 클린업: `dialogs.py` 내 미사용 레거시 임포트(`QGroupBox`, `QThread`, `Signal`, `updater`) 영구 제거.
+
 ### 2026-09-15 — v3.5.0 : 레이아웃 리팩터링·pip 오버레이·크래시 수리·표준 준수·검증 강화 (minor 업)
 
 #### 레이아웃 리팩터링 (B2 아키텍처)
