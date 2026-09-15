@@ -1382,6 +1382,11 @@ def main() -> int:
     if os.path.exists(font_path):
         QFontDatabase.addApplicationFont(font_path)
 
+    # [Sans Serif 별칭 탐색 제거] 앱 폰트를 Cascadia Mono로 고정 — QApplication
+    # 기본 폰트 미지정 시 Qt가 제네릭 'Sans Serif' 별칭을 탐색하며
+    # "Populating font family aliases took ~100ms" 경고/지연이 발행된다.
+    app.setFont(QFont("Cascadia Mono", 11))
+
     win = MainWindow()
     win.show()
     return app.exec()
