@@ -15,24 +15,26 @@ for _stream in (sys.stdout, sys.stderr):
             pass
 
 
-def test_main():
-    print("[Smoke Test] PySide6 App 및 MainWindow 초기화 테스트 시작")
+def _setup_app():
+    """공통 QApplication 세팅 (폰트, 스타일)"""
     from PySide6.QtWidgets import QApplication
-    from chzzktube.ui.dialogs import SettingsDialog
-    from chzzktube.ui.main_window import MainWindow
-
-    app = QApplication(sys.argv)
-
-    # [Sans Serif 별칭 탐색 제거] 실제 main()과 동일한 앱 폰트 고정 —
-    # Qt 제네릭 'Sans Serif' 별칭 탐색(100ms+) 경고를 smoke에서도 차단.
     from PySide6.QtGui import QFont, QFontDatabase
     from chzzktube.core.config import BASE_DIR
+    app = QApplication(sys.argv)
     font_path = os.path.join(BASE_DIR, "assets", "CascadiaMono-VariableFont_wght.ttf")
     if os.path.exists(font_path):
         QFontDatabase.addApplicationFont(font_path)
     app.setFont(QFont("Cascadia Mono", 11))
+    return app
 
-    # 윈도우 인스턴스 생성
+
+def test_main():
+    print("[Smoke Test] PySide6 App 및 MainWindow 초기화 테스트 시작")
+    from chzzktube.ui.dialogs import SettingsDialog
+    from chzzktube.ui.main_window import MainWindow
+
+    app = _setup_app()
+
     try:
         win = MainWindow()
         print("[Smoke Test] MainWindow 생성 성공!")
@@ -40,10 +42,6 @@ def test_main():
         assert win.ctrl is not None
         assert hasattr(win, "_force_unlock_input")
         print("[Smoke Test] ctrl.state 확인:", win.ctrl.state)
-        # [다이얼로그 커버] SettingsDialog 실생성 — 콤보/체크박스 초기화가
-        # NameError 없이 완료되는지 검증 (QGroupBox 미import·format__flay
-        # 오타 잠복 결함을 잡기 위해 도입 — 스모크가 다이얼로그를 안 만들어
-        # [TUI 패널 일체화] 결함이 오래 잠복했었다)
         dlg = SettingsDialog(win, is_running=False)
         assert dlg.cb_container.currentData() in ("mp4", "mkv", "webm")
         assert dlg.cb_container.count() == 3
@@ -57,5 +55,73 @@ def test_main():
         traceback.print_exc()
         return 1
 
+
+def debug_show_all_dialogs():
+    """모든 다이얼로그 한 번에 띄워서 크기/폰트/버튼/정렬 육안 검증"""
+    print("[Debug Dialogs] 전체 다이얼로그 프리뷰 모드")
+    app = _setup_app()
+
+    from chzzktube.ui.main_window import MainWindow
+    from chzzktube.ui.dialogs import (
+        ExitConfirmDialog, CookieSelectDialog, ActionCountdownDialog,
+        CookieViewerDialog, SettingsDialog, VerboseLogWindow, show_info_message
+    )
+
+    win = MainWindow()
+    win.show()  # 부모 필요
+
+    # 1. ExitConfirmDialog (다운로드 중 / 아닌 경우 둘 다)
+    print("\n[1/7] ExitConfirmDialog — 다운로드 중")
+    dlg1 = ExitConfirmDialog(win, is_running=True)
+    dlg1.show()
+    print(f"    Size: {dlg1.size().width()}x{dlg1.size().height()} (fixed: {dlg1.maximumSize() == dlg1.minimumSize()})")
+
+    print("\n[2/7] ExitConfirmDialog — 일반")
+    dlg2 = ExitConfirmDialog(win, is_running=False)
+    dlg2.show()
+
+    # 2. SettingsDialog
+    print("\n[3/7] SettingsDialog")
+    dlg3 = SettingsDialog(win, is_running=False)
+    dlg3.show()
+    print(f"    Size: {dlg3.size().width()}x{dlg3.size().height()} (fixed: {dlg3.maximumSize() == dlg3.minimumSize()})")
+
+    # 3. VerboseLogWindow (F12)
+    print("\n[4/7] VerboseLogWindow")
+    dlg4 = VerboseLogWindow(win)
+    dlg4.show()
+    print(f"    Size: {dlg4.size().width()}x{dlg4.size().height()} (resizable)")
+
+    # 4. CookieSelectDialog
+    print("\n[5/7] CookieSelectDialog")
+    dlg5 = CookieSelectDialog(win)
+    dlg5.show()
+    print(f"    Size: {dlg5.size().width()}x{dlg5.size().height()} (fixed: {dlg5.maximumSize() == dlg5.minimumSize()})")
+
+    # 5. CookieViewerDialog
+    print("\n[6/7] CookieViewerDialog")
+    dlg6 = CookieViewerDialog("쿠키 뷰어 (테스트)", "Sample cookie content\nLine 2\nLine 3", win)
+    dlg6.show()
+    print(f"    Size: {dlg6.size().width()}x{dlg6.size().height()} (resizable)")
+
+    # 6. ActionCountdownDialog (현재 미연결 — 프리뷰만)
+    print("\n[7/7] ActionCountdownDialog (미사용/미완성)")
+    dlg7 = ActionCountdownDialog("exit_app", win)
+    dlg7.show()
+    print(f"    Size: {dlg7.size().width()}x{dlg7.size().height()} (fixed: {dlg7.maximumSize() == dlg7.minimumSize()})")
+
+    # 7. show_info_message (모달이라 마지막에)
+    print("\n[+] show_info_message — 성공")
+    show_info_message(win, "성공", "작업이 완료되었습니다.", detail="상세 내용 예시")
+
+    print("\n[+] show_info_message — 에러")
+    show_info_message(win, "오류", "무언가 잘못되었습니다.", detail="에러 상세", is_error=True)
+
+    print("\n[Debug Dialogs] 모든 다이얼로그 표시 완료. 창을 닫으면 종료됩니다.")
+    return app.exec()
+
+
 if __name__ == "__main__":
+    if "--debug-dialogs" in sys.argv:
+        sys.exit(debug_show_all_dialogs())
     sys.exit(test_main())

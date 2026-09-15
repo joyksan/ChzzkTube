@@ -1,3 +1,35 @@
+### 2026-09-15 — v3.5.0 : 레이아웃 리팩터링·pip 오버레이·크래시 수리·표준 준수·검증 강화 (minor 업)
+
+#### 레이아웃 리팩터링 (B2 아키텍처)
+- **chzzktube 단일 패키지 + 계층 분리**: 루트 39개 평탄 모듈 → `chzzktube/{ui,control,workers,pipeline,core,infra}` 6계층 구조로 재편
+- **main.py 씬 런처**: 루트 `main.py`(씬 런처, ~30줄) → `chzzktube.ui.main_window.main()` 호출. `python main.py` / PyInstaller `Analysis(['main.py'])` 계약 유지
+- **자원 이동**: `icon.ico`·`CascadiaMono*.ttf` → `assets/`, 문서 → `docs/`, 미러 → `mirrors/`, `src/` 잔재 제거
+
+#### pip 업데이트 모델 전면 개편 (v3.4.1 핵심)
+- **프로젝트 로컬 오버레이 `.pylib/`**: 인앱 업데이터가 `venv/site-packages`(uv 소유)를 절대 수정하지 않고 `<repo>/.pylib/`에 whl 해제
+- **부트스트랩**: `chzzktube.infra.pylib_bootstrap.bootstrap()`이 `sys.path` 선두에 `.pylib/` 삽입, `main.py` 최상단 + `main()` 내부에서 `python -m` 직행도 커버
+- **오버레이 우선순위**: `sys.path` 선두 → 오버레이 복사가 venv(락핀)보다 항상 우선. `importlib.metadata` 판독도 오버레이가 이김
+- **해제 정규화**: `_extract_pylib_whl(whl, root, prefix)`로 yt-dlp/streamlink 공용화. **[버그 수정]** whl(zip)엔 디렉터리 엔트리 없어 `endswith(".dist-info/")` 판정이 항상 None → 구 dist-info 정리 스킵되던 버그 수정(파일 경로 첫 세그먼트 파싱)
+- **가시성**: 기동 시 `DEPS │ OK │ PYLIB │ overlay: <path> [dist-info…]` 1줄로 어느 복사본이 이겼는지 표기
+
+#### 크래시·버그 수리
+- **_POTWorker SIGABRT**: `finished_signal` 큐잉이 `run()` 반환 전 도착 → `_on_worker_finished`가 즉시 `self._worker=None`으로 참조 해제 → 워커 스레드가 자기 파괴(SIGABRT). **수리**: `_retire/_retiring` 수명 보증 도입 — `finished`(run() 완전 반환 후 발화)까지 참조 보관 후 `deleteLater` 정리. 3개 경로(일반·pending-gate 조기 반환·cancel) 모두 적용
+- **Sans Serif 폰트 별칭 탐색 제거**: `QApplication` 폰트 미지정 시 Qt 제네릭 `Sans Serif` 별칭 탐색(~100ms). `app.setFont(QFont("Cascadia Mono", 11))`로 고정
+- **streamlink 무한 업데이트 루프**: `_frozen_upgrade_streamlink`가 whl을 `site-packages/streamlink/`(코드 안)에 풀어 `importlib.metadata`가 구 `dist-info` 읽음 → 매 기동 stale 판정. whl을 site-packages 루트에 풀고 구 dist-info 정리·캐시 무효화로 해결
+- **POT 토큰 정합**: `_on_worker_finished`가 gate 성공 시 `"staged"`로 오보고하던 잠재 버그 → 실제 `_mode`(`"ready"`) emit
+- **빈 scope 제거**: `main_window.py` 빈 `scope=""` → 플랫폼(`"YT"/"CHZ"`) 또는 `"MAIN"`으로 보정 (4컬럼 파괴 방지)
+- **stage 대문자 통일**: `pot_manager.py` stage 태그 `"pot"`→`"POT"`, `"pot-DEBUG"`→`"POT-DEBUG"` (4컬럼 표준 준수)
+
+#### 표준·테스트 강화
+- **빈 scope 제거 + stage 대문자**: LogEvent 4필드(STAGE/STATUS/SCOPE/MSG) 표준 완전 준수
+- **회귀 테스트 추가**: `test_pylib_overlay.py`(경로 계약·bootstrap·dist-info 정리·손상 whl) · `test_pot_manager.py`(토큰 정합 2건) · `test_coordinator.py`(raw 버스 배선 2건)
+- **`pot_status_changed` 시그널 배선**: Coordinator가 토글 메시지를 raw 버스에 태워 TUI/F12/history 기록
+
+#### 검증
+- 전체 pytest **149 passed** (신규 12건) · smoke PASS · sync_mirrors 42 모듈 `changed 0/missing 0` · cocoa 실기동 EXIT_CODE=0 · 오버레이 우선순위 실증(overlay 99.0.0 > venv 8.6.0)
+
+---
+
 ### 2026-09-13 — v3.4.0 패치 2 : 파이프라인 P0 크래시 수리 + LEGACY_AUDIT 정리
 
 - **P0-1 finalizer**: `_dl_platform` import 누락 — 모든 배치 완료/취소 시 NameError → `finished_all` 미발화 → UI 영구 락업

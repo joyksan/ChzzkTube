@@ -506,6 +506,14 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 
 > 핵심: **"돌아간다" ≠ "양쪽 다 돌아간다"**. CI는 offscreen(macOS) 기준이며, Windows 전용 동작은 릴라이즈 전 반드시 Windows 머신에서 직접 확인할 것.
 
+---
+
+### 7 마무리 — 링크 깨짐 확인 완료·체리피킹 요약 (v3.5.0)
+
+- **링크 깨짐 점검**: 모든 내부 링크(`§`, `§§`, `[링크](#anchor)`) 정상 동작. 앵커(`###`, `####`)와 문서 내 참조(`HANDOVER §x.y`, `CHANGELOG 2026-09-15`) 정합. `mirrors/` 미러는 `sync_mirrors.py`로 동기화.
+- **체리피킹(§8.1) 요약**: PySide6 사용 모듈(`QtCore/Widgets/Gui/Core/DBus` 등)만 포함, 미사용 모듈(WebEngine/Multimedia/3D/Charts 등) `--exclude-module`로 제거. 빌드 크기 ~80-100MB → ~50-60MB (30-40%↓). 사용 모듈은 `grep -rn 'PySide6.Qt'`로 확인 후 이 섹션 목록 갱신.
+- **문서 동기화 완료**: `HANDOVER`·`CHANGELOG`·`README`·`mirrors/` 전체 동기화 완료. `sync_mirrors.py --check` 0건.
+
 ## 8. 빌드 및 배포 (PyInstaller)
 
 ### 8.1 체리피킹 원칙
@@ -526,7 +534,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
   - Dev 환경: `_frozen_upgrade_ytdlp()`, `_frozen_upgrade_streamlink()` 직접 호출
   - 포터블(PyInstaller): PyPI whl에서 yt-dlp 바이너리 직접 다운로드 후 교체 (Stable) / GitHub nightly-builds release 다운로드 (Nightly)
   - 이유: Dev와 포터블이 동일한 코드 경로를 타야 디버깅 가능. Frozen과 Dev가 분기되면, 사용자에게서만 발생하는 버그를 Dev에서 재현하지 못함.
-- **[v3.4.0] 해제 대상 = 프로젝트 로컬 오버레이 `.pylib/` (venv 불가침)**: 인앱 업데이터는 `venv/site-packages`(uv 소유)를 **절대 수정하지 않는다**. 대신 `<repo>/.pylib/`에 whl을 해제하고, 진입점 부트스트랩(`chzzktube.infra.pylib_bootstrap.bootstrap()`)이 이 경로를 `sys.path` 선두에 올려 오버레이 복사가 항상 우선한다(importlib.metadata 포함).
+- **[v3.5.0] 해제 대상 = 프로젝트 로컬 오버레이 `.pylib/` (venv 불가침)**: 인앱 업데이터는 `venv/site-packages`(uv 소유)를 **절대 수정하지 않는다**. 대신 `<repo>/.pylib/`에 whl을 해제하고, 진입점 부트스트랩(`chzzktube.infra.pylib_bootstrap.bootstrap()`)이 이 경로를 `sys.path` 선두에 올려 오버레이 복사가 항상 우선한다(importlib.metadata 포함).
   - 경로 계약: `<repo>/.pylib` 고정, `CHZZKTUBE_PYLIB_DIR` 환경변수로만 오버라이드 (frozen/CI 진단용)
   - **이유 1**: uv가 `uv run`/`uv sync` 시 락으로 되돌리므로 venv 직접 수정은 소유권 충돌 + "매 기동 업데이트" 무한 루프를 유발했다(2026-09-15 실측)
   - **이유 2**: 포터블 원칙("실행 폴더 밖은 쓰지 않는다")과 정합 — 바이너리(node/ffmpeg/PO 서버)는 이미 `writable_base()`/`components/`를 사용. 이원화를 통일
@@ -571,9 +579,9 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **바이너리** | 이미지/폰트/실행 파일은 `.gitattributes`에서 binary 지정 |
 | **문서 미러** | `.py`가 원본, `mirrors/*.md` + `mirrors/chzzktube_codebase.md` 합본은 `python sync_mirrors.py` 자동 생성. 손수정 금지 |
 
-## 9. 수정 히스토리 요약 (최신순, 핵심만)
+## 9. 수정 히스토리
 
-### 2026-09-13 — v3.4.0 패치 2 : 파이프라인 P0 크래시 수리 + LEGACY_AUDIT 정리
+> **v3.5.0부터 [CHANGELOG.md](../CHANGELOG.md)로 단일화** — 상세 수정 내역은 [CHANGELOG.md](../CHANGELOG.md) 참조.
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)

@@ -844,7 +844,8 @@ class MainWindow(QMainWindow):
 
     def _start_update_check(self):
         """구성요소(yt-dlp/streamlink) 최신 버전 비동기 확인 — 기동 0.5초 후 1회."""
-        self._retire_qthread(self.update_worker)
+        if hasattr(self, "update_worker"):
+            self._retire_qthread(self.update_worker)
         self.update_worker = UpdateWorker(self, upgrade=False, channel=self.cfg.get("update_channel", "stable"), check_updates=self.cfg.get("auto_update_check", True))
         # 구성요소 확인 라인은 필터 경유 — 루틴 '최신' 라인 간결 생략 + 히스토리 전건
         self.update_worker.check_done.connect(self._on_update_check_done)
@@ -1448,6 +1449,8 @@ def main() -> int:
                 ),
                 to_tui=True,
             )
+            # 콘솔에도 즉시 출력 (stderr) — TUI 구독 전에도 보이게
+            sys.stderr.write(f"[DEPS] OK PYLIB overlay: {_pylib}{_suffix}\n")
     except Exception:
         pass
 

@@ -281,10 +281,14 @@ def truncate_for_full_log(out, max_lines=6, max_width=160):
 
     max_lines>0 → 앞 N줄만 + '… (M lines truncated)' 꼬리.
     over-long 단일 줄은 max_width로 절단 (ffmpeg configuration: 500자 대책).
+    ffmpeg configuration: 라인 및 이어지는 빌드 설정 줄들은 제거.
     """
+    import re
     text = str(out or "")
     if not text:
         return ""
+    # ffmpeg -version의 configuration: 부터 끝까지 제거 (빌드 설정 10+줄 방지)
+    text = re.sub(r"(?m)^configuration:.*\n(?:^ .*\n)*", "", text)
     lines = text.splitlines()
     if max_width and max_width > 0:
         lines = [l if len(l) <= max_width else l[:max_width] + "…" for l in lines]
