@@ -159,6 +159,36 @@ class POTManager(QObject):
         self._mode = "idle"
         self._pending_gate = False
         self._lock = threading.Lock()
+        # [수명 보증] finished_signal(큐잉)은 run()이 아직 반환 전에 도착할 수
+        # 있다. 이 시점에 마지막 참조를 끊으면 워커 스레드 자신이 QThread 객체를
+        # 파괴하며 Qt qFatal("QThread: Destroyed while thread is still running")
+        # → SIGABRT 크래시가 발생한다(2026-09-15 실측). run()이 완전히 반환된
+        # 뒤(Qt 내장 finished 발화)까지 참조를 보관하는 대피소.
+        self._retiring: list = []
+
+    def _retire(self, worker) -> None:
+        """워커를 finished(run() 완전 반환)까지 보관 후 deleteLater로 정리.
+
+        Qt 시그널이 없는 테스트 더블(SimpleNamespace 등)은 보관 대상에서
+        제외한다 — 실제 QThread만 수명 보증 대상이다.
+        """
+        if worker is None:
+            return
+        is_finished = getattr(worker, "isFinished", None)
+        if callable(is_finished) and is_finished():
+            return
+        finished = getattr(worker, "finished", None)
+        if finished is None:
+            return
+        finished.connect(worker.deleteLater)
+        finished.connect(lambda w=worker: self._drop_retired(w))
+        self._retiring.append(worker)
+
+    def _drop_retired(self, worker) -> None:
+        try:
+            self._retiring.remove(worker)
+        except ValueError:
+            pass
 
     def ensure_ready(self, mode="gate"):
         if mode not in {"prewarm", "gate"}:
@@ -193,6 +223,7 @@ class POTManager(QObject):
                     self._pending_gate = False
                     self._worker = None
                     self._mode = "staged"
+                    self._retire(worker)  # [수명 보증] 조기 반환 경로도 동일
                     QTimer.singleShot(0, self._start_pending_gate)
                     return
                 self._worker = None
@@ -206,6 +237,9 @@ class POTManager(QObject):
         # [토큰 정합] 상태 토큰은 실제 _mode("staged"/"ready")를 그대로 emit —
         # gate 성공을 "staged"로 잘못 보고하던 잠재 버그 수리.
         self.pot_status_changed.emit(self._mode if ok else "failed")
+        # [수명 보증] 참조 해제는 run() 완전 반환 이후로 연기 — 워커 스레드가
+        # 자기 자신을 파괴하는 SIGABRT 방지.
+        self._retire(worker)
         # [READY 게이트 계약] pot_finished의 msg는 상태 토큰("staged"/"ready"/"failed")으로만
         # 발행한다 — StartupCoordinator.report_pot이 정확 일치로 READY를 판정한다.
         # 사람이 읽는 상세 메시지("prewarm staged", "pot server bound ...")는
@@ -251,3 +285,5 @@ class POTManager(QObject):
             if not worker.wait(2000):
                 worker.terminate()
                 worker.wait(1000)
+        # [수명 보증] wait 타임아웃으로 스레드가 살아있을 수 있다 — 종료 보장 후 해제
+        self._retire(worker)

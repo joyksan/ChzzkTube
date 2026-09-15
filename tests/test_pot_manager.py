@@ -63,6 +63,28 @@ def test_use_existing_marks_ready():
     assert m.is_ready() is True
 
 
+def test_worker_finished_keeps_reference_until_finished():
+    """[회귀 v3.4.0 SIGABRT] finished_signal 처리 시 워커 참조가 즉시 끊기지 않는다.
+
+    finished_signal(큐잉)은 run()이 아직 반환 전에 도착할 수 있다 — 이때
+    마지막 참조를 끊으면 워커 스레드 자신이 QThread 객체를 파괴하며
+    Qt qFatal("QThread: Destroyed while thread is still running") →
+    SIGABRT 크래시가 발생했다(2026-09-15 _POTWorker 실측). _retire가
+    run() 완전 반환까지 참조를 보관하는지 검증한다.
+    """
+    from chzzktube.control.pot_manager import _POTWorker
+
+    _app()
+    m = POTManager()
+    w = _POTWorker(mode="gate")
+    m._worker = w
+    m._mode = "gate"
+    m._on_worker_finished(True, "x")
+    assert w in m._retiring   # 수명 보증 — 워커가 즉시 파괴되지 않음
+    assert m._worker is None  # 다음 워커 기동은 막히지 않음
+    assert m.mode == "ready"
+
+
 def test_gate_ok_emits_ready_status_token():
     """[회귀 v3.4.0] gate 성공 시 pot_status_changed도 실제 모드 "ready"를 emit.
 
