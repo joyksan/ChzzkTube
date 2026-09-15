@@ -2,9 +2,6 @@
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
 from collections import deque
-import re
-import time
-import unicodedata
 from chzzktube.ui.theme import (
     LOG_COLOR_ACCENT,
     LOG_COLOR_DIM,
