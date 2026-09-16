@@ -185,47 +185,46 @@ sequenceDiagram
 %%{init: {
   'theme': 'dark',
   'themeVariables': {
-    'stateBkg': '#21262d',
-    'stateBorder': '#8b949e',
-    'labelTextColor': '#c9d1d9',
-    'compositeStateBkg': '#161b22',
-    'compositeStateBorder': '#30363d',
-    'transitionLineColor': '#58a6ff',
-    'transitionLabelColor': '#c9d1d9'
+    'background': 'transparent',
+    'clusterBkg': '#161b22',
+    'clusterBorder': '#30363d',
+    'primaryColor': '#21262d',
+    'primaryBorderColor': '#8b949e',
+    'primaryTextColor': '#c9d1d9',
+    'lineColor': '#58a6ff'
   }
 }}%%
-stateDiagram-v2
-    [*] --> STARTUP : App Launch
-    
-    STARTUP --> IDLE : [Gate Open] READY 1회
-    STARTUP --> IDLE : [Fallback] 15s Timeout / Grace
+flowchart TB
+    START_NODE((●)) --> STARTUP["<b>STARTUP</b><br/>기동 게이트 대기"]
 
-    state IDLE {
-        direction LR
-        [*] --> ReadyForInput
-    }
+    STARTUP -->|"[Gate Open] READY 1회"| IDLE["<b>IDLE</b><br/>입력 대기 · ReadyForInput"]
+    STARTUP -->|"[Fallback] 15s 타임아웃 / 유예"| IDLE
 
-    IDLE --> ANALYZING : ENTER [URL Analysis]
-    IDLE --> PICKING : Format Select Mode
+    IDLE -->|"ENTER [URL 분석]"| ANALYZING["<b>ANALYZING</b><br/>스트림 · 메타 분석"]
+    IDLE -->|"포맷 고르기 모드"| PICKING["<b>PICKING</b><br/>포맷 번호 선택 대기"]
 
-    PICKING --> IDLE : Cancel / Esc
-    PICKING --> RUNNING : Select Format
+    PICKING -->|"ESC / 취소"| IDLE
+    PICKING -->|"포맷 번호 선택"| RUN_CHECK
 
-    ANALYZING --> IDLE : Analysis Done / Fail
-    ANALYZING --> POT_QUEUE : Bot Check Detected
-    POT_QUEUE --> ANALYZING : POT Server Ready (1회 재시도)
+    ANALYZING -->|"분석 완료 / 일반 실패"| IDLE
+    ANALYZING -->|"봇 체크 감지"| POT_QUEUE["<b>POT_QUEUE</b><br/>봇 체크 우회 대기"]
+    POT_QUEUE -->|"POT ready 후 1회 재분석"| ANALYZING
 
-    IDLE --> RUNNING : ENTER [Direct Download]
-    
-    state RUNNING {
+    IDLE -->|"ENTER [직접 다운로드]"| RUN_CHECK
+
+    subgraph RUNNING_BOX["<b>RUNNING</b> · 세션 파이프라인"]
         direction TB
-        [*] --> CheckGate
-        CheckGate --> POT_Wait : Gated Video
-        CheckGate --> Downloading : Normal Video
-        POT_Wait --> Downloading : POT Bound
-        POT_Wait --> [*] : 120s Timeout
-        Downloading --> [*] : Complete / Abort
-    }
+        RUN_CHECK{"게이트 판정"}
+        POT_WAIT["<b>POT_WAIT</b><br/>POT 서버 기동 대기"]
+        DOWNLOADING["<b>DOWNLOADING</b><br/>VOD · 라이브 스트림 수신"]
+        RUN_END((◎))
 
-    RUNNING --> IDLE : Finish / User Cancel
+        RUN_CHECK -->|"연령제한 / 게이트 영상"| POT_WAIT
+        RUN_CHECK -->|"일반 공개 영상"| DOWNLOADING
+        POT_WAIT -->|"120s 워치독 만료"| RUN_END
+        POT_WAIT -->|"POT 바인드 완료"| DOWNLOADING
+        DOWNLOADING -->|"다운로드 완료 / 중단"| RUN_END
+    end
+
+    RUN_END -->|"IDLE 복귀"| IDLE
 ```
