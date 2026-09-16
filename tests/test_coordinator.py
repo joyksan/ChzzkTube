@@ -87,6 +87,9 @@ class TestPotStatusBusWiring:
         raw_log.subscribe_concise(
             lambda ev, is_status, is_error: events.append(ev)
         )
+        raw_log.subscribe_full(
+            lambda ev: events.append(ev)
+        )
         coord = StartupCoordinator(Mock())
         coord._on_pot_status("staged")
 

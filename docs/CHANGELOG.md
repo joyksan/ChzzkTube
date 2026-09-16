@@ -1,3 +1,29 @@
+### 2026-09-17 — v3.6.2 : OS 격리 HAL + 구독형 워치독 완전 전환 — 15s/45s/120s 맹인 타이머 소거 (patch 업)
+
+- `infra/platform.py` 신설 — 크로스플랫폼 HAL 단일 격리 계층
+  - `is_windows()` / `is_macos()` — `sys.platform` 단일 판정 출처
+  - `spawn_kwargs()` / `daemon_spawn_kwargs()` — 용도별 스폰 인자 분리 (Win: `CREATE_NO_WINDOW` / `CREATE_NEW_PROCESS_GROUP`, POSIX: `start_new_session=True`)
+  - `flash_window(hwnd:int)` / `set_app_user_model_id()` / `play_beep()` / `reveal_in_file_manager()` / `exe_suffix()` — Qt 역의존 제로
+  - `attach_to_parent_lifecycle()` / `kill_tree()` — Job Object / `killpg` 격리 (pot_server에서 이관)
+  - 호출부 8개 모듈(`tool_log`, `node_provider`, `pot_server`, `updater`, `live_recorder`, `utils`, `main_window`, `components`) 완전 치환
+
+- `core/watchdog.py` 신설 — 단일 진실 시간(`time.monotonic`) 기반 구독형 워치독
+  - 상수 단일 출처: `FALLBACK_TIMEOUT_SEC=15`, `FALLBACK_GRACE_SEC=3`, `GATE_TIMEOUT_SEC=120`, `ANALYSIS_TIMEOUT_SEC=45`
+  - `LivenessWatchdog` — `threading.Lock` + 주입 가능 `clock`으로 스레드 안전·테스트 가능
+  - `heartbeat()` / `check_timeout()` / `reset()` / `elapsed()` / `remaining()` 상태 기계
+
+- 워커/메인 배선 완전 전환
+  - `AnalyzeWorker`: `QTimer` 맹인 타이머 **완전 제거** → `progress_hook`로 `heartbeat()` 연장
+  - `DownloadWorker`: `_download_watchdog` + 타겟 전후 `heartbeat()`로 게이트/분석 타임아웃 연장
+  - `MainWindow`: `_poll_watchdogs` 1초 폴링으로 3종 워치독(`fallback`/`gate`/`analysis`) 감시
+  - 기존 `heartbeat`/`work_tick`/`pot_work_tick` 시그널명 유지 (§5-13 교통정리 준수)
+
+#### 검증
+- 전체 pytest **176 passed 0 failed** · smoke PASS · `sync_mirrors.py --check` 0건 · py_compile OK
+- 버전 3중 정합: `config._APP_VERSION="v3.6.2"` / `pyproject.toml version="3.6.2"` / `uv.lock chzzktube==3.6.2`
+
+---
+
 ### 2026-09-16 — v3.6.1 : 아키텍처 다이어그램(mermaid) 추가 — 문서 전용 패치
 
 - `docs/architecture.md` 말미에 mermaid 3종 append: ① 전체 계층도(flowchart) ② 기동 시퀀스(sequenceDiagram) ③ 상태·워치독 관계(stateDiagram-v2)

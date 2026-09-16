@@ -17,7 +17,7 @@ import chzzktube.infra.updater as updater
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_event import LogEvent
 from PySide6.QtCore import QThread, Signal
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component
 
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (

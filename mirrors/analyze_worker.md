@@ -22,7 +22,9 @@ import yt_dlp
 # 반드시 첫 YoutubeDL 생성 전에 설정 (plugins 로딩은 1회성 lazy init).
 yt_dlp.plugins.plugin_dirs.value = []
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QThread, Signal
+
+from chzzktube.core.watchdog import LivenessWatchdog
 
 from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api
 from chzzktube.core.log_emitter import format_kv_line, format_tree_item
@@ -63,25 +65,23 @@ class AnalyzeWorker(QThread):
         # [다운로드 일관성] 분석에서 통과한 클라이언트 기록 — 다운로드가
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
         self.client_used = "auto"
-        self._timeout_timer = QTimer()
-        self._timeout_timer.setSingleShot(True)
-        self._timeout_timer.timeout.connect(self._on_analysis_timeout)
+        # [Watchdog] 45초 분석 타임아웃을 LivenessWatchdog으로 완전 대체 — QTimer 맹인 타임아웃 제거
+        self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC)
 
     # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — ios는 PO Token
     # 불필요·SABR 무관(720p급), tv는 최후 수단(SABR 360p 리스크).
     _RETRY_CLIENTS = ["ios", "tv"]
-    _ANALYSIS_TIMEOUT_MS = 45000
 
     def _on_analysis_timeout(self):
-        """[hang-prevention] 분석 타임아웃 — yt-dlp가 멈췄을 때 스레드 강제 종료 + 에러 보고."""
+        """[hang-prevention] 분석 타임아웃 — 워치독이 만료를 알리면 스레드 강제 종료 + 에러 보고."""
         import chzzktube.core.raw_log as raw_log
         raw_log.raw(
             "analyze",
-            f"[analyze] timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s - yt-dlp hung.",
+            f"[analyze] timed out after {ANALYSIS_TIMEOUT_SEC:.0f}s - yt-dlp hung.",
         )
         self.terminate()
         self.error_occurred.emit(
-            f"Analysis timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s."
+            f"Analysis timed out after {ANALYSIS_TIMEOUT_SEC:.0f}s."
         )
 
     @staticmethod
@@ -95,6 +95,12 @@ class AnalyzeWorker(QThread):
         )
 
     def _extract_youtube(self, url, flat):
+        # yt-dlp progress_hook으로 워치독 하트비트 연장
+        def _progress_hook(d):
+            if d.get("status") == "downloading":
+                self._analysis_watchdog.heartbeat()
+
+        # ydl_opts에 훅 추가할 예정이므로 flat 분기 전에 준비
         """yt-dlp 추출 — bot-check 실패 시 ios→tv 클라이언트 회전.
 
         [회전 정책] 사용자가 특정 클라이언트를 지정했으면 그 값 하나만
@@ -122,6 +128,7 @@ class AnalyzeWorker(QThread):
         last_err = None
         for idx, client in enumerate(attempts):
             ydl_opts = dict(base)
+            ydl_opts["progress_hooks"] = [_progress_hook]
             _apply_cookie_opts(ydl_opts, self.cfg)
             if client != "auto":
                 ydl_opts["extractor_args"] = {
@@ -151,7 +158,8 @@ class AnalyzeWorker(QThread):
     def run(self):
         import chzzktube.core.raw_log as raw_log
         raw_log.raw("analyze", f"--- [format analysis start] {self.target_url} ---")
-        self._timeout_timer.start(self._ANALYSIS_TIMEOUT_MS)
+        # [Watchdog] 순수 워치독 모드 — QTimer 백업 완전 제거
+        self._analysis_watchdog.reset()
 
         try:
             try:

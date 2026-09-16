@@ -19,6 +19,7 @@ import sys
 import tempfile
 import socket
 import urllib.request
+from chzzktube.infra.platform import spawn_kwargs
 
 # (log_label, pypi_name, pypi_nightly) — log_label is shown in the DEPS PLATFORM column
 # pypi_nightly: Nightly 채널 사용 시 설치할 PyPI 패키지명 (None이면 Stable only)
@@ -266,7 +267,7 @@ def cli_raw(label, *args, timeout=15):
             errors="replace",
             timeout=timeout,
             env=env,
-            creationflags=_NO_WINDOW if os.name == "nt" else 0,
+            **spawn_kwargs(),
         )
     except Exception as e:
         return " ".join(full_cmd), f"[{type(e).__name__}] {e}"
@@ -318,7 +319,7 @@ def _ffmpeg_version(path, timeout=3):
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
-            creationflags=_NO_WINDOW if os.name == "nt" else 0,
+            **spawn_kwargs(),
         )
         text = (out.stdout or out.stderr or "")
         # 1) 표준 첫 줄 — 숫자 코어 3단만 (extra version 접미부 미포함)

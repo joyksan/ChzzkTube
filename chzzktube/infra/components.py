@@ -22,7 +22,7 @@ import zipfile
 from pathlib import Path
 
 import chzzktube.core.config as config
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component, emit_event, emit_dl, emit_err
 
 _UA = "ChzzkTube-Components/1.0"
 
@@ -104,7 +104,9 @@ def _rmtree(p):
 
 def _exe_suffix():
     """현재 OS의 실행 파일 확장자를 반환한다."""
-    return ".exe" if os.name == "nt" else ""
+    from chzzktube.infra.platform import exe_suffix
+
+    return exe_suffix()
 
 
 def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
@@ -387,7 +389,9 @@ def _ensure_ffmpeg_macos(log, force):
 
 def ffmpeg_exe():
     """ffmpeg 실행 파일 경로. 수급 캐시 우선, 없으면 시스템 PATH."""
-    exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    from chzzktube.infra.platform import exe_suffix
+
+    exe_name = f"ffmpeg{exe_suffix()}"
     # 기존 위치 (bin_dir) 확인
     local = os.path.join(
         config.writable_base(), FFMPEG_DIRNAME, "bin", exe_name

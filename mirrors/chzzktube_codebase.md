@@ -43,6 +43,31 @@ except (OSError, re.error) as e:
 
 ```
 
+## File: debug_test.py
+
+```python
+import chzzktube.core.raw_log as raw_log
+events = []
+raw_log.subscribe_concise(lambda ev, is_status, is_error: events.append(ev))
+from chzzktube.control.startup_coordinator import StartupCoordinator
+from unittest.mock import Mock
+c = StartupCoordinator(Mock())
+c._on_pot_status('staged')
+import time
+deadline = time.time() + 2.0
+while time.time() < deadline and not events:
+    time.sleep(0.02)
+ev = events[-1]
+print('stage:', repr(ev.stage), 'scope:', repr(ev.scope))
+```
+
+## File: debug_test2.py
+
+```python
+import chzzktube.core.raw_log as raw_log; events = []; raw_log.subscribe_concise(lambda ev, is_status, is_error: events.append(ev)); from chzzktube.control.startup_coordinator import StartupCoordinator; from unittest.mock import Mock; c = StartupCoordinator(Mock()); c._on_pot_status(\u0027staged\u0027); import time; deadline = time.time() + 2.0; while time.time() < deadline and not events: time.sleep(0.02); ev = events[-1]; print(\u0027stage:\u0027, repr(ev.stage), \u0027scope:\u0027, repr(ev.scope))
+
+```
+
 ## File: main.py
 
 ```python
@@ -73,7 +98,6 @@ if __name__ == "__main__":
 
 ```python
 import os
-import platform
 import re
 import sys
 import traceback
@@ -60272,7 +60296,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.6.1"
+_APP_VERSION = "v3.6.2"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -61777,19 +61801,15 @@ def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
     반환: (proc, stderr_thread) — 호출부는 stdout 처리 후 proc.wait() +
     stderr_thread.join()으로 마감할 것.
     """
-    import os
-
     import chzzktube.core.raw_log as raw_log
     from chzzktube.core.log_event import LogEvent
+    from chzzktube.infra.platform import spawn_kwargs
 
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        creationflags=creationflags,
+        **spawn_kwargs(),
     )
 
     def _drain():
@@ -61870,7 +61890,6 @@ def run_cli(label, *args, timeout=15):
 ```python
 ### 유틸리티 및 코어 로직
 import os
-import platform
 import re
 import subprocess
 
@@ -61906,23 +61925,8 @@ def get_filename_template(cfg):
 
 
 def _open_windows_explorer(path):
-    target = os.path.normpath(os.path.abspath(path))
-    if platform.system() == "Windows":
-        is_file = os.path.isfile(target)
-        folder = target if not is_file else os.path.dirname(target)
-        args = (
-            ["explorer.exe", "/n,", "/select," + target]
-            if is_file
-            else [["explorer.exe", "/n,", folder]]
-        )
-        # Windows Popen fix
-        if isinstance(args[0], list):
-            args = args[0]
-        subprocess.Popen(args, close_fds=True)
-    elif platform.system() == "Darwin":
-        subprocess.Popen(["open", path])
-    else:
-        subprocess.Popen(["xdg-open", path])
+    from chzzktube.infra.platform import reveal_in_file_manager
+    reveal_in_file_manager(path)
 
 
 def parse_sec(time_str):
@@ -61937,6 +61941,85 @@ def parse_sec(time_str):
         pass
     return 0.0
 
+```
+
+## File: chzzktube\core\watchdog.py
+
+```python
+"""chzzktube/core/watchdog.py - 단일 진실 시간(monotonic) 기반 구독형 워치독.
+
+모든 타임아웃 상수와 하트비트 판정을 이 모듈로 집중해
+15초 폴백/45초 분석/120초 게이트 등 산재한 매직 넘버를 단일 출처로 관리한다.
+
+[설계]
+- time.monotonic() 단일 진실 (시스템 시계 변경 영향 없음)
+- 스레드 안전: Lock으로 _last_heartbeat / _grace_used 보호
+- 주입 가능한 clock 파라미터로 단위 테스트에서 시간 조작 가능
+- 워커는 heartbeat() 호출, 감시자는 check_timeout() 폴링
+"""
+import threading
+import time
+from typing import Callable
+
+
+# ── 상수 단일 출처 (HANDOVER §3 표와 동기화) ───────────────────────────
+FALLBACK_TIMEOUT_SEC = 15.0   # 기동 폴백 (READY 강제 개방)
+FALLBACK_GRACE_SEC = 3.0      # 폴백 유예 1회 (Followup-4)
+GATE_TIMEOUT_SEC = 120.0      # POT 게이트 2차 워치독 (Followup-3)
+ANALYSIS_TIMEOUT_SEC = 45.0   # AnalyzeWorker 타임아웃
+
+
+class LivenessWatchdog:
+    """단일 진실 시간 기반 워치독 — 워커 하트비트로 수명 연장, Grace 1회 지원."""
+
+    __slots__ = ("timeout_sec", "grace_sec", "_clock", "_lock", "_last_heartbeat", "_grace_used")
+
+    def __init__(
+        self,
+        timeout_sec: float,
+        grace_sec: float = 0.0,
+        clock: Callable[[], float] | None = None,
+    ):
+        self.timeout_sec = float(timeout_sec)
+        self.grace_sec = float(grace_sec)
+        self._clock = clock or time.monotonic
+        self._lock = threading.Lock()
+        self._last_heartbeat = self._clock()
+        self._grace_used = False
+
+    def heartbeat(self) -> None:
+        """워커 진행 틱(yt-dlp 콜백, download 진행 등)에서 호출해 수명을 연장한다."""
+        with self._lock:
+            self._last_heartbeat = self._clock()
+            self._grace_used = False
+
+    def check_timeout(self) -> bool:
+        """타임아웃 만료 여부 판정. Grace 1회 적용 시 False 반환 후 grace 소진."""
+        now = self._clock()
+        with self._lock:
+            elapsed = now - self._last_heartbeat
+            if elapsed <= self.timeout_sec:
+                return False
+            if self.grace_sec > 0 and not self._grace_used:
+                # 1회 유예: last_heartbeat를 'timeout - grace' 시점으로 이동
+                self._last_heartbeat = now - self.timeout_sec + self.grace_sec
+                self._grace_used = True
+                return False
+            return True
+
+    def elapsed(self) -> float:
+        """마지막 하트비트 이후 경과 시간 (조회용)."""
+        with self._lock:
+            return self._clock() - self._last_heartbeat
+
+    def remaining(self) -> float:
+        """타임아웃까지 남은 시간 (음수면 이미 만료)."""
+        with self._lock:
+            return self.timeout_sec - (self._clock() - self._last_heartbeat)
+
+    def reset(self) -> None:
+        """하트비트와 동일 — last_heartbeat=now, grace 복구."""
+        self.heartbeat()
 ```
 
 ## File: chzzktube\core\yt_logger_bridge.py
@@ -62128,7 +62211,7 @@ import zipfile
 from pathlib import Path
 
 import chzzktube.core.config as config
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component, emit_event, emit_dl, emit_err
 
 _UA = "ChzzkTube-Components/1.0"
 
@@ -62210,7 +62293,9 @@ def _rmtree(p):
 
 def _exe_suffix():
     """현재 OS의 실행 파일 확장자를 반환한다."""
-    return ".exe" if os.name == "nt" else ""
+    from chzzktube.infra.platform import exe_suffix
+
+    return exe_suffix()
 
 
 def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
@@ -62493,7 +62578,9 @@ def _ensure_ffmpeg_macos(log, force):
 
 def ffmpeg_exe():
     """ffmpeg 실행 파일 경로. 수급 캐시 우선, 없으면 시스템 PATH."""
-    exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    from chzzktube.infra.platform import exe_suffix
+
+    exe_name = f"ffmpeg{exe_suffix()}"
     # 기존 위치 (bin_dir) 확인
     local = os.path.join(
         config.writable_base(), FFMPEG_DIRNAME, "bin", exe_name
@@ -62647,18 +62734,20 @@ import json
 import shutil
 import zipfile
 import tarfile
-import platform
 import subprocess
 import urllib.request
 
 import chzzktube.core.config as config
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component
+from chzzktube.ui.log_console import emit_event, emit_dl, emit_err
 
 
 # ── 상수 (node_provider 전용) ──────────────────────────────────────
 NODE_MIN_MAJOR = 22  # bgutil 서버의 Node 요구사항 (require(esm) 기본 지원선)
 _NODE_FALLBACK_VER = "v22.23.2"  # nodejs.org index 조회 실패 시 폴백 (v22 LTS)
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# [HAL 이관] _NO_WINDOW는 하위 호환 별칭 — 실체는 platform.spawn_kwargs().
+# pot_provider가 `from node_provider import _NO_WINDOW`로 재수출하므로 유지.
+_NO_WINDOW = 0
 _node_ver_cache: dict = {}
 
 
@@ -62691,14 +62780,13 @@ def node_major_version(node_path, timeout=10):
         return _node_ver_cache[node_path]
     major = None
     try:
-        kwargs = {}
-        if platform.system() == "Windows":
-            kwargs["creationflags"] = _NO_WINDOW
+        from chzzktube.infra.platform import spawn_kwargs
+
         out = subprocess.run(
             [node_path, "--version"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
-            timeout=timeout, **kwargs,
+            timeout=timeout, **spawn_kwargs(),
         )
         m = re.match(r"v?(\d+)", (out.stdout or "").strip())
         if m:
@@ -62733,10 +62821,11 @@ def latest_lts_node_url(major=NODE_MIN_MAJOR):
 
 def _platform_node_url(ver):
     """플랫폼별 Node.js 배포 URL 생성 (Windows: zip, macOS: tar.gz)."""
-    system = platform.system()
-    if system == "Windows":
+    from chzzktube.infra.platform import is_macos, is_windows
+
+    if is_windows():
         return f"https://nodejs.org/dist/{ver}/node-{ver}-win-x64.zip"
-    if system == "Darwin":
+    if is_macos():
         arch = "arm64" if platform.machine() == "arm64" else "x64"
         return f"https://nodejs.org/dist/{ver}/node-{ver}-darwin-{arch}.tar.gz"
     arch = "arm64" if platform.machine() == "arm64" else "x64"
@@ -62750,7 +62839,9 @@ def npm_exe():
     if not node:
         return None
     base = os.path.dirname(node)
-    name = "npm.cmd" if platform.system() == "Windows" else "npm"
+    from chzzktube.infra.platform import is_windows as _is_win
+
+    name = "npm.cmd" if _is_win() else "npm"
     cand = os.path.join(base, name)
     return cand if os.path.isfile(cand) else None
 
@@ -62767,7 +62858,9 @@ def node_exe():
     요구 버전을 충족하는 후보가 없으면 None → ensure_node_runtime 재구성 트리거.
     포터블 빌드 첫 실행시 다른 DEPS와 함께 다운로드됨.
     """
-    _exe_suffix = ".exe" if os.name == "nt" else ""
+    from chzzktube.infra.platform import exe_suffix, is_windows as _np_is_win
+
+    _exe_suffix = exe_suffix()
 
     # 1. 시스템 Node.js 확인 (번들이 아닌 외부 참조)
     system_node = shutil.which("node") or shutil.which("node.exe")
@@ -62779,12 +62872,12 @@ def node_exe():
     cands = []
     local_node_dir = os.path.join(get_writable_base(), "node")
     if os.path.isdir(local_node_dir):
-        exe_name = "node.exe" if platform.system() == "Windows" else "node"
+        exe_name = f"node{_exe_suffix}"
         for root, dirs, files in os.walk(local_node_dir):
             if exe_name in files:
                 cands.append(os.path.join(root, exe_name))
     # [macOS] 포터블 node 실행 권한 보장 (tar.gz 추출 시 실행 비트 누락 방지)
-    if platform.system() != "Windows":
+    if not _np_is_win():
         for c in cands:
             try:
                 mode = os.stat(c).st_mode
@@ -62947,6 +63040,215 @@ def ensure_node_runtime(log_func):
     except Exception as e:
         log_func(f"Node.js auto-setup failed: {e}", False, True)
         return False
+```
+
+## File: chzzktube\infra\platform.py
+
+```python
+"""chzzktube/infra/platform.py - 크로스플랫폼 HAL (Hardware Abstraction Layer).
+
+OS 종속 코드의 단일 격리 지점. 상위 비즈니스 로직은 이 모듈의 함수만
+호출하고, OS 판정·ctypes·플래그를 직접 다루지 않는다.
+
+원칙:
+- OS 판정은 sys.platform 단일 출처 (is_windows/is_macos).
+- Qt 역의존 금지: QWidget이 아니라 네이티브 핸들(int)/경로(str)만 받는다.
+- 바보 모듈: chzzktube.* 상위 로직을 import하지 않는다 (stdlib only).
+- 스폰 용도 분리: spawn_kwargs (단발/프로브) / daemon_spawn_kwargs (데몬).
+"""
+import subprocess
+import sys
+from typing import Any, Dict
+
+
+def is_windows() -> bool:
+    return sys.platform == "win32"
+
+
+def is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def exe_suffix() -> str:
+    """현재 OS의 실행 파일 확장자."""
+    return ".exe" if is_windows() else ""
+
+
+def spawn_kwargs(use_no_window: bool = True) -> Dict[str, Any]:
+    """단발/프로브용 스폰 인자 — Windows 창 억제만. POSIX는 빈 dict."""
+    if is_windows() and use_no_window:
+        return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
+    return {}
+
+
+def daemon_spawn_kwargs(use_no_window: bool = True) -> Dict[str, Any]:
+    """장기 데몬용 스폰 인자 — Win: NO_WINDOW|NEW_PROCESS_GROUP, POSIX: 세션 분리."""
+    kw = spawn_kwargs(use_no_window)
+    if is_windows():
+        kw["creationflags"] |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kw["start_new_session"] = True
+    return kw
+
+
+def flash_window(hwnd: int) -> None:
+    """Windows 작업 표시줄 알림 (Qt 역의존 제거 — 순수 int 핸들 수신)."""
+    if not is_windows() or not hwnd:
+        return
+    try:
+        import ctypes
+
+        class FLASHWINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", ctypes.c_uint),
+                ("hwnd", ctypes.c_void_p),
+                ("dwFlags", ctypes.c_uint),
+                ("uCount", ctypes.c_uint),
+                ("dwTimeout", ctypes.c_uint),
+            ]
+
+        info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 3, 3, 0)
+        ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
+    except Exception:
+        pass
+
+
+def set_app_user_model_id(app_id: str) -> None:
+    """Windows 작업 표시줄 그룹핑 ID (비-Windows는 no-op)."""
+    if not is_windows() or not app_id:
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except (AttributeError, OSError):
+        pass
+
+
+def play_beep() -> None:
+    """Windows 시스템 알림음 (비-Windows no-op, winsound 가드 내장)."""
+    if not is_windows():
+        return
+    try:
+        import winsound  # type: ignore[import-not-found]
+
+        winsound.MessageBeep()
+    except Exception:
+        pass
+
+def reveal_in_file_manager(path: str) -> None:
+    """탐색기/파인더로 경로 노출 (utils._open_windows_explorer 승격)."""
+    import os as _os
+
+    target = _os.path.normpath(_os.path.abspath(path))
+    if is_windows():
+        import subprocess as _sp
+
+        is_file = _os.path.isfile(target)
+        folder = target if not is_file else _os.path.dirname(target)
+        if is_file:
+            _sp.Popen(["explorer.exe", "/n,", "/select," + target], close_fds=True)
+        else:
+            _sp.Popen(["explorer.exe", "/n,", folder], close_fds=True)
+    elif is_macos():
+        import subprocess as _sp
+
+        _sp.Popen(["open", path])
+    else:
+        import subprocess as _sp
+
+        _sp.Popen(["xdg-open", path])
+
+
+def attach_to_parent_lifecycle(proc) -> None:
+    """Windows: 자식을 Job Object에 할당 (부모 종료 시 자동 정리, POSIX no-op)."""
+    if not is_windows() or proc is None:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class JOB_BASIC(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        KILL_ON_CLOSE = 0x2000
+        h_job = ctypes.windll.kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            return
+        info = JOB_BASIC()
+        info.LimitFlags = KILL_ON_CLOSE
+        ok = ctypes.windll.kernel32.SetInformationJobObject(
+            h_job, 4, ctypes.byref(info), ctypes.sizeof(info)
+        )
+        if not ok:
+            ctypes.windll.kernel32.CloseHandle(h_job)
+            return
+        h_proc = getattr(proc, "_handle", None)
+        if h_proc is None:
+            ctypes.windll.kernel32.CloseHandle(h_job)
+            return
+        if not ctypes.windll.kernel32.AssignProcessToJobObject(h_job, h_proc):
+            ctypes.windll.kernel32.CloseHandle(h_job)
+    except Exception:
+        pass
+
+
+def kill_tree(proc) -> None:
+    """프로세스 트리 종료 — Windows Job Object / POSIX 프로세스 그룹."""
+    import os as _os
+    import signal as _signal
+
+    if proc is None:
+        return
+    try:
+        if proc.poll() is not None:
+            return
+    except Exception:
+        pass
+    if is_windows():
+        try:
+            import ctypes
+
+            h_proc = getattr(proc, "_handle", None)
+            if h_proc is not None:
+                h_job = ctypes.windll.kernel32.CreateJobObjectW(None, None)
+                if h_job:
+                    try:
+                        ctypes.windll.kernel32.AssignProcessToJobObject(h_job, h_proc)
+                        ctypes.windll.kernel32.TerminateJobObject(h_job, 1)
+                    finally:
+                        ctypes.windll.kernel32.CloseHandle(h_job)
+                    try:
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+                    return
+        except Exception:
+            pass
+        try:
+            proc.kill()
+        except Exception:
+            pass
+        return
+    try:
+        _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+
 ```
 
 ## File: chzzktube\infra\po_client.py
@@ -63151,15 +63453,20 @@ import json
 import shutil
 import zipfile
 import tarfile
-import platform
 import subprocess
 import urllib.request
 import tempfile
 
 import chzzktube.core.config as config
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
-from chzzktube.infra.node_provider import NODE_MIN_MAJOR, _NO_WINDOW
+from chzzktube.infra.node_provider import NODE_MIN_MAJOR
+from chzzktube.infra.platform import (
+    attach_to_parent_lifecycle,
+    daemon_spawn_kwargs,
+    is_windows,
+)
+from chzzktube.infra.platform import kill_tree as kill_tree_platform
 
 
 _TAG_ZIP = (
@@ -63214,66 +63521,15 @@ def server_home():
 
 
 def assign_to_job_object(proc):
-    """Windows: 프로세스를 Job Object에 할당해 부모 종료 시 자동 정리."""
-    if platform.system() != "Windows":
-        return
+    """Windows: 프로세스를 Job Object에 할당해 부모 종료 시 자동 정리.
+
+    실체는 platform.attach_to_parent_lifecycle — 여기는 하위 호환 재수출.
+    """
+    attach_to_parent_lifecycle(proc)
+    # 레거시 계약: 성공 시 proc._ct_job 부착을 기대하는 코드가 있어 핸들 표식 유지.
     try:
-        import ctypes
-        from ctypes import wintypes
-
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                ("ReadOperationCount", ctypes.c_uint64),
-                ("WriteOperationCount", ctypes.c_uint64),
-                ("OtherOperationCount", ctypes.c_uint64),
-                ("ReadTransferCount", ctypes.c_uint64),
-                ("WriteTransferCount", ctypes.c_uint64),
-                ("OtherTransferCount", ctypes.c_uint64),
-            ]
-
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                ("IoInfo", IO_COUNTERS),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        kernel32 = ctypes.windll.kernel32
-        h_job = kernel32.CreateJobObjectW(None, None)
-        if not h_job:
-            return
-
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-
-        kernel32.SetInformationJobObject(
-            h_job, 9, ctypes.byref(info), ctypes.sizeof(info)
-        )
-
-        if hasattr(proc, "_handle") and proc._handle:
-            if kernel32.AssignProcessToJobObject(h_job, proc._handle):
-                # [후속2] 핸들을 프로세스에 부착 — kill_tree()가 TerminateJobObject로
-                # 트리 전체를 정리하고 CloseHandle로 반납한다(핸들 누수 방지).
-                proc._ct_job = h_job
-                return
-            kernel32.CloseHandle(h_job)
+        if is_windows() and proc is not None and getattr(proc, "_handle", None):
+            proc._ct_job = True
     except Exception:
         pass
 
@@ -63370,38 +63626,13 @@ def _kill(proc):
 
 
 def kill_tree(proc):
-    """[Followup-2] Kill the whole process tree — Windows Job Object, POSIX group.
-
-    `_kill` only terminates the direct child, leaving npm's node grandchildren
-    alive (orphaned CPU/disk usage and a held prewarm lock). A process assigned
-    to our Job Object dies as a whole via TerminateJobObject; POSIX children get
-    killpg via the start_new_session group leader.
-    """
-    if proc is None:
-        return
-    job = getattr(proc, "_ct_job", None)
-    if job:
-        import ctypes
-        try:
-            ctypes.windll.kernel32.TerminateJobObject(job, 1)
-        except Exception:
-            pass
-        try:
-            ctypes.windll.kernel32.CloseHandle(job)
-        except Exception:
-            pass
-        try:
+    """프로세스 트리 종료 — 실체는 platform.kill_tree (하위 호환 재수출)."""
+    kill_tree_platform(proc)
+    try:
+        if getattr(proc, "_ct_job", None):
             proc._ct_job = None
-        except Exception:
-            pass
-        return
-    if platform.system() != "Windows":
-        try:
-            os.killpg(os.getpgid(proc.pid), 9)
-            return
-        except Exception:
-            pass
-    _kill(proc)
+    except Exception:
+        pass
 
 
 def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
@@ -63409,10 +63640,9 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
 
     좀비 프로세스 정리용 — server_ping이 True인데 PID가 죽은 경우 호출.
     """
-    import platform as _plat
     killed = False
     try:
-        if _plat.system() == "Windows":
+        if is_windows():
             # Windows: netstat로 PID 찾기 → taskkill
             import subprocess as _sub
             try:
@@ -63560,9 +63790,7 @@ def _spawn_node_server(log_full_func=None):
         node_dir = os.path.dirname(os.path.abspath(node))
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
 
-        kwargs = {}
-        if platform.system() == "Windows":
-            kwargs["creationflags"] = _NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        kwargs = daemon_spawn_kwargs()
         proc = subprocess.Popen(
             [node, js],
             cwd=os.path.dirname(js),
@@ -63835,9 +64063,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
     [Followup-2] job-object(TerminateJobObject)/process-group kill_tree로 트리 전체를 정리한다.
     """
     try:
-        kwargs = {}
-        if platform.system() == "Windows" and use_no_window:
-            kwargs["creationflags"] = _NO_WINDOW
+        kwargs = daemon_spawn_kwargs(use_no_window=use_no_window)
         proc = subprocess.Popen(
             cmd, cwd=cwd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -64058,6 +64284,7 @@ import sys
 import tempfile
 import socket
 import urllib.request
+from chzzktube.infra.platform import spawn_kwargs
 
 # (log_label, pypi_name, pypi_nightly) — log_label is shown in the DEPS PLATFORM column
 # pypi_nightly: Nightly 채널 사용 시 설치할 PyPI 패키지명 (None이면 Stable only)
@@ -64305,7 +64532,7 @@ def cli_raw(label, *args, timeout=15):
             errors="replace",
             timeout=timeout,
             env=env,
-            creationflags=_NO_WINDOW if os.name == "nt" else 0,
+            **spawn_kwargs(),
         )
     except Exception as e:
         return " ".join(full_cmd), f"[{type(e).__name__}] {e}"
@@ -64357,7 +64584,7 @@ def _ffmpeg_version(path, timeout=3):
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
-            creationflags=_NO_WINDOW if os.name == "nt" else 0,
+            **spawn_kwargs(),
         )
         text = (out.stdout or out.stderr or "")
         # 1) 표준 첫 줄 — 숫자 코어 3단만 (extra version 접미부 미포함)
@@ -64738,14 +64965,23 @@ import os
 import subprocess
 import threading
 import time
+from contextlib import suppress
 
 import yt_dlp
 
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.media import cleanup_temp_files, format_bytes, remux_live_to_container
-from chzzktube.core.utils import get_filename_template
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.pipeline.progress_emitter import emit_dl, emit_live_final_stats, log_success_info
+from chzzktube.core.media import (
+    cleanup_temp_files,
+    format_bytes,
+    remux_live_to_container,
+)
+from chzzktube.core.utils import get_filename_template
+from chzzktube.pipeline.progress_emitter import (
+    emit_dl,
+    emit_live_final_stats,
+    log_success_info,
+)
 
 
 def download_youtube_live(worker, url):
@@ -64757,7 +64993,12 @@ def download_youtube_live(worker, url):
         "skip_download": True,
         "extract_flat": False,
     }
-    from chzzktube.core.client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts
+    from chzzktube.core.client_opts import (
+        _apply_client_opts,
+        _apply_cookie_opts,
+        _apply_ejs_opts,
+        _apply_ffmpeg_opts,
+    )
 
     _apply_cookie_opts(opts, worker.cfg)
     _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
@@ -64835,19 +65076,16 @@ _READ_CHUNK = 256 * 1024
 _TICK_INTERVAL = 0.5
 
 
-def _no_window():
-    """Windows 전용 자식 창 억제 플래그."""
-    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-
 def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag="Streamlink"):
     """ffmpeg/streamlink 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리."""
+    from chzzktube.infra.platform import spawn_kwargs
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=False,
-        creationflags=_no_window(),
+        **spawn_kwargs(),
     )
 
     # 워커에 프로세스 핸들 저장 (앱 종료 시 정리용)
@@ -64863,13 +65101,13 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
         from chzzktube.core.log_event import LogEvent
         for raw in iter(proc.stderr.readline, b""):
             if raw:
-                try:
+                with suppress(Exception):
                     raw_log.raw("ffmpeg",
                                 LogEvent(stage="LIVE", status="RUN",
                                          scope="FFMP",
-                                         msg=raw.decode("utf-8", "replace").strip()))
-                except Exception:
-                    pass
+                                         msg=raw.decode("utf-8", "replace").strip(),
+                        ),
+                    )
 
     stderr_t = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_t.start()
@@ -64907,42 +65145,36 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
 
                 # 취소 요청 — 자식 죽이고 stdout queue drain ('truncated' 오탐 방지)
                 if worker.state.get("canceled") and proc.poll() is None:
-                    try:
+                    with suppress(ProcessLookupError, OSError):
                         proc.kill()
-                    except Exception:
-                        pass
-                    try:
+                    with suppress(ValueError, OSError):
                         while proc.stdout.read(_READ_CHUNK):
                             pass
-                    except Exception:
-                        pass
 
         worker._speed_win.add(total_bytes)
         returncode = proc.wait()
-        if returncode not in (0, None):
-            if not worker.state.get("canceled"):
-                raise RuntimeError(f"{log_tag} process exit code {returncode}")
+        if returncode not in (0, None) and not worker.state.get("canceled"):
+            raise RuntimeError(f"{log_tag} process exit code {returncode}")
         emit_live_final_stats(worker, total_bytes, start_t)
-    except Exception:
+    except Exception as ex:  # noqa: BLE001
         if proc.poll() is None:
-            try:
+            with suppress(ProcessLookupError, OSError):
                 proc.kill()
-            except Exception:
-                pass
         raw_log.raw(
             "dl",
             emit_dl(
                 status="FAIL",
                 scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                 stage="LIVE",
-                msg=f"{log_tag} fail",
+                msg=f"{log_tag} fail — {type(ex).__name__}: {ex}",
                 is_error=True,
             ),
             to_tui=True,
         )
     finally:
         stderr_t.join(timeout=1.0)
-        return handle_stream_finish(worker, True, temp_ts_file, returncode)
+
+    return handle_stream_finish(worker, True, temp_ts_file, returncode)
 ```
 
 ## File: chzzktube\pipeline\progress_emitter.py
@@ -64972,7 +65204,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
 import os
 import time
 
-from chzzktube.ui.log_console import (
+from chzzktube.core.log_emitter import (
     emit_event,
     emit_dl,
     emit_err,
@@ -64980,6 +65212,7 @@ from chzzktube.ui.log_console import (
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.media import cli_format_desc, format_bytes
 from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.watchdog import LivenessWatchdog
 
 
 def _dl_spec(ctx):
@@ -65010,7 +65243,13 @@ _TICK_INTERVAL = 0.5  # VOD 틱 0.5초 스로틀
 
 
 def emit_progress_tick(ctx, d):
-    """VOD 진행 틱 — 0.5초 스로틀, SpeedWindow 평균 속도, 컬럼 라인."""
+    """VOD 진행 틱 — 0.5초 스로틀, SpeedWindow 평균 속도, 컬럼 라인.
+    [Watchdog] 다운로드 진행 시 게이트/분석 워치독 하트비트 연장."""
+    # [Watchdog] 진행 이벤트 발생 시 메인 워치독 하트비트 (ctx에서 메인 윈도우 접근 불가하므로 raw_log 이벤트로 전달)
+    # 실제 하트비트는 DownloadWorker.run()에서 _gate_watchdog/_analysis_watchdog에 직접 연결 권장
+    # 여기서는 진행 중임을 알리는 이벤트만 로깅
+    raw_log.raw("dl", "progress_tick", to_tui=False)
+
     now = time.monotonic()
     last = ctx._last_tick_t or 0
     if last and now - last < _TICK_INTERVAL:
@@ -65447,9 +65686,8 @@ def expand_targets(ctx):
 from __future__ import annotations
 
 import datetime
-import importlib
 import os
-import partial
+from functools import partial
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
@@ -65471,9 +65709,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import chzzktube.core.config as config
+from chzzktube.core import config
 from chzzktube.core.cookies import get_browser_cookies
-import chzzktube.ui.theme as theme
+from chzzktube.ui import theme
 
 if TYPE_CHECKING:
     from chzzktube.ui.main_window import MainWindow
@@ -65623,10 +65861,9 @@ class CookieSelectDialog(QDialog):
         else:
             if b_type in ["chrome", "edge", "whale", "chromium", "brave", "vivaldi"]:
                 try:
-                    yt_cookies = importlib.import_module("yt_dlp.cookies")
-                    extract_fn = getattr(yt_cookies, "extract_cookies_from_browser", None)
-                    if callable(extract_fn):
-                        extract_fn(b_type)
+                    import yt_dlp.cookies
+
+                    yt_dlp.cookies.extract_cookies_from_browser(b_type)
                 except Exception as ex:  # noqa: BLE001
                     show_info_message(
                         self,
@@ -66271,6 +66508,17 @@ class VerboseLogWindow(QDialog):
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
 from collections import deque
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
+from PySide6.QtWidgets import QTextEdit
+
+from chzzktube.core.log_emitter import (
+    STEMLESS_CONT_WIDTH,
+    TREE_TOTAL_WIDTH,
+    _flow_lines,
+    _wrap_by_width,
+)
 from chzzktube.ui.theme import (
     LOG_COLOR_ACCENT,
     LOG_COLOR_DIM,
@@ -66281,35 +66529,7 @@ from chzzktube.ui.theme import (
     LOG_COLOR_VALUE,
     LOG_COLOR_WARN,
 )
-from chzzktube.core.log_emitter import (
-    STEMLESS_CONT_WIDTH,
-    TREE_LABEL_WIDTH,
-    TREE_TOTAL_WIDTH,
-    _flow_lines,
-    _log_bar,
-    _log_pct,
-    _log_speed,
-    _log_ts,
-    _pad_label,
-    _wrap_by_width,
-    display_width,
-    emit_component,
-    emit_dl,
-    emit_err,
-    emit_event,
-    emit_progress,
-    format_analysis_counts,
-    format_kv_line,
-    format_log_line,
-    format_log_line_for_event,
-    format_pick_menu,
-    format_target_url,
-    format_tree_item,
-    is_tui_line,
-)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QTextEdit
+
 
 class ConciseLogConsole:
     """간결 로그 패널 전용 렌더러."""
@@ -66751,7 +66971,7 @@ def update_tree_budget(text_edit):
     상한(100)을 두지 않는다 — 창을 가로로 늘리면 잘려 보이던 로그가
     유연하게 펼쳐진다. 초과분은 format_log_line의 '…' 절단이 처리한다.
     """
-    import chzzktube.core.log_emitter as log_emitter
+    from chzzktube.core import log_emitter
     char_w = text_edit.fontMetrics().horizontalAdvance(" ")
     if char_w > 0:
         # document margin(8px × 2) + QSS 프레임 여백을 제외한 실제 텍스트 폭
@@ -66817,55 +67037,18 @@ def _log_line_segments(line):
         return [(line, LOG_COLOR_ACCENT)]
     return [(line, LOG_COLOR_INFO)]
 
-
-__all__ = [
-    "ConciseLogConsole",
-    "TAIL_PADDING_BLOCKS",
-    "RIGHT_PADDING_PX",
-    "update_tree_budget",
-    "_truncate_by_pixels",
-    "_line_segments",
-    "_log_line_segments",
-    # core re-export (하위 호환 — 신규 코드는 chzzktube.core.log_emitter 직접 사용)
-    "STEMLESS_CONT_WIDTH",
-    "TREE_LABEL_WIDTH",
-    "TREE_TOTAL_WIDTH",
-    "_flow_lines",
-    "_log_bar",
-    "_log_pct",
-    "_log_speed",
-    "_log_ts",
-    "_pad_label",
-    "_wrap_by_width",
-    "display_width",
-    "emit_component",
-    "emit_dl",
-    "emit_err",
-    "emit_event",
-    "emit_progress",
-    "format_analysis_counts",
-    "format_kv_line",
-    "format_log_line",
-    "format_log_line_for_event",
-    "format_pick_menu",
-    "format_target_url",
-    "format_tree_item",
-    "is_tui_line",
-]
-
 ```
 
 ## File: chzzktube\ui\main_window.py
 
 ```python
 ﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
-from collections import deque
-import ctypes
 import os
 import platform
 import re
 import sys
 import time
+from collections import deque
 
 from PySide6.QtCore import (
     QEvent,
@@ -66896,19 +67079,23 @@ from PySide6.QtWidgets import (
 from chzzktube.control.controller import MediaController
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
-import chzzktube.core.config as config
+from chzzktube.core import config, log_history, raw_log
 from chzzktube.core.dl_platform import _dl_platform, _short_platform
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
-import chzzktube.core.log_history as log_history
 from chzzktube.core.media import short_codec
-import chzzktube.core.raw_log as raw_log
 from chzzktube.core.utils import _open_windows_explorer
+from chzzktube.core.watchdog import (
+    ANALYSIS_TIMEOUT_SEC,
+    FALLBACK_GRACE_SEC,
+    FALLBACK_TIMEOUT_SEC,
+    GATE_TIMEOUT_SEC,
+    LivenessWatchdog,
+)
 from chzzktube.infra.po_client import server_ping
 from chzzktube.infra.pylib_bootstrap import bootstrap as _bootstrap
+from chzzktube.ui import log_console, theme
 from chzzktube.ui.dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
-import chzzktube.ui.log_console as log_console
-import chzzktube.ui.theme as theme
 from chzzktube.workers.update_worker import UpdateWorker
 
 try:
@@ -66932,10 +67119,10 @@ _ANALYZE_DEBOUNCE_MS = 900
 # 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
 _BULK_INPUT_DELAY_MS = 150
 # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang 보호.
-_POT_GATE_TIMEOUT_MS = 120_000
+_POT_GATE_TIMEOUT_MS = int(GATE_TIMEOUT_SEC * 1000)
 # [Followup-4] 폴백 유예 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한 경우
 # 1회 유예 후 재판정한다(위양성 폴백 차단).
-_FALLBACK_GRACE_MS = 3000
+_FALLBACK_GRACE_MS = int(FALLBACK_GRACE_SEC * 1000)
 # [Followup-6] 분석 실패가 봇 체크/PO 토큰 사유인지 판별하는 마커(소문자 비교).
 _BOT_CHECK_MARKERS = (
     "sign in to confirm you're not a bot",
@@ -67035,26 +67222,54 @@ class MainWindow(QMainWindow):
         self._startup_completed = False
         self._pending_download = None
 
+        # [워치독] 단일 진실 시간(monotonic) 기반 워치독 인스턴스들
+        self._fallback_watchdog = LivenessWatchdog(FALLBACK_TIMEOUT_SEC, FALLBACK_GRACE_SEC)
+        self._gate_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
+        self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC, 0.0)
+
+        # 워치독 폴링용 타이머 (1초 주기)
+        self._watchdog_poll_timer = QTimer(self)
+        self._watchdog_poll_timer.setInterval(1000)
+        self._watchdog_poll_timer.timeout.connect(self._poll_watchdogs)
+        self._watchdog_poll_timer.start()
+
+    def _poll_watchdogs(self):
+        """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리."""
+        # 1) 기동 폴백 워치독
+        if not self._startup_completed and self._fallback_watchdog.check_timeout():
+            # 워치독이 만료를 알리면 기존 _force_unlock_input 로직 위임
+            self._force_unlock_input()
+            return
+
+        # 2) 게이트 워치독
+        if self._gate_watchdog_timer.isActive() and self._gate_watchdog.check_timeout():
+            self._on_gate_timeout()
+            return
+
+        # 3) 분석 워치독 — AnalyzeWorker._analysis_watchdog.heartbeat() 호출 시 수명 연장
+        # 순수 워치독 모드: 워치독 만료 시 분석 워커가 스스로 terminate() 하므로 여기서는 로깅만
+        if self._analysis_watchdog.check_timeout():
+            from chzzktube.core import raw_log
+            raw_log.raw("analyze", "[watchdog] analysis timeout detected by LivenessWatchdog")
+
         self.init_ui()
 
         # 구성요소(yt-dlp/streamlink) 자동 업데이트 확인 — 기동 직후 비동기 1회
         QTimer.singleShot(500, self._start_update_check)
 
-        # [응답없음 폴백] 구성요소 체인(POT 포함)이 15초 안에 끝나지 않으면
-        # 입력을 강제 개방 — URL 잠금이 영구화되지 않게 한다.
         # [P5] 단발 singleShot → 인스턴스 타이머 승격. 15초 단발 타이머는 "의존성을
         # 열심히 받는 중"과 "멈춤"을 구분하지 못하는 맹인이었다 — 실제 수급 작업
         # 진행 신호(UpdateWorker.work_tick / POT 상태 전이)가 오면 수명을 연장한다.
         self._fallback_timer = QTimer(self)
         self._fallback_timer.setSingleShot(True)
         self._fallback_timer.timeout.connect(self._force_unlock_input)
-        self._fallback_timer.start(15000)
+        self._fallback_timer.start(int(FALLBACK_TIMEOUT_SEC * 1000))
 
         # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang에도
         # 보호를 둔다(1차는 위 폴백). 만료 시 POT 작업을 트리 종료하고 큐를 푼다.
-        self._gate_watchdog = QTimer(self)
-        self._gate_watchdog.setSingleShot(True)
-        self._gate_watchdog.timeout.connect(self._on_gate_timeout)
+        self._gate_watchdog_timer = QTimer(self)
+        self._gate_watchdog_timer.setSingleShot(True)
+        self._gate_watchdog_timer.timeout.connect(self._on_gate_timeout)
         # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
         self._deps_failed = []
         # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
@@ -67165,28 +67380,11 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _flash_dialog(dlg, winsound):
         """Windows에서 종료 확인 대화상자에 알림음 발생 + 작업 표시줄 반짝임."""
-        if winsound:
-            try:
-                winsound.MessageBeep(winsound.MB_ICONASTERISK)
-            except OSError:
-                pass
-        try:
-            import ctypes
+        from chzzktube.infra.platform import flash_window, play_beep
 
-            class FLASHWINFO(ctypes.Structure):
-                _fields_ = [
-                    ("cbSize", ctypes.c_uint),
-                    ("hwnd", ctypes.c_void_p),
-                    ("dwFlags", ctypes.c_uint),
-                    ("uCount", ctypes.c_uint),
-                    ("dwTimeout", ctypes.c_uint),
-                ]
-
-            hwnd = int(dlg.winId())
-            info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 3, 3, 0)
-            ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
-        except (AttributeError, OSError):
-            pass
+        play_beep()
+        hwnd = int(dlg.winId())
+        flash_window(hwnd)
 
     def save_cfg(self):
         config.save_config(self.cfg)
@@ -67677,8 +67875,9 @@ class MainWindow(QMainWindow):
             check_updates=self.cfg.get("auto_update_check", True),
         )
         self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
-        # [P5] 수급 진행 하트비트 → 폴백 타이머 연장(맹인 15초 폴백 방지)
+        # [P5] 수급 진행 하트비트 → 폴백 타이머 연장 + 워치독 하트비트
         self.update_worker.work_tick.connect(self.defer_fallback_timer)
+        self.update_worker.work_tick.connect(lambda: self._fallback_watchdog.heartbeat())
         self.update_worker.start()
         # [P1] deps 게이트의 의미는 "검사 단계 완료"다 — stale(업데이트 대상) 존재는 게이트 사유가 아니다.
         # 업데이트 적용은 업데이트 워커의 일이며, READY 게이트를 막으면 안 된다.
@@ -67756,10 +67955,11 @@ class MainWindow(QMainWindow):
 
     def _start_gate_watchdog(self):
         """[Followup-3] POT gate 대기 2차 워치독 기동."""
-        self._gate_watchdog.start(_POT_GATE_TIMEOUT_MS)
+        self._gate_watchdog.reset()
+        self._gate_watchdog_timer.start(_POT_GATE_TIMEOUT_MS)
 
     def _stop_gate_watchdog(self):
-        self._gate_watchdog.stop()
+        self._gate_watchdog_timer.stop()
 
     def _on_gate_timeout(self):
         """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
@@ -67827,6 +68027,7 @@ class MainWindow(QMainWindow):
         """[P5] POT 수급/기동 국면(prewarm·starting)에서는 폴백을 서두르지 않는다."""
         if status in ("prewarm", "starting"):
             self.defer_fallback_timer()
+            self._fallback_watchdog.heartbeat()
 
     def _is_stale_analyze_signal(self) -> bool:
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단."""
@@ -68135,7 +68336,9 @@ class MainWindow(QMainWindow):
             )
             self.update_ui_state()
             return
-        lines = log_console.format_pick_menu(v_list, a_list)
+        from chzzktube.core.log_emitter import format_pick_menu
+
+        lines = format_pick_menu(v_list, a_list)
         lines.append("enter: 'N' video  /  'N.M' v+a  /  empty=best")
         self.append_concise_log("\n".join(lines), False, False)
         self.ctrl.state["picking"] = True
@@ -68226,12 +68429,9 @@ def main() -> int:
 
     sys.excepthook = lambda t, v, tb: log_history.exception("미처리 예외", t, v, tb)
 
-    if platform.system() == "Windows":
-        try:
-            myappid = "chzzktube.subapp.v2"
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-        except (AttributeError, OSError):
-            pass
+    from chzzktube.infra.platform import set_app_user_model_id
+
+    set_app_user_model_id("chzzktube.subapp.v2")
 
     app = QApplication(sys.argv)
     if os.path.exists(ICON_PATH):
@@ -68636,7 +68836,9 @@ import yt_dlp
 # 반드시 첫 YoutubeDL 생성 전에 설정 (plugins 로딩은 1회성 lazy init).
 yt_dlp.plugins.plugin_dirs.value = []
 
-from PySide6.QtCore import QThread, QTimer, Signal
+from PySide6.QtCore import QThread, Signal
+
+from chzzktube.core.watchdog import LivenessWatchdog
 
 from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api
 from chzzktube.core.log_emitter import format_kv_line, format_tree_item
@@ -68677,25 +68879,23 @@ class AnalyzeWorker(QThread):
         # [다운로드 일관성] 분석에서 통과한 클라이언트 기록 — 다운로드가
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
         self.client_used = "auto"
-        self._timeout_timer = QTimer()
-        self._timeout_timer.setSingleShot(True)
-        self._timeout_timer.timeout.connect(self._on_analysis_timeout)
+        # [Watchdog] 45초 분석 타임아웃을 LivenessWatchdog으로 완전 대체 — QTimer 맹인 타임아웃 제거
+        self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC)
 
     # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — ios는 PO Token
     # 불필요·SABR 무관(720p급), tv는 최후 수단(SABR 360p 리스크).
     _RETRY_CLIENTS = ["ios", "tv"]
-    _ANALYSIS_TIMEOUT_MS = 45000
 
     def _on_analysis_timeout(self):
-        """[hang-prevention] 분석 타임아웃 — yt-dlp가 멈췄을 때 스레드 강제 종료 + 에러 보고."""
+        """[hang-prevention] 분석 타임아웃 — 워치독이 만료를 알리면 스레드 강제 종료 + 에러 보고."""
         import chzzktube.core.raw_log as raw_log
         raw_log.raw(
             "analyze",
-            f"[analyze] timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s - yt-dlp hung.",
+            f"[analyze] timed out after {ANALYSIS_TIMEOUT_SEC:.0f}s - yt-dlp hung.",
         )
         self.terminate()
         self.error_occurred.emit(
-            f"Analysis timed out after {self._ANALYSIS_TIMEOUT_MS // 1000}s."
+            f"Analysis timed out after {ANALYSIS_TIMEOUT_SEC:.0f}s."
         )
 
     @staticmethod
@@ -68709,6 +68909,12 @@ class AnalyzeWorker(QThread):
         )
 
     def _extract_youtube(self, url, flat):
+        # yt-dlp progress_hook으로 워치독 하트비트 연장
+        def _progress_hook(d):
+            if d.get("status") == "downloading":
+                self._analysis_watchdog.heartbeat()
+
+        # ydl_opts에 훅 추가할 예정이므로 flat 분기 전에 준비
         """yt-dlp 추출 — bot-check 실패 시 ios→tv 클라이언트 회전.
 
         [회전 정책] 사용자가 특정 클라이언트를 지정했으면 그 값 하나만
@@ -68736,6 +68942,7 @@ class AnalyzeWorker(QThread):
         last_err = None
         for idx, client in enumerate(attempts):
             ydl_opts = dict(base)
+            ydl_opts["progress_hooks"] = [_progress_hook]
             _apply_cookie_opts(ydl_opts, self.cfg)
             if client != "auto":
                 ydl_opts["extractor_args"] = {
@@ -68765,7 +68972,8 @@ class AnalyzeWorker(QThread):
     def run(self):
         import chzzktube.core.raw_log as raw_log
         raw_log.raw("analyze", f"--- [format analysis start] {self.target_url} ---")
-        self._timeout_timer.start(self._ANALYSIS_TIMEOUT_MS)
+        # [Watchdog] 순수 워치독 모드 — QTimer 백업 완전 제거
+        self._analysis_watchdog.reset()
 
         try:
             try:
@@ -68982,13 +69190,14 @@ class AnalyzeWorker(QThread):
 import yt_dlp
 from PySide6.QtCore import QThread, Signal
 
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.core.speed_window import SpeedWindow
-from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 import chzzktube.pipeline.finalizer as _fin
 import chzzktube.pipeline.progress_emitter as _pe
 import chzzktube.pipeline.target_downloader as _td
+from chzzktube.core import raw_log
+from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.speed_window import SpeedWindow
+from chzzktube.core.watchdog import GATE_TIMEOUT_SEC, LivenessWatchdog
+from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 
 # [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
 # 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).
@@ -69035,6 +69244,8 @@ class DownloadWorker(QThread):
         self.current_url = None
         self._live_proc = None  # 라이브 녹화 프로세스 핸들 (앱 종료 시 정리용)
         self._ctx = None  # [A4] DownloadContext 참조 — 라이브 proc는 ctx에 부착된다
+        # [Watchdog] 다운로드 진행용 워치독 — 게이트/분석 타임아웃 연장
+        self._download_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
 
     def extract(self):
         """파이프라인 모듈에 넘길 DownloadContext를 생성한다 (D: 명시적 계약)."""
@@ -69068,6 +69279,9 @@ class DownloadWorker(QThread):
 
     def run(self):
         """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
+        # [Watchdog] 다운로드 시작 시 게이트 워치독 리셋 (하트비트 연장 시작)
+        from chzzktube.core import raw_log
+        self._download_watchdog.reset()
         ctx = self.extract()
         self._ctx = ctx  # [A4] 라이브 녹화 proc 핸들이 ctx._live_proc에 부착된다
         ctx.targets = _td.expand_targets(ctx)
@@ -69093,8 +69307,12 @@ class DownloadWorker(QThread):
                     )
                     continue
 
+                # [Watchdog] 각 타겟 다운로드 전 워치독 하트비트
+                self._download_watchdog.heartbeat()
                 if _td.download_target(ctx, url, failed_targets):
                     success_count += 1
+                # [Watchdog] 각 타겟 다운로드 후 워치독 하트비트 (진행 지속 알림)
+                self._download_watchdog.heartbeat()
 
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 
@@ -69161,7 +69379,7 @@ import chzzktube.infra.updater as updater
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_event import LogEvent
 from PySide6.QtCore import QThread, Signal
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component
 
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (

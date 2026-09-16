@@ -1,11 +1,10 @@
 ﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
-from collections import deque
-import ctypes
 import os
 import platform
 import re
 import sys
 import time
+from collections import deque
 
 from PySide6.QtCore import (
     QEvent,
@@ -36,19 +35,23 @@ from PySide6.QtWidgets import (
 from chzzktube.control.controller import MediaController
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
-import chzzktube.core.config as config
+from chzzktube.core import config, log_history, raw_log
 from chzzktube.core.dl_platform import _dl_platform, _short_platform
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
-import chzzktube.core.log_history as log_history
 from chzzktube.core.media import short_codec
-import chzzktube.core.raw_log as raw_log
 from chzzktube.core.utils import _open_windows_explorer
+from chzzktube.core.watchdog import (
+    ANALYSIS_TIMEOUT_SEC,
+    FALLBACK_GRACE_SEC,
+    FALLBACK_TIMEOUT_SEC,
+    GATE_TIMEOUT_SEC,
+    LivenessWatchdog,
+)
 from chzzktube.infra.po_client import server_ping
 from chzzktube.infra.pylib_bootstrap import bootstrap as _bootstrap
+from chzzktube.ui import log_console, theme
 from chzzktube.ui.dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
-import chzzktube.ui.log_console as log_console
-import chzzktube.ui.theme as theme
 from chzzktube.workers.update_worker import UpdateWorker
 
 try:
@@ -72,10 +75,10 @@ _ANALYZE_DEBOUNCE_MS = 900
 # 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
 _BULK_INPUT_DELAY_MS = 150
 # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang 보호.
-_POT_GATE_TIMEOUT_MS = 120_000
+_POT_GATE_TIMEOUT_MS = int(GATE_TIMEOUT_SEC * 1000)
 # [Followup-4] 폴백 유예 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한 경우
 # 1회 유예 후 재판정한다(위양성 폴백 차단).
-_FALLBACK_GRACE_MS = 3000
+_FALLBACK_GRACE_MS = int(FALLBACK_GRACE_SEC * 1000)
 # [Followup-6] 분석 실패가 봇 체크/PO 토큰 사유인지 판별하는 마커(소문자 비교).
 _BOT_CHECK_MARKERS = (
     "sign in to confirm you're not a bot",
@@ -175,26 +178,54 @@ class MainWindow(QMainWindow):
         self._startup_completed = False
         self._pending_download = None
 
+        # [워치독] 단일 진실 시간(monotonic) 기반 워치독 인스턴스들
+        self._fallback_watchdog = LivenessWatchdog(FALLBACK_TIMEOUT_SEC, FALLBACK_GRACE_SEC)
+        self._gate_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
+        self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC, 0.0)
+
+        # 워치독 폴링용 타이머 (1초 주기)
+        self._watchdog_poll_timer = QTimer(self)
+        self._watchdog_poll_timer.setInterval(1000)
+        self._watchdog_poll_timer.timeout.connect(self._poll_watchdogs)
+        self._watchdog_poll_timer.start()
+
+    def _poll_watchdogs(self):
+        """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리."""
+        # 1) 기동 폴백 워치독
+        if not self._startup_completed and self._fallback_watchdog.check_timeout():
+            # 워치독이 만료를 알리면 기존 _force_unlock_input 로직 위임
+            self._force_unlock_input()
+            return
+
+        # 2) 게이트 워치독
+        if self._gate_watchdog_timer.isActive() and self._gate_watchdog.check_timeout():
+            self._on_gate_timeout()
+            return
+
+        # 3) 분석 워치독 — AnalyzeWorker._analysis_watchdog.heartbeat() 호출 시 수명 연장
+        # 순수 워치독 모드: 워치독 만료 시 분석 워커가 스스로 terminate() 하므로 여기서는 로깅만
+        if self._analysis_watchdog.check_timeout():
+            from chzzktube.core import raw_log
+            raw_log.raw("analyze", "[watchdog] analysis timeout detected by LivenessWatchdog")
+
         self.init_ui()
 
         # 구성요소(yt-dlp/streamlink) 자동 업데이트 확인 — 기동 직후 비동기 1회
         QTimer.singleShot(500, self._start_update_check)
 
-        # [응답없음 폴백] 구성요소 체인(POT 포함)이 15초 안에 끝나지 않으면
-        # 입력을 강제 개방 — URL 잠금이 영구화되지 않게 한다.
         # [P5] 단발 singleShot → 인스턴스 타이머 승격. 15초 단발 타이머는 "의존성을
         # 열심히 받는 중"과 "멈춤"을 구분하지 못하는 맹인이었다 — 실제 수급 작업
         # 진행 신호(UpdateWorker.work_tick / POT 상태 전이)가 오면 수명을 연장한다.
         self._fallback_timer = QTimer(self)
         self._fallback_timer.setSingleShot(True)
         self._fallback_timer.timeout.connect(self._force_unlock_input)
-        self._fallback_timer.start(15000)
+        self._fallback_timer.start(int(FALLBACK_TIMEOUT_SEC * 1000))
 
         # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang에도
         # 보호를 둔다(1차는 위 폴백). 만료 시 POT 작업을 트리 종료하고 큐를 푼다.
-        self._gate_watchdog = QTimer(self)
-        self._gate_watchdog.setSingleShot(True)
-        self._gate_watchdog.timeout.connect(self._on_gate_timeout)
+        self._gate_watchdog_timer = QTimer(self)
+        self._gate_watchdog_timer.setSingleShot(True)
+        self._gate_watchdog_timer.timeout.connect(self._on_gate_timeout)
         # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
         self._deps_failed = []
         # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
@@ -305,28 +336,11 @@ class MainWindow(QMainWindow):
     @staticmethod
     def _flash_dialog(dlg, winsound):
         """Windows에서 종료 확인 대화상자에 알림음 발생 + 작업 표시줄 반짝임."""
-        if winsound:
-            try:
-                winsound.MessageBeep(winsound.MB_ICONASTERISK)
-            except OSError:
-                pass
-        try:
-            import ctypes
+        from chzzktube.infra.platform import flash_window, play_beep
 
-            class FLASHWINFO(ctypes.Structure):
-                _fields_ = [
-                    ("cbSize", ctypes.c_uint),
-                    ("hwnd", ctypes.c_void_p),
-                    ("dwFlags", ctypes.c_uint),
-                    ("uCount", ctypes.c_uint),
-                    ("dwTimeout", ctypes.c_uint),
-                ]
-
-            hwnd = int(dlg.winId())
-            info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 3, 3, 0)
-            ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
-        except (AttributeError, OSError):
-            pass
+        play_beep()
+        hwnd = int(dlg.winId())
+        flash_window(hwnd)
 
     def save_cfg(self):
         config.save_config(self.cfg)
@@ -817,8 +831,9 @@ class MainWindow(QMainWindow):
             check_updates=self.cfg.get("auto_update_check", True),
         )
         self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
-        # [P5] 수급 진행 하트비트 → 폴백 타이머 연장(맹인 15초 폴백 방지)
+        # [P5] 수급 진행 하트비트 → 폴백 타이머 연장 + 워치독 하트비트
         self.update_worker.work_tick.connect(self.defer_fallback_timer)
+        self.update_worker.work_tick.connect(lambda: self._fallback_watchdog.heartbeat())
         self.update_worker.start()
         # [P1] deps 게이트의 의미는 "검사 단계 완료"다 — stale(업데이트 대상) 존재는 게이트 사유가 아니다.
         # 업데이트 적용은 업데이트 워커의 일이며, READY 게이트를 막으면 안 된다.
@@ -896,10 +911,11 @@ class MainWindow(QMainWindow):
 
     def _start_gate_watchdog(self):
         """[Followup-3] POT gate 대기 2차 워치독 기동."""
-        self._gate_watchdog.start(_POT_GATE_TIMEOUT_MS)
+        self._gate_watchdog.reset()
+        self._gate_watchdog_timer.start(_POT_GATE_TIMEOUT_MS)
 
     def _stop_gate_watchdog(self):
-        self._gate_watchdog.stop()
+        self._gate_watchdog_timer.stop()
 
     def _on_gate_timeout(self):
         """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
@@ -967,6 +983,7 @@ class MainWindow(QMainWindow):
         """[P5] POT 수급/기동 국면(prewarm·starting)에서는 폴백을 서두르지 않는다."""
         if status in ("prewarm", "starting"):
             self.defer_fallback_timer()
+            self._fallback_watchdog.heartbeat()
 
     def _is_stale_analyze_signal(self) -> bool:
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단."""
@@ -1275,7 +1292,9 @@ class MainWindow(QMainWindow):
             )
             self.update_ui_state()
             return
-        lines = log_console.format_pick_menu(v_list, a_list)
+        from chzzktube.core.log_emitter import format_pick_menu
+
+        lines = format_pick_menu(v_list, a_list)
         lines.append("enter: 'N' video  /  'N.M' v+a  /  empty=best")
         self.append_concise_log("\n".join(lines), False, False)
         self.ctrl.state["picking"] = True
@@ -1366,12 +1385,9 @@ def main() -> int:
 
     sys.excepthook = lambda t, v, tb: log_history.exception("미처리 예외", t, v, tb)
 
-    if platform.system() == "Windows":
-        try:
-            myappid = "chzzktube.subapp.v2"
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-        except (AttributeError, OSError):
-            pass
+    from chzzktube.infra.platform import set_app_user_model_id
+
+    set_app_user_model_id("chzzktube.subapp.v2")
 
     app = QApplication(sys.argv)
     if os.path.exists(ICON_PATH):

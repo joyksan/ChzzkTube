@@ -63,19 +63,15 @@ def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
     반환: (proc, stderr_thread) — 호출부는 stdout 처리 후 proc.wait() +
     stderr_thread.join()으로 마감할 것.
     """
-    import os
-
     import chzzktube.core.raw_log as raw_log
     from chzzktube.core.log_event import LogEvent
+    from chzzktube.infra.platform import spawn_kwargs
 
-    creationflags = 0
-    if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        creationflags=creationflags,
+        **spawn_kwargs(),
     )
 
     def _drain():

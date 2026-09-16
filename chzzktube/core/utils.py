@@ -1,6 +1,5 @@
 ### 유틸리티 및 코어 로직
 import os
-import platform
 import re
 import subprocess
 
@@ -36,23 +35,8 @@ def get_filename_template(cfg):
 
 
 def _open_windows_explorer(path):
-    target = os.path.normpath(os.path.abspath(path))
-    if platform.system() == "Windows":
-        is_file = os.path.isfile(target)
-        folder = target if not is_file else os.path.dirname(target)
-        args = (
-            ["explorer.exe", "/n,", "/select," + target]
-            if is_file
-            else [["explorer.exe", "/n,", folder]]
-        )
-        # Windows Popen fix
-        if isinstance(args[0], list):
-            args = args[0]
-        subprocess.Popen(args, close_fds=True)
-    elif platform.system() == "Darwin":
-        subprocess.Popen(["open", path])
-    else:
-        subprocess.Popen(["xdg-open", path])
+    from chzzktube.infra.platform import reveal_in_file_manager
+    reveal_in_file_manager(path)
 
 
 def parse_sec(time_str):

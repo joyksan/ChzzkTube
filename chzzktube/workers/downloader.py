@@ -15,6 +15,7 @@ import chzzktube.pipeline.target_downloader as _td
 from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.speed_window import SpeedWindow
+from chzzktube.core.watchdog import GATE_TIMEOUT_SEC, LivenessWatchdog
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 
 # [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
@@ -62,6 +63,8 @@ class DownloadWorker(QThread):
         self.current_url = None
         self._live_proc = None  # 라이브 녹화 프로세스 핸들 (앱 종료 시 정리용)
         self._ctx = None  # [A4] DownloadContext 참조 — 라이브 proc는 ctx에 부착된다
+        # [Watchdog] 다운로드 진행용 워치독 — 게이트/분석 타임아웃 연장
+        self._download_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
 
     def extract(self):
         """파이프라인 모듈에 넘길 DownloadContext를 생성한다 (D: 명시적 계약)."""
@@ -95,6 +98,9 @@ class DownloadWorker(QThread):
 
     def run(self):
         """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
+        # [Watchdog] 다운로드 시작 시 게이트 워치독 리셋 (하트비트 연장 시작)
+        from chzzktube.core import raw_log
+        self._download_watchdog.reset()
         ctx = self.extract()
         self._ctx = ctx  # [A4] 라이브 녹화 proc 핸들이 ctx._live_proc에 부착된다
         ctx.targets = _td.expand_targets(ctx)
@@ -120,8 +126,12 @@ class DownloadWorker(QThread):
                     )
                     continue
 
+                # [Watchdog] 각 타겟 다운로드 전 워치독 하트비트
+                self._download_watchdog.heartbeat()
                 if _td.download_target(ctx, url, failed_targets):
                     success_count += 1
+                # [Watchdog] 각 타겟 다운로드 후 워치독 하트비트 (진행 지속 알림)
+                self._download_watchdog.heartbeat()
 
             _fin.finalize(ctx, self.total_count, failed_targets, success_count)
 

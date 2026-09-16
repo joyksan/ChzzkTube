@@ -11,14 +11,23 @@ import os
 import subprocess
 import threading
 import time
+from contextlib import suppress
 
 import yt_dlp
 
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.media import cleanup_temp_files, format_bytes, remux_live_to_container
-from chzzktube.core.utils import get_filename_template
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.pipeline.progress_emitter import emit_dl, emit_live_final_stats, log_success_info
+from chzzktube.core.media import (
+    cleanup_temp_files,
+    format_bytes,
+    remux_live_to_container,
+)
+from chzzktube.core.utils import get_filename_template
+from chzzktube.pipeline.progress_emitter import (
+    emit_dl,
+    emit_live_final_stats,
+    log_success_info,
+)
 
 
 def download_youtube_live(worker, url):
@@ -30,7 +39,12 @@ def download_youtube_live(worker, url):
         "skip_download": True,
         "extract_flat": False,
     }
-    from chzzktube.core.client_opts import _apply_client_opts, _apply_cookie_opts, _apply_ejs_opts, _apply_ffmpeg_opts
+    from chzzktube.core.client_opts import (
+        _apply_client_opts,
+        _apply_cookie_opts,
+        _apply_ejs_opts,
+        _apply_ffmpeg_opts,
+    )
 
     _apply_cookie_opts(opts, worker.cfg)
     _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
@@ -108,19 +122,16 @@ _READ_CHUNK = 256 * 1024
 _TICK_INTERVAL = 0.5
 
 
-def _no_window():
-    """Windows 전용 자식 창 억제 플래그."""
-    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
-
-
 def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag="Streamlink"):
     """ffmpeg/streamlink 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리."""
+    from chzzktube.infra.platform import spawn_kwargs
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=False,
-        creationflags=_no_window(),
+        **spawn_kwargs(),
     )
 
     # 워커에 프로세스 핸들 저장 (앱 종료 시 정리용)
@@ -136,13 +147,13 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
         from chzzktube.core.log_event import LogEvent
         for raw in iter(proc.stderr.readline, b""):
             if raw:
-                try:
+                with suppress(Exception):
                     raw_log.raw("ffmpeg",
                                 LogEvent(stage="LIVE", status="RUN",
                                          scope="FFMP",
-                                         msg=raw.decode("utf-8", "replace").strip()))
-                except Exception:
-                    pass
+                                         msg=raw.decode("utf-8", "replace").strip(),
+                        ),
+                    )
 
     stderr_t = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_t.start()
@@ -180,39 +191,33 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
 
                 # 취소 요청 — 자식 죽이고 stdout queue drain ('truncated' 오탐 방지)
                 if worker.state.get("canceled") and proc.poll() is None:
-                    try:
+                    with suppress(ProcessLookupError, OSError):
                         proc.kill()
-                    except Exception:
-                        pass
-                    try:
+                    with suppress(ValueError, OSError):
                         while proc.stdout.read(_READ_CHUNK):
                             pass
-                    except Exception:
-                        pass
 
         worker._speed_win.add(total_bytes)
         returncode = proc.wait()
-        if returncode not in (0, None):
-            if not worker.state.get("canceled"):
-                raise RuntimeError(f"{log_tag} process exit code {returncode}")
+        if returncode not in (0, None) and not worker.state.get("canceled"):
+            raise RuntimeError(f"{log_tag} process exit code {returncode}")
         emit_live_final_stats(worker, total_bytes, start_t)
-    except Exception:
+    except Exception as ex:  # noqa: BLE001
         if proc.poll() is None:
-            try:
+            with suppress(ProcessLookupError, OSError):
                 proc.kill()
-            except Exception:
-                pass
         raw_log.raw(
             "dl",
             emit_dl(
                 status="FAIL",
                 scope=_dl_platform(getattr(worker, "current_url", "") or ""),
                 stage="LIVE",
-                msg=f"{log_tag} fail",
+                msg=f"{log_tag} fail — {type(ex).__name__}: {ex}",
                 is_error=True,
             ),
             to_tui=True,
         )
     finally:
         stderr_t.join(timeout=1.0)
-        return handle_stream_finish(worker, True, temp_ts_file, returncode)
+
+    return handle_stream_finish(worker, True, temp_ts_file, returncode)

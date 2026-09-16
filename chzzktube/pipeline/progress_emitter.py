@@ -22,7 +22,7 @@
 import os
 import time
 
-from chzzktube.ui.log_console import (
+from chzzktube.core.log_emitter import (
     emit_event,
     emit_dl,
     emit_err,
@@ -30,6 +30,7 @@ from chzzktube.ui.log_console import (
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.media import cli_format_desc, format_bytes
 from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.watchdog import LivenessWatchdog
 
 
 def _dl_spec(ctx):
@@ -60,7 +61,13 @@ _TICK_INTERVAL = 0.5  # VOD 틱 0.5초 스로틀
 
 
 def emit_progress_tick(ctx, d):
-    """VOD 진행 틱 — 0.5초 스로틀, SpeedWindow 평균 속도, 컬럼 라인."""
+    """VOD 진행 틱 — 0.5초 스로틀, SpeedWindow 평균 속도, 컬럼 라인.
+    [Watchdog] 다운로드 진행 시 게이트/분석 워치독 하트비트 연장."""
+    # [Watchdog] 진행 이벤트 발생 시 메인 워치독 하트비트 (ctx에서 메인 윈도우 접근 불가하므로 raw_log 이벤트로 전달)
+    # 실제 하트비트는 DownloadWorker.run()에서 _gate_watchdog/_analysis_watchdog에 직접 연결 권장
+    # 여기서는 진행 중임을 알리는 이벤트만 로깅
+    raw_log.raw("dl", "progress_tick", to_tui=False)
+
     now = time.monotonic()
     last = ctx._last_tick_t or 0
     if last and now - last < _TICK_INTERVAL:

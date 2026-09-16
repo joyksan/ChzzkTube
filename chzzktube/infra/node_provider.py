@@ -13,18 +13,20 @@ import json
 import shutil
 import zipfile
 import tarfile
-import platform
 import subprocess
 import urllib.request
 
 import chzzktube.core.config as config
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component
+from chzzktube.ui.log_console import emit_event, emit_dl, emit_err
 
 
 # ── 상수 (node_provider 전용) ──────────────────────────────────────
 NODE_MIN_MAJOR = 22  # bgutil 서버의 Node 요구사항 (require(esm) 기본 지원선)
 _NODE_FALLBACK_VER = "v22.23.2"  # nodejs.org index 조회 실패 시 폴백 (v22 LTS)
-_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+# [HAL 이관] _NO_WINDOW는 하위 호환 별칭 — 실체는 platform.spawn_kwargs().
+# pot_provider가 `from node_provider import _NO_WINDOW`로 재수출하므로 유지.
+_NO_WINDOW = 0
 _node_ver_cache: dict = {}
 
 
@@ -57,14 +59,13 @@ def node_major_version(node_path, timeout=10):
         return _node_ver_cache[node_path]
     major = None
     try:
-        kwargs = {}
-        if platform.system() == "Windows":
-            kwargs["creationflags"] = _NO_WINDOW
+        from chzzktube.infra.platform import spawn_kwargs
+
         out = subprocess.run(
             [node_path, "--version"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
-            timeout=timeout, **kwargs,
+            timeout=timeout, **spawn_kwargs(),
         )
         m = re.match(r"v?(\d+)", (out.stdout or "").strip())
         if m:
@@ -99,10 +100,11 @@ def latest_lts_node_url(major=NODE_MIN_MAJOR):
 
 def _platform_node_url(ver):
     """플랫폼별 Node.js 배포 URL 생성 (Windows: zip, macOS: tar.gz)."""
-    system = platform.system()
-    if system == "Windows":
+    from chzzktube.infra.platform import is_macos, is_windows
+
+    if is_windows():
         return f"https://nodejs.org/dist/{ver}/node-{ver}-win-x64.zip"
-    if system == "Darwin":
+    if is_macos():
         arch = "arm64" if platform.machine() == "arm64" else "x64"
         return f"https://nodejs.org/dist/{ver}/node-{ver}-darwin-{arch}.tar.gz"
     arch = "arm64" if platform.machine() == "arm64" else "x64"
@@ -116,7 +118,9 @@ def npm_exe():
     if not node:
         return None
     base = os.path.dirname(node)
-    name = "npm.cmd" if platform.system() == "Windows" else "npm"
+    from chzzktube.infra.platform import is_windows as _is_win
+
+    name = "npm.cmd" if _is_win() else "npm"
     cand = os.path.join(base, name)
     return cand if os.path.isfile(cand) else None
 
@@ -133,7 +137,9 @@ def node_exe():
     요구 버전을 충족하는 후보가 없으면 None → ensure_node_runtime 재구성 트리거.
     포터블 빌드 첫 실행시 다른 DEPS와 함께 다운로드됨.
     """
-    _exe_suffix = ".exe" if os.name == "nt" else ""
+    from chzzktube.infra.platform import exe_suffix, is_windows as _np_is_win
+
+    _exe_suffix = exe_suffix()
 
     # 1. 시스템 Node.js 확인 (번들이 아닌 외부 참조)
     system_node = shutil.which("node") or shutil.which("node.exe")
@@ -145,12 +151,12 @@ def node_exe():
     cands = []
     local_node_dir = os.path.join(get_writable_base(), "node")
     if os.path.isdir(local_node_dir):
-        exe_name = "node.exe" if platform.system() == "Windows" else "node"
+        exe_name = f"node{_exe_suffix}"
         for root, dirs, files in os.walk(local_node_dir):
             if exe_name in files:
                 cands.append(os.path.join(root, exe_name))
     # [macOS] 포터블 node 실행 권한 보장 (tar.gz 추출 시 실행 비트 누락 방지)
-    if platform.system() != "Windows":
+    if not _np_is_win():
         for c in cands:
             try:
                 mode = os.stat(c).st_mode

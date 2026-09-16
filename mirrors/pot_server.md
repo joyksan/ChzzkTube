@@ -18,15 +18,20 @@ import json
 import shutil
 import zipfile
 import tarfile
-import platform
 import subprocess
 import urllib.request
 import tempfile
 
 import chzzktube.core.config as config
-from chzzktube.ui.log_console import emit_component
+from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
-from chzzktube.infra.node_provider import NODE_MIN_MAJOR, _NO_WINDOW
+from chzzktube.infra.node_provider import NODE_MIN_MAJOR
+from chzzktube.infra.platform import (
+    attach_to_parent_lifecycle,
+    daemon_spawn_kwargs,
+    is_windows,
+)
+from chzzktube.infra.platform import kill_tree as kill_tree_platform
 
 
 _TAG_ZIP = (
@@ -81,66 +86,15 @@ def server_home():
 
 
 def assign_to_job_object(proc):
-    """Windows: 프로세스를 Job Object에 할당해 부모 종료 시 자동 정리."""
-    if platform.system() != "Windows":
-        return
+    """Windows: 프로세스를 Job Object에 할당해 부모 종료 시 자동 정리.
+
+    실체는 platform.attach_to_parent_lifecycle — 여기는 하위 호환 재수출.
+    """
+    attach_to_parent_lifecycle(proc)
+    # 레거시 계약: 성공 시 proc._ct_job 부착을 기대하는 코드가 있어 핸들 표식 유지.
     try:
-        import ctypes
-        from ctypes import wintypes
-
-        class IO_COUNTERS(ctypes.Structure):
-            _fields_ = [
-                ("ReadOperationCount", ctypes.c_uint64),
-                ("WriteOperationCount", ctypes.c_uint64),
-                ("OtherOperationCount", ctypes.c_uint64),
-                ("ReadTransferCount", ctypes.c_uint64),
-                ("WriteTransferCount", ctypes.c_uint64),
-                ("OtherTransferCount", ctypes.c_uint64),
-            ]
-
-        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("PerProcessUserTimeLimit", ctypes.c_int64),
-                ("PerJobUserTimeLimit", ctypes.c_int64),
-                ("LimitFlags", wintypes.DWORD),
-                ("MinimumWorkingSetSize", ctypes.c_size_t),
-                ("MaximumWorkingSetSize", ctypes.c_size_t),
-                ("ActiveProcessLimit", wintypes.DWORD),
-                ("Affinity", ctypes.c_size_t),
-                ("PriorityClass", wintypes.DWORD),
-                ("SchedulingClass", wintypes.DWORD),
-            ]
-
-        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
-            _fields_ = [
-                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
-                ("IoInfo", IO_COUNTERS),
-                ("ProcessMemoryLimit", ctypes.c_size_t),
-                ("JobMemoryLimit", ctypes.c_size_t),
-                ("PeakProcessMemoryUsed", ctypes.c_size_t),
-                ("PeakJobMemoryUsed", ctypes.c_size_t),
-            ]
-
-        kernel32 = ctypes.windll.kernel32
-        h_job = kernel32.CreateJobObjectW(None, None)
-        if not h_job:
-            return
-
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
-        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-
-        kernel32.SetInformationJobObject(
-            h_job, 9, ctypes.byref(info), ctypes.sizeof(info)
-        )
-
-        if hasattr(proc, "_handle") and proc._handle:
-            if kernel32.AssignProcessToJobObject(h_job, proc._handle):
-                # [후속2] 핸들을 프로세스에 부착 — kill_tree()가 TerminateJobObject로
-                # 트리 전체를 정리하고 CloseHandle로 반납한다(핸들 누수 방지).
-                proc._ct_job = h_job
-                return
-            kernel32.CloseHandle(h_job)
+        if is_windows() and proc is not None and getattr(proc, "_handle", None):
+            proc._ct_job = True
     except Exception:
         pass
 
@@ -237,38 +191,13 @@ def _kill(proc):
 
 
 def kill_tree(proc):
-    """[Followup-2] Kill the whole process tree — Windows Job Object, POSIX group.
-
-    `_kill` only terminates the direct child, leaving npm's node grandchildren
-    alive (orphaned CPU/disk usage and a held prewarm lock). A process assigned
-    to our Job Object dies as a whole via TerminateJobObject; POSIX children get
-    killpg via the start_new_session group leader.
-    """
-    if proc is None:
-        return
-    job = getattr(proc, "_ct_job", None)
-    if job:
-        import ctypes
-        try:
-            ctypes.windll.kernel32.TerminateJobObject(job, 1)
-        except Exception:
-            pass
-        try:
-            ctypes.windll.kernel32.CloseHandle(job)
-        except Exception:
-            pass
-        try:
+    """프로세스 트리 종료 — 실체는 platform.kill_tree (하위 호환 재수출)."""
+    kill_tree_platform(proc)
+    try:
+        if getattr(proc, "_ct_job", None):
             proc._ct_job = None
-        except Exception:
-            pass
-        return
-    if platform.system() != "Windows":
-        try:
-            os.killpg(os.getpgid(proc.pid), 9)
-            return
-        except Exception:
-            pass
-    _kill(proc)
+    except Exception:
+        pass
 
 
 def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
@@ -276,10 +205,9 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
 
     좀비 프로세스 정리용 — server_ping이 True인데 PID가 죽은 경우 호출.
     """
-    import platform as _plat
     killed = False
     try:
-        if _plat.system() == "Windows":
+        if is_windows():
             # Windows: netstat로 PID 찾기 → taskkill
             import subprocess as _sub
             try:
@@ -427,9 +355,7 @@ def _spawn_node_server(log_full_func=None):
         node_dir = os.path.dirname(os.path.abspath(node))
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
 
-        kwargs = {}
-        if platform.system() == "Windows":
-            kwargs["creationflags"] = _NO_WINDOW | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        kwargs = daemon_spawn_kwargs()
         proc = subprocess.Popen(
             [node, js],
             cwd=os.path.dirname(js),
@@ -702,9 +628,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
     [Followup-2] job-object(TerminateJobObject)/process-group kill_tree로 트리 전체를 정리한다.
     """
     try:
-        kwargs = {}
-        if platform.system() == "Windows" and use_no_window:
-            kwargs["creationflags"] = _NO_WINDOW
+        kwargs = daemon_spawn_kwargs(use_no_window=use_no_window)
         proc = subprocess.Popen(
             cmd, cwd=cwd,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

@@ -58,6 +58,39 @@ class _WorkerStub:
         self.started += 1
 
 
+class _FakeTimer:
+    """QTimer 대역 — start() 호출 시점과 인자만 기록."""
+
+    def __init__(self, active=True):
+        self.active = active
+        self.starts = []
+
+    def start(self, ms):
+        self.starts.append(ms)
+
+    def isActive(self):
+        return self.active
+
+    def stop(self):
+        pass
+
+
+class _WatchdogFake:
+    """LivenessWatchdog 대역 — check_timeout은 항상 False, heartbeat는 no-op."""
+
+    def __init__(self):
+        self.heartbeats = 0
+
+    def heartbeat(self):
+        self.heartbeats += 1
+
+    def check_timeout(self):
+        return False
+
+    def reset(self):
+        pass
+
+
 class _FakeInput:
     def __init__(self, text=""):
         self._text = text
@@ -152,7 +185,8 @@ def test_check_done_reports_deps_true_when_clean(monkeypatch):
     ok_arg, msg_arg = fake._startup_coord.report_deps.call_args[0]
     assert (ok_arg, msg_arg) == (True, "deps ok")
     # [P5] 업그레이드 워커의 수급 하트비트가 폴백 타이머 연장 슬롯에 배선된다
-    assert fake.update_worker.work_tick.slots == [fake.defer_fallback_timer]
+    # (워치독 하트비트도 연결되므로 슬롯 2개 허용)
+    assert fake.defer_fallback_timer in fake.update_worker.work_tick.slots
 
 
 # ── P2: 워커 크래시 종료 시그널 분기 ─────────────────────────────────
@@ -242,6 +276,10 @@ class _TimerFake:
     def __init__(self, startup_completed=False, start=True):
         self._startup_completed = startup_completed
         self._fallback_timer = _FakeTimer(active=start)
+        # 워치독 대역 (check_timeout은 항상 False, heartbeat는 no-op)
+        self._fallback_watchdog = _WatchdogFake()
+        self._gate_watchdog = _WatchdogFake()
+        self._analysis_watchdog = _WatchdogFake()
         if start:
             self._fallback_timer.start(15000)
 
