@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime
 import importlib
 import os
-import sys
+import partial
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -129,11 +130,14 @@ class CookieSelectDialog(QDialog):
         self.selected_type = None
         self.selected_path = ""
         self.setWindowTitle("쿠키 불러오기...")
-        self.setFixedSize(300, 380)
+        self.setFixedSize(320, 220)  # [수정] 300x380 -> 320x220 컴팩트화
         self.setStyleSheet(theme.DIALOG_BG_QSS)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(8)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+
+        grid = QGridLayout()
+        grid.setSpacing(6)
 
         buttons = [
             ("Cookies.txt", "file"),
@@ -147,11 +151,15 @@ class CookieSelectDialog(QDialog):
             ("Whale", "whale"),
         ]
 
-        for text, b_type in buttons:
+        # [수정] 2열 그리드 배치
+        # [수정] partial을 이용한 클린 바인딩
+        for idx, (text, b_type) in enumerate(buttons):
             btn = QPushButton(text)
             btn.setStyleSheet(theme.BTN_GRID_QSS)
-            btn.clicked.connect(lambda checked, t=b_type: self.on_select(t))
-            layout.addWidget(btn)
+            btn.clicked.connect(partial(self.on_select, b_type))
+            grid.addWidget(btn, idx // 2, idx % 2)
+
+        layout.addLayout(grid)
 
     def on_select(self, b_type):
         if b_type == "file":
