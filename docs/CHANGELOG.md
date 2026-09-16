@@ -1,3 +1,30 @@
+### 2026-09-16 — v3.5.2 : READY 폴백 결함 3건 수리 — deps 게이트 의미 분리·크래시 시그널 분기·POT 프리웜 보존
+
+#### 문제 (관측: 평범한 기동에서 "ready — input unlocked (fallback timeout)"이 출력)
+- **P1 deps 게이트 의미 오용**: `_on_update_check_done`이 `report_deps(not bool(stale), …)`로 보고 → 업데이트가 감지된 **모든 기동**에서 `deps_ok=False` 고정 → `can_emit_ready()`가 사실상 영구 False → 정상 READY 대신 15초 폴백 문구로만 입력이 열리고, 그 15초 동안 입력이 잠겼다.
+- **P2 upgrade 크래시 시 시그널 오발행**: `UpdateWorker.run()`의 except가 모드와 무관하게 `check_done`을 발화 → upgrade 워커의 `check_done`은 구독자 0(연결 지점은 `upgrade_done`) → `upgrade_done` 영구 미발화 → READY 게이트가 잠김.
+- **P3 폴백이 프리웜을 종료**: `force_unlock()`이 `POTManager.cancel()`을 호출 → `_POTWorker._child_procs`는 append 0건이라 npm/tsc 자식을 죽이지 못한 채 QThread만 terminate → 고아 프로세스 잔존 + `prewarm-lock` 점유로 다음 기동 프리웜이 "prewarm skipped — build busy" 실패.
+- **P3b 상태 논리 혼동**: `get_current_app_state()`가 `is_busy()`를 STARTUP 사유로 삼아, 프리웜 진행 중 `toggle_download`의 대기 분기("queued — waiting for pot server")가 **도달 불가 사문 코드**였다(ENTER 무반응).
+- **P3c 무제한 서브프로세스**: `_run_and_stream_log`의 `communicate()`에 timeout 부재 → npm ci/tsc 무응답 시 프리웜 워커가 영구 점유 → `is_busy()` 고정 → POT 게이트 다운로드가 대기에서 풀리지 않는다.
+- **P5 15초 단발 타이머의 맹점**: `QTimer.singleShot(15000, …)`는 대규모 수급(ffmpeg·node·pip 다운로드)이 진행 중인지 멈춘 것인지 구분하지 못했다 — 정상 진행 중에도 폴백이 발화해 문구가 오표기됐다.
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `main_window.py` | `report_deps(True, …)` — deps 게이트를 "검사 단계 완료"로 의미 정정(P1). `get_current_app_state()`에서 `is_busy()` 제거 — 입력 잠금은 `_startup_completed`만 판정(P3b), POT 대기 분기 부활 |
+| `update_worker.py` | 크래시 종료 시그널을 모드별로 분기(`upgrade` → `upgrade_done(False, "worker crash")`, check → `check_done([])`) + 중복 `import traceback` 제거(P2) |
+| `startup_coordinator.py` | `force_unlock()`에서 `_pot.cancel()` 제거 — 폴백은 READY 발산만 담당, 프리웜은 백그라운드 존속(P3) |
+| `pot_server.py` | `_run_and_stream_log(…, timeout=None)` + `TimeoutExpired → _kill(proc) → -1`. `_NPM_CI_TIMEOUT=600`·`_TSC_TIMEOUT=300` 적용(P3c) |
+| `main_window.py`·`update_worker.py` | [P5] 15초 폴백을 인스턴스 타이머(`_fallback_timer`)로 승격 + `defer_fallback_timer()` 동적 워치독. `UpdateWorker.work_tick`(문자열 없는 하트비트) → pip·ffmpeg·node 수급 진행 중 카운트다운 되감기, POT `prewarm`/`starting`은 `_on_pot_activity` 경유 연장 |
+
+#### 검증
+- 신규 회귀 테스트 18건: `test_coordinator.py` 3건(deps 게이트 의미 1·폴백 프리웜 보존 2) · `test_startup_gate_regressions.py` 11건(신규) · `test_pot_server_timeout.py` 4건(신규)
+- stale 테스트 정정: `test_download_pipeline.py::test_truncate_for_full_log` — HEAD `e156623` worktree 실측으로 **기존 실패**를 분리 확인한 뒤, 소스 정본(`configuration:` 블록 제거)에 맞춰 기대값을 재작성
+- 전체 pytest **167 passed 0 failed**
+- `python sync_mirrors.py --check` 0건 · `smoke_test` PASS · py_compile OK · 버전 3중 정합(`v3.5.2` / `3.5.2` / `3.5.2`)
+
+---
+
 ### 2026-09-15 - v3.5.1 : UI/다이얼로그 전면 규격 교정 및 모던 TUI 개편
 
   - `ExitConfirmDialog`: 폭 축소(360×130 → 280×125) 및 경고 텍스트 중앙 정렬(`AlignCenter`) 적용으로 비례 안정화.

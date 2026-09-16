@@ -34,6 +34,11 @@ _TAG_ZIP = (
 )
 _SERVER_FALLBACK_VER = "1.3.2"
 
+# [P3c] 빌드 단계 상한 (초) — npm ci/tsc가 무응답이면 프리웜 워커가 영구 점유되어
+# is_busy()가 고정되고 POT 게이트 다운로드가 큐에서 풀리지 않는다.
+_NPM_CI_TIMEOUT = 600
+_TSC_TIMEOUT = 300
+
 
 # ── 공유 헬퍼 (node_provider에서도 사용) ──────────────────────────────
 def get_writable_base():
@@ -619,11 +624,17 @@ def download_and_install_source(want_ver, log_func=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True):
+def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True, timeout=None):
     """서브프로세스 실행 + 출력 스트리밍.
 
     use_no_window=False로 설정하면 CREATE_NO_WINDOW 플래그를 적용하지 않음.
     tsc 등 콘솔 출력에 의존하는 도구는 이 옵션을 False로 설정해야 함.
+
+    [P3c] timeout 초과 시 직접 자식만 강제 종료하고 -1을 반환한다. npm ci/tsc가
+    무응답이면 프리웜 워커가 영구 점유되어 is_busy()가 고정되고 POT 게이트
+    다운로드가 큐에서 풀리지 않는다 — 상한이 반드시 필요하다.
+    (한계: Windows에서 npm이 낳은 자손 프로세스는 잔존할 수 있다. 트리 정리는
+     TerminateJobObject 도입이 필요한 후속 과제다.)
     """
     try:
         kwargs = {}
@@ -635,7 +646,15 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True):
             text=True, encoding="utf-8", errors="replace",
             env=env, **kwargs,
         )
-        stdout, _ = proc.communicate()
+        try:
+            stdout, _ = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill(proc)
+            if log_full_func:
+                log_full_func(
+                    f"subprocess timeout ({timeout}s) — killed: {' '.join(map(str, cmd))}"
+                )
+            return -1
         if stdout and log_full_func:
             for line in stdout.splitlines():
                 stripped = line.strip()
@@ -719,7 +738,9 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
             env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
 
             cmd_install = npm_cmd + ["ci", "--no-audit", "--no-fund"]
-            ret = _run_and_stream_log(cmd_install, server_dir, log_full, env=env)
+            ret = _run_and_stream_log(
+                cmd_install, server_dir, log_full, env=env, timeout=_NPM_CI_TIMEOUT
+            )
             if ret != 0:
                 return None, f"npm install failed (exit code {ret})"
 
@@ -740,7 +761,10 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
             else:
                 cmd_build = [curr_node, npm_cli, "execute", "tsc"] if npm_cli else ["npx", "tsc"]
 
-            ret = _run_and_stream_log(cmd_build, server_dir, log_full, env=env, use_no_window=False)
+            ret = _run_and_stream_log(
+                cmd_build, server_dir, log_full, env=env,
+                use_no_window=False, timeout=_TSC_TIMEOUT,
+            )
             if ret != 0:
                 return None, f"tsc failed (exit code {ret})"
 

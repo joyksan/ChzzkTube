@@ -32,6 +32,10 @@ _RAW_VERSION_CMDS = (
 class UpdateWorker(QThread):
     check_done = Signal(list)
     upgrade_done = Signal(bool, str)
+    # [P5] 실제 수급 작업(다운로드/설치) 진행 하트비트 — 로그 채널이 아니다.
+    # 문자열 페이로드가 없으며 TUI 렌더에 관여하지 않는다(§5-11 준수).
+    # MainWindow가 이 신호로 기동 폴백 타이머를 연장한다(defer_fallback_timer).
+    work_tick = Signal()
 
     def __init__(self, parent=None, upgrade=False, stale_updates=None, channel='stable', check_updates=True):
         super().__init__(parent)
@@ -47,11 +51,17 @@ class UpdateWorker(QThread):
             else:
                 self._do_check()
         except Exception as e:
-            import traceback
             traceback.print_exc()
             raw_log.raw("deps", LogEvent(stage="DEPS", status="FAIL", scope="DEPS",
                                          msg=f"worker crash: {e}", is_error=True), to_tui=True)
-            self.check_done.emit([])
+            # [P2] 모드별 종료 시그널 분기 — upgrade 워커의 check_done은 구독자가 0이다
+            # (연결 지점은 main_window.py의 upgrade_done뿐) → 예외가 허공으로 증발해
+            # upgrade_done 영구 미발화 → READY가 15초 폴백으로만 열렸다.
+            # check 모드의 check_done([])은 의도된 복구 경로(DEPS 결론 라인 + prewarm 기동).
+            if self.upgrade:
+                self.upgrade_done.emit(False, "worker crash")
+            else:
+                self.check_done.emit([])
 
     def _do_check(self):
         """버전 확인 — 메인 콘솔(deps 상태 5줄) + F12(CLI 원문). 버스 단일 경유.
@@ -110,6 +120,7 @@ class UpdateWorker(QThread):
             )
         show = bool(event.is_status or event.is_error
                     or event.status in ("FAIL", "WARN", "ABORT"))
+        self._tick(event)  # [P5] 수급 진행 하트비트 (폴백 타이머 연장)
         raw_log.raw("deps", event, to_tui=show)
 
     @staticmethod
@@ -120,6 +131,16 @@ class UpdateWorker(QThread):
         verb = ("downloading", "fetching", "installing", "extracting",
                 "reinstalling", "reconfiguring", "brew install")
         return any(v in text.lower() for v in verb)
+
+    def _tick(self, tui_line):
+        """[P5] 실제 다운로드/설치 진행 시 기동 폴백 타이머 연장을 요청한다.
+
+        로그 시그널이 아니다 — 문자열을 싣지 않는 무페이로드 하트비트(§5-11 준수).
+        15초 단발 타이머는 수급 진행 중과 멈춤을 구분하지 못해 대규모
+        수급(ffmpeg·node·pip) 중에도 폴백이 발화했다.
+        """
+        if self._had_action(tui_line):
+            self.work_tick.emit()
 
     def _do_upgrade(self, stale_updates=None):
         import chzzktube.infra.components as components
@@ -136,6 +157,7 @@ class UpdateWorker(QThread):
             code, tail = updater.upgrade_packages(pypi_names, channel=self.channel)
             for l in tail.splitlines():
                 if l.strip():
+                    self._tick(l)  # [P5] pip 다운로드/설치 진행 하트비트
                     # raw 출력(pip/다운로드)은 F12 원문으로 — TUI 콘솔 오염 방지
                     raw_log.raw("pip", l.strip())
             if code != 0:
@@ -169,6 +191,7 @@ class UpdateWorker(QThread):
         def _node_cb(msg, is_status=True, is_error=False):
             if self._had_action(msg):
                 node_acted[0] = True
+                self.work_tick.emit()  # [P5] node 수급 진행 하트비트
             # [버스 단일 경유] TUI 틱(갱신형) + F12 원문 — emit_component 재포장 폐기
             if isinstance(msg, LogEvent):
                 raw_log.raw("deps", msg, to_tui=True)

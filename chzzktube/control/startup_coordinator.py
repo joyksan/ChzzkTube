@@ -119,7 +119,11 @@ class StartupCoordinator(QObject):
             if self._fallback_done:
                 return
             self._fallback_done = True
-        self._pot.cancel()
+        # [P3] POT 프리웜을 취소하지 않는다 — 백그라운드 수급/빌드(GitHub zip·npm ci·tsc)를
+        # 살려두어야 pot_ready가 세워지고 POT 게이트 다운로드가 큐에서 풀린다.
+        # 종전 cancel()은 자식 프로세스를 죽이지 못한 채(_POTWorker._child_procs는 항상
+        #  리스트 — append 0건) QThread만 terminate해 고아 npm을 남기고 prewarm-lock을
+        # 점유하는 역효과가 있었다. cancel()은 closeEvent 종료 정리 용도로만 존치한다.
         self.report_ready(True, "ready — input unlocked (fallback timeout)")
 
     # ── READY 발산 게이트 ────────────────────────────────────

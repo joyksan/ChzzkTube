@@ -117,3 +117,39 @@ class TestPotStatusBusWiring:
         ev = [e for e in events if getattr(e, "stage", "") == "POT"][-1]
         assert ev.status == "FAIL"
         assert ev.is_error is True
+class TestDepsGateSemantics:
+    """[P1 회귀] deps 게이트의 의미는 "검사 단계 완료" — stale 존재가 READY를 잠그지 않는다.
+
+    종전 배선은 `report_deps(not bool(stale), ...)`였다 → 업데이트가 감지되는 모든
+    기동에서 deps_ok=False로 고정되어 정상 READY가 영원히 열리지 않고, 15초 폴백
+    문구("ready — input unlocked (fallback timeout)")로만 입력이 풀렸다.
+    """
+
+    def test_stale_does_not_block_ready(self, coord):
+        coord.report_deps(True, "update")  # stale 감지된 기동
+        coord.report_upgrade(True, "yt-dlp updated")
+        coord.report_pot(True, "staged")
+        assert coord._ready_emitted is True
+
+
+class TestForceUnlockKeepsPrewarm:
+    """[P3 회귀] 15초 폴백은 백그라운드 POT 프리웜을 취소하지 않는다.
+
+    cancel()은 _POTWorker._child_procs(항상 빈 목록 — append 0건)를 순회하므로
+    npm/tsc 자식을 죽이지 못한 채 QThread만 terminate해 고아 프로세스와
+    prewarm-lock 점유를 남겼다. 폴백의 책임은 READY 발산뿐이다.
+    """
+
+    def test_force_unlock_does_not_cancel_pot(self):
+        pot = Mock()
+        coord = StartupCoordinator(pot)
+        coord.force_unlock()
+        assert coord._ready_emitted is True
+        assert pot.cancel.call_count == 0
+
+    def test_force_unlock_repeat_does_not_cancel_pot(self):
+        pot = Mock()
+        coord = StartupCoordinator(pot)
+        coord.force_unlock()
+        coord.force_unlock()
+        assert pot.cancel.call_count == 0

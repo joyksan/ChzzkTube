@@ -218,14 +218,30 @@ class TestPotProviderFacade:
         assert len(out_lines[0]) == len(long_line)
 
     def test_truncate_for_full_log(self):
-        """truncate_for_full_log: F12 적재 시 장문 줄 절단 + max_lines 꼬리."""
+        """truncate_for_full_log: configuration 블록 제거 + max_lines 초과 시 절단 꼬리."""
         import chzzktube.infra.updater as updater
-        long_line = "configuration: " + "x" * 500
-        cut = updater.truncate_for_full_log(long_line + "\nline2\nline3",
-                                            max_lines=2, max_width=160)
-        cut_lines = cut.splitlines()
-        assert len(cut_lines[0]) <= 161  # 160 + …
-        assert cut_lines[-1].endswith("lines truncated)")
+
+        # 1. configuration: 및 하위 빌드 설정 줄이 완벽히 제거되는지 검증
+        ffmpeg_sample = (
+            "ffmpeg version 7.1 Copyright (c) 2000-2024 the FFmpeg developers\n"
+            "built with gcc 14.2.0 (Rev1, Built by MSYS2 project)\n"
+            "configuration: --enable-gpl --enable-version3 --enable-static\n"
+            "  libavutil      59. 39.100 / 59. 39.100\n"
+            "  libavcodec     61. 19.100 / 61. 19.100\n"
+            "libavdevice    61.  3.100 / 61.  3.100\n"
+        )
+        cleaned = updater.truncate_for_full_log(ffmpeg_sample, max_lines=6)
+        assert "configuration:" not in cleaned
+        assert "--enable-gpl" not in cleaned
+        # configuration 블록 제거 후 3줄만 남으므로 절단 꼬리가 붙지 않아야 정상
+        assert "lines truncated" not in cleaned
+
+        # 2. 일반 로그에서 max_lines 초과 시 정상적으로 절단 꼬리가 부착되는지 검증
+        long_log = "\n".join(f"log line {i}" for i in range(10))
+        truncated = updater.truncate_for_full_log(long_log, max_lines=5)
+        lines = truncated.splitlines()
+        assert len(lines) == 6  # 상위 5줄 + 절단 꼬리 1줄
+        assert lines[-1] == "… (5 lines truncated)"
 
     def test_pid_alive_self(self):
         """_pid_alive: 자기 PID는 살아있음, 존재 불가 PID는 죽음."""

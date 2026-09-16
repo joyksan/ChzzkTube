@@ -135,6 +135,8 @@ class MainWindow(QMainWindow):
         self._pot_manager = POTManager()
         self._startup_coord = StartupCoordinator(self._pot_manager, self)
         self._pot_manager.pot_finished.connect(self._on_pot_finished)
+        # [P5] POT 수급/빌드 진행 중에는 기동 폴백 타이머를 연장한다(맹인 폴백 방지).
+        self._pot_manager.pot_status_changed.connect(self._on_pot_activity)
         self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
 
         self.settings_dlg = None
@@ -159,7 +161,13 @@ class MainWindow(QMainWindow):
 
         # [응답없음 폴백] 구성요소 체인(POT 포함)이 15초 안에 끝나지 않으면
         # 입력을 강제 개방 — URL 잠금이 영구화되지 않게 한다.
-        QTimer.singleShot(15000, self._force_unlock_input)
+        # [P5] 단발 singleShot → 인스턴스 타이머 승격. 15초 단발 타이머는 "의존성을
+        # 열심히 받는 중"과 "멈춤"을 구분하지 못하는 맹인이었다 — 실제 수급 작업
+        # 진행 신호(UpdateWorker.work_tick / POT 상태 전이)가 오면 수명을 연장한다.
+        self._fallback_timer = QTimer(self)
+        self._fallback_timer.setSingleShot(True)
+        self._fallback_timer.timeout.connect(self._force_unlock_input)
+        self._fallback_timer.start(15000)
 
     def _platform_of_url(self) -> str:
             """[결함 수리] stop_analysis_anim 호출 대비 URL 플랫폼 축약 기호 추출."""
@@ -773,8 +781,14 @@ class MainWindow(QMainWindow):
             check_updates=self.cfg.get("auto_update_check", True),
         )
         self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
+        # [P5] 수급 진행 하트비트 → 폴백 타이머 연장(맹인 15초 폴백 방지)
+        self.update_worker.work_tick.connect(self.defer_fallback_timer)
         self.update_worker.start()
-        self._startup_coord.report_deps(not bool(stale), "deps ok" if not stale else "update")
+        # [P1] deps 게이트의 의미는 "검사 단계 완료"다 — stale(업데이트 대상) 존재는 게이트 사유가 아니다.
+        # 업데이트 적용은 업데이트 워커의 일이며, READY 게이트를 막으면 안 된다.
+        # (stale 발생 시 deps_ok=False로 잠겨, 업데이트가 감지되는 모든 기동이 정상
+        #  READY 대신 15초 폴백 문구로만 열리는 구조적 결함이 있었다.)
+        self._startup_coord.report_deps(True, "deps ok" if not stale else "update")
         self._pot_manager.ensure_ready("prewarm")
 
     def _on_pot_finished(self, ok: bool, msg: str):
@@ -793,6 +807,21 @@ class MainWindow(QMainWindow):
         if self._startup_completed:
             return
         self._startup_coord.force_unlock()
+
+    def defer_fallback_timer(self, extension_ms: int = 15000):
+        """[P5] 수급 작업 진행 중에는 폴백 타이머를 연장해 섣부른 UI 개방을 막는다.
+
+        15초 단발 타이머는 수급 진행 중과 멈춤을 구분하지 못했다. 실제 작업
+        하트비트(UpdateWorker.work_tick / POT 상태 전이)마다 카운트다운을 되감아,
+        진짜 무응답일 때만 폴백이 발화한다.
+        """
+        if not self._startup_completed and self._fallback_timer.isActive():
+            self._fallback_timer.start(extension_ms)
+
+    def _on_pot_activity(self, status: str):
+        """[P5] POT 수급/기동 국면(prewarm·starting)에서는 폴백을 서두르지 않는다."""
+        if status in ("prewarm", "starting"):
+            self.defer_fallback_timer()
 
     def _is_stale_analyze_signal(self) -> bool:
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단."""
@@ -835,7 +864,10 @@ class MainWindow(QMainWindow):
         )
 
     def get_current_app_state(self) -> str:
-        if not getattr(self, "_startup_completed", False) or self._pot_manager.is_busy():
+        # [P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
+        # toggle_download의 큐잉(_pending_download)이 맡는다. is_busy를 STARTUP 사유로
+        # 두면 프리웜 진행 중 ENTER가 큐잉 분기에 도달하지 못하고 무반응으로 끝났다.
+        if not getattr(self, "_startup_completed", False):
             return "STARTUP"
         if self.ctrl.running:
             return "RUNNING"

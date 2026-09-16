@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-15 - v3.5.1 — UI/다이얼로그 전면 규격 교정 및 모던 TUI 개편
+> 마지막 갱신: 2026-09-16 - v3.5.2 — READY 폴백 결함 3건 수리 (deps 게이트 의미·크래시 시그널·POT 프리웜 보존)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.4.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.4.0"` (최신: 2026-09-13 4컬럼 로그 규격·문서/미러 정합성)
+- **버전**: `v3.5.2` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.5.2"` (최신: 2026-09-16 READY 폴백 결함 3건 수리)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.4.0`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.5.2`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -484,12 +484,13 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 11. **로그 단일 진입 (v3.3.0)**: 모든 로그는 `raw_log.raw(tag, msg, is_status, is_error, to_tui)` 경유. `log_history.log` 직접 호출·`log_bus` 부활·워커 로그 시그널(`line/full/log_concise/log_full`) 신설 금지. history 적재는 raw 내부 1회가 유일 — 구독자(`_render_concise`/`_mirror_event_full`)에서 history 호출 금지.
 12. **플래그 라우팅 (v3.3.0)**: TUI 노출은 `to_tui` 비트, 줄바꿈은 `no_wrap` 플래그로만 결정. 렌더 레이어(`log_console.append`→`_insert_clamped`→`_flow_lines`→`_render_clamp`)에서 문자열 콘텐츠 판정(정규식·`is_tui_line`·`startswith` 분기) 부활 금지. `is_tui_line`은 호환 shim — 호출부 신설 금지.
 13. **신호-보고 분리 (v3.3.0)**: `check_done(list)` 등 결과 Signal은 Main이 중계 후 `report_*` 호출. Worker→Coordinator 직결 금지(시그널 교통 정리 — `check_done` 시그니처가 `(bool,str)`이 아니라 직결 시 오동작).
-14. **READY 멱등 (v3.3.1 갱신)**: READY 발산은 `StartupState.can_emit_ready()`(= `deps_ok ∧ upgrade_done ∧ pot_ready ∧ ¬ready_emitted`) 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지. `pot_ready`는 `report_pot`이 **상태 토큰**("staged"/"ready"/"standby")만 True로 세운다.
+14. **READY 멱등 (v3.3.1 갱신)**: READY 발산은 `StartupState.can_emit_ready()`(= `deps_ok ∧ upgrade_done ∧ pot_ready ∧ ¬ready_emitted`) 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지. `pot_ready`는 `report_pot`이 **상태 토큰**("staged"/"ready"/"standby")만 True로 세운다. **`deps_ok`의 의미는 "의존성 검사 단계 완료"** — stale(업데이트 대상) 존재는 게이트 사유가 아니며 `report_deps(True, …)`가 정본이다(v3.5.2 수리: 종전 `not bool(stale)` 보고가 업데이트가 있는 모든 기동을 15초 폴백으로 몰았다).
 15. **잔재 정리 (v3.3.0)**: `media/chzzk_api/cookies`의 `import log_history`는 미사용 잔재 — 직접 호출로 회귀 금지, 정리 시 import 행 삭제. `log_console`의 `import re`는 `is_tui_line` 퇴출 후 미사용이므로 제거 후보(타 용도 전수 확인 후).
 16. **L0 순수성 (v3.3.1)**: `po_client`는 표준 라이브러리만 — 상위 계층(pot_server) lazy import·락 파일 역참조 금지. 생존 판정은 순수 HTTP /ping만. 서버 수명주기/좀비 락 회수는 pot_server·POTManager 본연 책임.
 17. **상태 토큰 계약 (v3.3.1)**: `POTManager.pot_finished`의 msg는 반드시 `"staged"`/`"ready"`/`"failed"` 토큰 — `StartupCoordinator.report_pot`이 정확 일치로 READY를 판정한다. 사람용 상세 메시지("prewarm staged", "pot server bound ...")를 emit하면 **READY가 절대 열리지 않는다**(v3.3.1 이전 실제 결함).
 18. **스레드 경계 (v3.3.1)**: raw_log dispatcher(데몬 스레드)에서 GUI 슬롯을 직접 호출하는 회귀 금지 — 반드시 `main._GuiLogBridge` Signal.emit + QueuedConnection으로 GUI 스레드에 위임. raw_log에 Qt 링크 금지(순수 파이썬 유지), 스레드 경계 책임은 수신층(main.py).
 19. **POT 서버 단일 스폰 (v3.3.1)**: 서버 기동 진실의 근원은 `POTManager._POTWorker` 단독. `_spawn_existing` 등 스폰 함수는 1회만 호출(조건 평가+핸들 할당 원자화) — 이중 호출로 서버 2회 기동 방지. `pot_provider.POTProviderWorker` 재생성 금지.
+20. **기동 폴백 계약 (v3.5.2)**: 15초 폴백(`force_unlock`)은 **READY 발산만** 한다 — POT 프리웜 취소 금지(`POTManager.cancel()`은 closeEvent 종료 정리 전용). 입력 잠금 판정(`get_current_app_state`)에 `_pot_manager.is_busy()`를 넣지 말 것(POT 대기 다운로드는 `toggle_download`의 `_pending_download` 큐가 담당). POT 빌드 서브프로세스(npm ci/tsc)는 반드시 timeout 상한(`_NPM_CI_TIMEOUT`/`_TSC_TIMEOUT`)을 가진다 — 무제한 대기는 `is_busy()`를 고정해 큐를 영구히 잠근다. 15초 폴백 타이머는 **동적**이다 — 실제 수급 하트비트(`UpdateWorker.work_tick` / POT `prewarm`·`starting` 전이)가 오면 `defer_fallback_timer()`가 카운트다운을 되감는다(`QTimer.singleShot` 단발로의 회귀 금지).
 
 ## 6. 하지 말 것 (회귀 방지)
 
@@ -568,6 +569,11 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 ### 8.3 선택 과제 (향후)
 - ❌ **PO 서버 실패 시 폴백**: 봇 체크 실패 시 PO 서버 가동 후 재시도 (현재는 info 사전 감지만 적용)
+- ❌ **POT 서브프로세스 트리 종료 (v3.5.2 후속)**: `_kill`은 직접 자식만 종료 — npm이 낳은 자손은 잔존한다. `TerminateJobObject` + 잡 핸들 보관으로 트리 종료를 일원화
+- ❌ **POT gate hang 2차 워치독 (v3.5.2 후속)**: 15초 폴백은 1회성 — READY 개방 이후 시작된 gate hang에는 보호가 없다
+- ❌ **위양성 폴백 분리 (v3.5.2 후속)**: GUI 스레드가 15초 이상 블록되면 500ms·15000ms 타이머가 연달아 발화해 "(fallback timeout)"이 오표기된다 — 원인 라벨 기반 워치독으로 분리
+- ❌ **deps FAIL의 게이트 승격 (v3.5.2 후속)**: `check_done` 페이로드가 stale `list` 고정이라 검사 실패를 게이트에 반영하려면 시그널 계약(§5-13) 변경이 선행돼야 한다
+- ❌ **POT 빌드 내부 하트비트 (v3.5.2 후속)**: npm ci/tsc 장기 실행 중에는 POT 측 하트비트가 없어 폴백 연장이 걸리지 않는다 — `_run_and_stream_log`의 진행 로그를 하트비트로 승격해 프리웜 단계도 연장 대상에 넣어야 한다
 - ✅ **설정 UI**: 업데이트 채널 (Stable/Night) 선택 다이얼로그 — 완료
 - ✅ **streamlink 직접 다운로드**: 포터블 빌드에서 streamlink whl 직접 수급 — 완료
 
@@ -602,6 +608,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 ## 9. 수정 히스토리
 
 > **v3.5.0부터 [CHANGELOG.md](../CHANGELOG.md)로 단일화** — 상세 수정 내역은 [CHANGELOG.md](../CHANGELOG.md) 참조.
+> v3.5.2(2026-09-16) — READY 폴백 결함 3건 수리: deps 게이트 의미 분리(P1) · 업그레이드 크래시 시그널 분기(P2) · POT 프리웜 보존 + 서브프로세스 상한(P3·P3b·P3c).
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
@@ -1159,7 +1166,7 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 - `check_done(list)`는 시그니처가 `(bool,str)`이 아니므로 Coordinator 직결 금지 — Main이 중계한다(교통 정리 불변식).
 - POT 수명주기: `POTManager.ensure_ready(mode)` 단일 스폰 가드. `prewarm`(staging, to_tui=False) 실행 중 `gate` 요청 → `_pending_gate=True`, prewarm 완료 후 gate 자동 재기동. Signal 2종: `pot_status_changed(starting/staging/staged/failed)` + `pot_finished(bool,str)` → Coordinator `_on_pot_finished` → `report_pot` → READY 게이트 입력.
 - POT 게이트(다운로드 시): `Main._ensure_pot_for_info(info)` — `age_limit>0` 또는 `availability∈{needs_auth,premium_only,subscriber_only,private}` → `raw("pot-gate", gated/age_limit/availability, to_tui=True)` 판정 로그 + `ensure_ready("gate")`. 기동 중이면 `_pending_download` 큐잉.
-- READY 게이트: `StartupState.can_emit_ready() = deps_ok ∧ upgrade_done ∧ pot_status∈{running,standby,staged} ∧ ¬ready_emitted` (멱등 1회). 15초 폴백 `force_unlock → report_ready("ready (fallback timeout)")`.
+- READY 게이트: `StartupState.can_emit_ready() = deps_ok ∧ upgrade_done ∧ pot_status∈{running,standby,staged} ∧ ¬ready_emitted` (멱등 1회). 15초 폴백 `force_unlock → report_ready("ready — input unlocked (fallback timeout)")` — POT 프리웜 취소 금지(폴백은 READY 발산만), 입력 개방은 `_startup_completed`만 판정(v3.5.2).
 
 ### 회귀 방지 불변식 (v3.3.0 — §5에 11~15로 본편입, 아래는 초안)
 - 11. **로그 단일 진입**: 모든 로그는 `raw_log.raw()` 경유. `log_history.log` 직접 호출·`log_bus` 부활·워커 로그 시그널(`line/full/log_concise/log_full`) 신설 금지. history 적재는 raw 내부 1회가 유일.
