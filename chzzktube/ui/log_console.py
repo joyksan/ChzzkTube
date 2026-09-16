@@ -2,6 +2,17 @@
 """간결 로그 QTextEdit의 렌더링 책임을 MainWindow로부터 분리한 모듈.
 상태 줄 덮어쓰기(진행률 갱신), 색상 출력, 작업 구분 여백을 담당하며, MainWindow는 이 모듈에 로그 출력만 위임한다. """
 from collections import deque
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
+from PySide6.QtWidgets import QTextEdit
+
+from chzzktube.core.log_emitter import (
+    STEMLESS_CONT_WIDTH,
+    TREE_TOTAL_WIDTH,
+    _flow_lines,
+    _wrap_by_width,
+)
 from chzzktube.ui.theme import (
     LOG_COLOR_ACCENT,
     LOG_COLOR_DIM,
@@ -12,35 +23,7 @@ from chzzktube.ui.theme import (
     LOG_COLOR_VALUE,
     LOG_COLOR_WARN,
 )
-from chzzktube.core.log_emitter import (
-    STEMLESS_CONT_WIDTH,
-    TREE_LABEL_WIDTH,
-    TREE_TOTAL_WIDTH,
-    _flow_lines,
-    _log_bar,
-    _log_pct,
-    _log_speed,
-    _log_ts,
-    _pad_label,
-    _wrap_by_width,
-    display_width,
-    emit_component,
-    emit_dl,
-    emit_err,
-    emit_event,
-    emit_progress,
-    format_analysis_counts,
-    format_kv_line,
-    format_log_line,
-    format_log_line_for_event,
-    format_pick_menu,
-    format_target_url,
-    format_tree_item,
-    is_tui_line,
-)
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PySide6.QtWidgets import QTextEdit
+
 
 class ConciseLogConsole:
     """간결 로그 패널 전용 렌더러."""
@@ -482,7 +465,7 @@ def update_tree_budget(text_edit):
     상한(100)을 두지 않는다 — 창을 가로로 늘리면 잘려 보이던 로그가
     유연하게 펼쳐진다. 초과분은 format_log_line의 '…' 절단이 처리한다.
     """
-    import chzzktube.core.log_emitter as log_emitter
+    from chzzktube.core import log_emitter
     char_w = text_edit.fontMetrics().horizontalAdvance(" ")
     if char_w > 0:
         # document margin(8px × 2) + QSS 프레임 여백을 제외한 실제 텍스트 폭
@@ -547,39 +530,3 @@ def _log_line_segments(line):
     if " │ RUN  " in line:
         return [(line, LOG_COLOR_ACCENT)]
     return [(line, LOG_COLOR_INFO)]
-
-
-__all__ = [
-    "ConciseLogConsole",
-    "TAIL_PADDING_BLOCKS",
-    "RIGHT_PADDING_PX",
-    "update_tree_budget",
-    "_truncate_by_pixels",
-    "_line_segments",
-    "_log_line_segments",
-    # core re-export (하위 호환 — 신규 코드는 chzzktube.core.log_emitter 직접 사용)
-    "STEMLESS_CONT_WIDTH",
-    "TREE_LABEL_WIDTH",
-    "TREE_TOTAL_WIDTH",
-    "_flow_lines",
-    "_log_bar",
-    "_log_pct",
-    "_log_speed",
-    "_log_ts",
-    "_pad_label",
-    "_wrap_by_width",
-    "display_width",
-    "emit_component",
-    "emit_dl",
-    "emit_err",
-    "emit_event",
-    "emit_progress",
-    "format_analysis_counts",
-    "format_kv_line",
-    "format_log_line",
-    "format_log_line_for_event",
-    "format_pick_menu",
-    "format_target_url",
-    "format_tree_item",
-    "is_tui_line",
-]

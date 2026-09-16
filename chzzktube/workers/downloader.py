@@ -9,13 +9,13 @@
 import yt_dlp
 from PySide6.QtCore import QThread, Signal
 
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.core.speed_window import SpeedWindow
-from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 import chzzktube.pipeline.finalizer as _fin
 import chzzktube.pipeline.progress_emitter as _pe
 import chzzktube.pipeline.target_downloader as _td
+from chzzktube.core import raw_log
+from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.speed_window import SpeedWindow
+from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 
 # [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
 # 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).

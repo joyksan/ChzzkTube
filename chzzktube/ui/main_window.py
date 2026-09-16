@@ -1,11 +1,11 @@
 ﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
-from collections import deque
 import ctypes
 import os
 import platform
 import re
 import sys
 import time
+from collections import deque
 
 from PySide6.QtCore import (
     QEvent,
@@ -36,19 +36,16 @@ from PySide6.QtWidgets import (
 from chzzktube.control.controller import MediaController
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
-import chzzktube.core.config as config
+from chzzktube.core import config, log_history, raw_log
 from chzzktube.core.dl_platform import _dl_platform, _short_platform
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
-import chzzktube.core.log_history as log_history
 from chzzktube.core.media import short_codec
-import chzzktube.core.raw_log as raw_log
 from chzzktube.core.utils import _open_windows_explorer
 from chzzktube.infra.po_client import server_ping
 from chzzktube.infra.pylib_bootstrap import bootstrap as _bootstrap
+from chzzktube.ui import log_console, theme
 from chzzktube.ui.dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
-import chzzktube.ui.log_console as log_console
-import chzzktube.ui.theme as theme
 from chzzktube.workers.update_worker import UpdateWorker
 
 try:

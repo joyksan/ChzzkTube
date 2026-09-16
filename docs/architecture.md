@@ -3,7 +3,7 @@
 > GitHub / VS Code / Mermaid Live Editor에서 직접 렌더된다. 노드 텍스트의 특수문자는
 > 코드 실물과 대조해 갱신할 것(아스키 화살표·박스도는 렌더러가 처리한다).
 
-### 1) 전체 계층도 (L4 View → L0 Leaf, 단방향)
+### 1) 전체 계층도 (L0 Launcher → L4 View → L1 Model)
 
 ```mermaid
 %%{init: {
@@ -19,55 +19,60 @@
   }
 }}%%
 flowchart TB
-    subgraph L4["L4 · View — Qt 위젯 보유"]
-        direction TB
-        MW["MainWindow<br/>(ui/main_window.py)<br/>진입 조립·버스 구독 2점·게이트 워치독"]
-        DLG["dialogs.py<br/>6종 다이얼로그 + F12"]
-        LC["log_console.py<br/>컬럼 포맷·클램프 렌더"]
-        TH["theme.py<br/>QSS 단일 출처"]
-    end
-    subgraph L3["L3 · Control — 조정·게이트"]
-        direction TB
-        SC["StartupCoordinator<br/>READY 게이트 1회 발산"]
-        SS["StartupState<br/>게이트 단일 진실"]
-        PM["POTManager<br/>prewarm·gate 단일 스폰"]
-        MC["MediaController<br/>세션 state 머신"]
-    end
-    subgraph L2["L2 · Service / Pipeline — plain"]
-        direction TB
-        PE["progress_emitter<br/>LogEvent 빌더"]
-        TD["target_downloader<br/>VOD·라이브·치지직"]
-        FN["finalizer · live_recorder<br/>마감·녹화"]
-        UP["updater · components<br/>버전·수급"]
-        PS["pot_server · node_provider<br/>bgutil 빌드·기동"]
-    end
-    subgraph L1["L1 · Model — 순수"]
-        direction TB
-        RL["raw_log<br/>단일 진입 raw()"]
-        LE["log_event · log_history<br/>이벤트·파일 기록"]
-        CF["config · dl_platform<br/>설정·URL 판정"]
-        MD["media · chzzk_api · cookies<br/>도메인 로직"]
-    end
-    subgraph L0["L0 · Leaf — 진입·검증 (import 대상 아님)"]
-        direction TB
-        MAIN["main.py<br/>씬 런처"]
-        SMK["smoke_test.py"]
-        TST["tests/ · sync_mirrors.py"]
-    end
-    subgraph WK["QThread 워커 (결과·게이트 시그널만)"]
-        direction LR
-        UW["UpdateWorker"]
-        AW["AnalyzeWorker"]
-        DW["DownloadWorker"]
-        PW["_POTWorker"]
+    subgraph L_ROOT["Entry · Root"]
+        MAIN["main.py (Scene Launcher)"]
+        SMK["smoke_test.py / tests / mirrors"]
     end
 
-    L4 -->|report_* 호출| L3
-    L3 -->|ensure_ready · spawn| WK
-    WK -->|결과 시그널| L3
-    L3 --> L2
-    L2 --> L1
-    L0 --> L4
+    subgraph L4["L4 · View — Qt UI (chzzktube/ui)"]
+        direction LR
+        MW["MainWindow<br/>(Bus Sub / Watchdog)"]
+        DLG["dialogs.py<br/>(Dialogs + F12)"]
+        LC["log_console.py<br/>(TUI Log Render)"]
+        TH["theme.py<br/>(Dark QSS)"]
+    end
+
+    subgraph L3["L3 · Control & Workers — Orchestration"]
+        direction TB
+        subgraph ORCH["Control (chzzktube/control)"]
+            SC["StartupCoordinator<br/>(READY Gate)"]
+            SS["StartupState<br/>(Single Truth)"]
+            PM["POTManager<br/>(Prewarm / Gate)"]
+            MC["MediaController<br/>(Session State)"]
+        end
+        subgraph WK["Workers (chzzktube/workers)"]
+            direction LR
+            UW["UpdateWorker"]
+            AW["AnalyzeWorker"]
+            DW["DownloadWorker"]
+            PW["_POTWorker"]
+        end
+    end
+
+    subgraph L2["L2 · Pipeline / Infra (chzzktube/pipeline & infra)"]
+        direction LR
+        PL["Pipeline Functions<br/>(target_downloader · live_recorder · finalizer)"]
+        INFRA["Infrastructure<br/>(pot_server · node_provider · updater · components)"]
+    end
+
+    subgraph L1["L1 · Core / Leaf (chzzktube/core)"]
+        direction LR
+        RAW["raw_log · log_event<br/>(Bounded Bus)"]
+        DOM["config · dl_platform · media<br/>(Pure Domain / Leaf)"]
+    end
+
+    MAIN --> MW
+    SMK -.-> MW
+    MW -->|User Actions| MC
+    MW -->|Coordination| SC
+    MC -->|Spawn| WK
+    PM -->|Spawn| PW
+    WK -->|Result Signal| ORCH
+    ORCH --> PL
+    PL --> INFRA
+    PL --> RAW
+    INFRA --> DOM
+    RAW --> DOM
 ```
 
 ### 2) 기동 시퀀스 (READY 게이트 · 15초 폴백 · 동적 워치독)
@@ -134,22 +139,37 @@ sequenceDiagram
   }
 }}%%
 stateDiagram-v2
-    [*] --> STARTUP: 창 생성
-    STARTUP --> IDLE: ui_unlocked (READY 1회)
-    STARTUP --> IDLE: 15초 폴백 (게이트 미개방)
-    STARTUP --> IDLE: 유예 후 폴백 (체인 동작 중)
-    IDLE --> PICKING: 포맷 고르기
-    IDLE --> ANALYZING: ENTER 분석
-    PICKING --> IDLE: 선택 완료·취소
-    ANALYZING --> IDLE: 분석 성공
-    ANALYZING --> POTQUEUE: 분석 실패가 봇 체크 마커
-    POTQUEUE --> ANALYZING: POT ready 후 재분석 (URL당 1회)
-    ANALYZING --> IDLE: 분석 실패(재시도 소진)
-    IDLE --> RUNNING: 다운로드 개시
-    state RUNNING {
-        [*] --> POTWAIT: POT 게이트 필요시 큐잉
-        POTWAIT --> [*]: POT ready → 실행
-        POTWAIT --> [*]: 120초 워치독 → 트리 종료 + 큐 해제
+    [*] --> STARTUP : App Launch
+    
+    STARTUP --> IDLE : [Gate Open] READY 1회
+    STARTUP --> IDLE : [Fallback] 15s Timeout / Grace
+
+    state IDLE {
+        direction LR
+        [*] --> ReadyForInput
     }
-    RUNNING --> IDLE: 완료·취소
+
+    IDLE --> ANALYZING : ENTER [URL Analysis]
+    IDLE --> PICKING : Format Select Mode
+
+    PICKING --> IDLE : Cancel / Esc
+    PICKING --> RUNNING : Select Format
+
+    ANALYZING --> IDLE : Analysis Done / Fail
+    ANALYZING --> POT_QUEUE : Bot Check Detected
+    POT_QUEUE --> ANALYZING : POT Server Ready (1회 재시도)
+
+    IDLE --> RUNNING : ENTER [Direct Download]
+    
+    state RUNNING {
+        direction TB
+        [*] --> CheckGate
+        CheckGate --> POT_Wait : Gated Video
+        CheckGate --> Downloading : Normal Video
+        POT_Wait --> Downloading : POT Bound
+        POT_Wait --> [*] : 120s Timeout
+        Downloading --> [*] : Complete / Abort
+    }
+
+    RUNNING --> IDLE : Finish / User Cancel
 ```

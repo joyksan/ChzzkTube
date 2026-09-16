@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import datetime
-import importlib
 import os
-import partial
+from functools import partial
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
@@ -26,9 +25,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import chzzktube.core.config as config
+from chzzktube.core import config
 from chzzktube.core.cookies import get_browser_cookies
-import chzzktube.ui.theme as theme
+from chzzktube.ui import theme
 
 if TYPE_CHECKING:
     from chzzktube.ui.main_window import MainWindow
@@ -178,10 +177,9 @@ class CookieSelectDialog(QDialog):
         else:
             if b_type in ["chrome", "edge", "whale", "chromium", "brave", "vivaldi"]:
                 try:
-                    yt_cookies = importlib.import_module("yt_dlp.cookies")
-                    extract_fn = getattr(yt_cookies, "extract_cookies_from_browser", None)
-                    if callable(extract_fn):
-                        extract_fn(b_type)
+                    import yt_dlp.cookies
+
+                    yt_dlp.cookies.extract_cookies_from_browser(b_type)
                 except Exception as ex:  # noqa: BLE001
                     show_info_message(
                         self,
