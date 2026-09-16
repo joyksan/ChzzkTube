@@ -270,17 +270,19 @@ class CookieViewerDialog(QDialog):
 
         self.te_content = QTextEdit(self)
         self.te_content.setReadOnly(True)
+        # [수정] 자동 줄바꿈 차단 및 8칸 탭 스톱 설정으로 TSV 컬럼 정렬 유지
+        self.te_content.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        font_metrics = self.te_content.fontMetrics()
+        self.te_content.setTabStopDistance(font_metrics.horizontalAdvance(" ") * 8)
         self.te_content.setPlainText(content_text)
         self.te_content.setStyleSheet(theme.TE_CONTENT_QSS)
         layout.addWidget(self.te_content)
 
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-
-        btn_close = QPushButton("[ Close ]")
-        btn_close.setProperty("class", "tui-tag")
-        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_close.setStyleSheet(theme.TUI_STYLE)
+        btn_close = QPushButton("Close")
+        btn_close.setFixedWidth(90)
+        btn_close.setStyleSheet(theme.BTN_CLOSE_QSS)
         btn_close.clicked.connect(self.accept)
         btn_layout.addWidget(btn_close)
         layout.addLayout(btn_layout)
