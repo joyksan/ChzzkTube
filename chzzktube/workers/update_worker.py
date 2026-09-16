@@ -36,6 +36,9 @@ class UpdateWorker(QThread):
     # 문자열 페이로드가 없으며 TUI 렌더에 관여하지 않는다(§5-11 준수).
     # MainWindow가 이 신호로 기동 폴백 타이머를 연장한다(defer_fallback_timer).
     work_tick = Signal()
+    # [Followup-5] DEPS 검사에서 실제 FAIL(미설치/미발견)인 구성요소 라벨 목록.
+    # stale(업데이트 대상)과 달리 게이트 사유로 승격된다.
+    deps_failed = Signal(list)
 
     def __init__(self, parent=None, upgrade=False, stale_updates=None, channel='stable', check_updates=True):
         super().__init__(parent)
@@ -73,12 +76,13 @@ class UpdateWorker(QThread):
         stale = []
         # [단일 호출] check_deps 내부 pot_readiness에 log_func 직접 전달 —
         # 판정+로그 1회 (별도 호출 시 standby 2중 출력).
-        for label, status, ver in updater.check_deps(
+        results = list(updater.check_deps(
             log_func=lambda m: raw_log.raw(
                 "pot-readiness",
                 LogEvent(stage="POT", status="RUN", scope="POT", msg=str(m)),
             )
-        ):
+        ))
+        for label, status, ver in results:
             raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "streamlink": "STRE", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
         # [raw] 실제 CLI 실행 — 수집은 원문 전량(history), F12 적재 시 절취(뷰).
         # ffmpeg -version 원문은 configuration: 1줄이 500자 — 적재 시 6줄+160자 절단.
@@ -96,6 +100,8 @@ class UpdateWorker(QThread):
                 raw_log.raw("pypi", f"[stale] {label} {cur} → {latest}")
         else:
             raw_log.raw("pypi", "pypi update check: disabled (auto_update_check=off)")
+        # [Followup-5] 실제 FAIL은 게이트 사유로 승격 — stale(업데이트 대상)과 구별.
+        self.deps_failed.emit([label for label, status, _ in results if status == "FAIL"])
         self.check_done.emit(stale)
 
     def _provision_cb(self, msg, is_status=False, is_error=False):

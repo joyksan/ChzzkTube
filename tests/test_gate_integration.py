@@ -19,9 +19,23 @@ class _FakeMain:
     def __init__(self):
         self._pending_download = None
         self._pot_manager = SimpleNamespace(is_ready=lambda: True)
+        # [Followup-3/6] gate 워치독·봇 체크 재시도 계약 대역
+        self._gate_watchdog = SimpleNamespace(stop=lambda: None, start=lambda ms: None)
+        self.watchdog_stopped = 0
+        self._pot_retry_pending = False
+        self._pot_retry_url = None
+        self.retries = []
         self.started = []
         self.rendered = []
         self._last_status_line = ""
+
+    def _stop_gate_watchdog(self):
+        self.watchdog_stopped += 1
+
+    def _run_pending_retry(self):
+        self._pot_retry_pending = False
+        self.retries.append(self._pot_retry_url)
+        self._pot_retry_url = None
 
     def _start_download(self, targets, v_id, a_id):
         self.started.append((targets, v_id, a_id))

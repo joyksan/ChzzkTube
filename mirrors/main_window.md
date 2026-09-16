@@ -71,6 +71,25 @@ _ANALYZE_DEBOUNCE_MS = 900
 # [벌크 입력 공출화] 붙여넣기·드래그&드롭·TXT 로드는 통째로 들어오므로 즉시 분석.
 # 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
 _BULK_INPUT_DELAY_MS = 150
+# [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang 보호.
+_POT_GATE_TIMEOUT_MS = 120_000
+# [Followup-4] 폴백 유예 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한 경우
+# 1회 유예 후 재판정한다(위양성 폴백 차단).
+_FALLBACK_GRACE_MS = 3000
+# [Followup-6] 분석 실패가 봇 체크/PO 토큰 사유인지 판별하는 마커(소문자 비교).
+_BOT_CHECK_MARKERS = (
+    "sign in to confirm you're not a bot",
+    "not a bot",
+    "po token",
+    "failed to extract any player response",
+    "confirm your age",
+)
+
+
+def _needs_pot_retry(err_msg: str) -> bool:
+    """[Followup-6] 분석 실패가 봇 체크/PO 토큰 사유인지 — POT 기동 후 1회 재시도 대상."""
+    text = (err_msg or "").lower()
+    return any(marker in text for marker in _BOT_CHECK_MARKERS)
 
 # [E1 단일화] POT 게이트 판정 — 3곳에 복사되던 판정식을 단일 진실로 통합한다.
 # HANDOVER §3 '다운로드 게이트' 상수 목록의 유일한 코드 출처이다.
@@ -137,6 +156,8 @@ class MainWindow(QMainWindow):
         self._pot_manager.pot_finished.connect(self._on_pot_finished)
         # [P5] POT 수급/빌드 진행 중에는 기동 폴백 타이머를 연장한다(맹인 폴백 방지).
         self._pot_manager.pot_status_changed.connect(self._on_pot_activity)
+        # [Followup-1] POT 빌드 수급 하트비트 → 폴백 타이머 연장
+        self._pot_manager.pot_work_tick.connect(self.defer_fallback_timer)
         self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
 
         self.settings_dlg = None
@@ -168,6 +189,18 @@ class MainWindow(QMainWindow):
         self._fallback_timer.setSingleShot(True)
         self._fallback_timer.timeout.connect(self._force_unlock_input)
         self._fallback_timer.start(15000)
+
+        # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang에도
+        # 보호를 둔다(1차는 위 폴백). 만료 시 POT 작업을 트리 종료하고 큐를 푼다.
+        self._gate_watchdog = QTimer(self)
+        self._gate_watchdog.setSingleShot(True)
+        self._gate_watchdog.timeout.connect(self._on_gate_timeout)
+        # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
+        self._deps_failed = []
+        # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
+        self._pot_retry_url = None
+        self._pot_retry_pending = False
+        self._pot_retry_done = set()
 
     def _platform_of_url(self) -> str:
             """[결함 수리] stop_analysis_anim 호출 대비 URL 플랫폼 축약 기호 추출."""
@@ -613,6 +646,7 @@ class MainWindow(QMainWindow):
                 is_error=False,
             )
             self._pot_manager.ensure_ready("gate")
+            self._start_gate_watchdog()
 
     def run_analysis(self):
         url = self.url_input.text().strip()
@@ -753,6 +787,8 @@ class MainWindow(QMainWindow):
             check_updates=self.cfg.get("auto_update_check", True),
         )
         self.update_worker.check_done.connect(self._on_update_check_done)
+        # [Followup-5] DEPS 검사 FAIL 목록 — 게이트 판정에 반영
+        self.update_worker.deps_failed.connect(self._on_deps_failed)
         self.update_worker.start(QThread.Priority.LowPriority)
 
     def _on_update_check_done(self, stale):
@@ -767,7 +803,7 @@ class MainWindow(QMainWindow):
         else:
             self._stale_updates = False
             self.append_concise_log(
-                log_console.emit_event("DEPS", "OK", "-", "deps ok"),
+                log_console.emit_event("DEPS", "", "-", "deps ok"),
                 is_status=False,
                 is_error=False,
             )
@@ -788,10 +824,30 @@ class MainWindow(QMainWindow):
         # 업데이트 적용은 업데이트 워커의 일이며, READY 게이트를 막으면 안 된다.
         # (stale 발생 시 deps_ok=False로 잠겨, 업데이트가 감지되는 모든 기동이 정상
         #  READY 대신 15초 폴백 문구로만 열리는 구조적 결함이 있었다.)
-        self._startup_coord.report_deps(True, "deps ok" if not stale else "update")
+        # [Followup-5] 실제 FAIL(미설치/미발견)은 게이트 사유로 승격한다.
+        if getattr(self, "_deps_failed", []):
+            self._startup_coord.report_deps(False, "deps fail: " + ", ".join(self._deps_failed))
+        else:
+            self._startup_coord.report_deps(True, "deps ok" if not stale else "update")
         self._pot_manager.ensure_ready("prewarm")
 
+    def _on_deps_failed(self, labels):
+        """[Followup-5] DEPS 검사 FAIL 목록 수신 — 게이트 판정에 반영한다."""
+        self._deps_failed = list(labels or [])
+        if self._deps_failed:
+            self.append_concise_log(
+                log_console.emit_event("DEPS", "FAIL", "MAIN",
+                                       "deps fail: " + ", ".join(self._deps_failed)),
+                is_status=False,
+                is_error=True,
+            )
+
     def _on_pot_finished(self, ok: bool, msg: str):
+        self._stop_gate_watchdog()
+        # [Followup-6] 봇 체크 재시도가 대기 중이면 POT 준비와 함께 재분석한다.
+        if ok and self._pot_retry_pending:
+            self._run_pending_retry()
+            return
         pending = getattr(self, "_pending_download", None)
         if pending is None or not ok or not self._pot_manager.is_ready():
             return
@@ -806,7 +862,96 @@ class MainWindow(QMainWindow):
     def _force_unlock_input(self):
         if self._startup_completed:
             return
+        # [Followup-4] 유예 1회 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한
+        # 경우를 건너뛴다. 체인이 실제로 동작 중이면 큐에 적재된 진행 신호가 도착할
+        # 짧은 유예를 주고, 그래도 열리지 않으면 폴백으로 개방한다(잠금 영구화 방지).
+        if not getattr(self, "_fallback_grace_used", False) and self._startup_chain_active():
+            self._fallback_grace_used = True
+            self._fallback_timer.start(_FALLBACK_GRACE_MS)
+            return
+        self._log_gate_pending("fallback fired")
         self._startup_coord.force_unlock()
+
+    def _startup_chain_active(self) -> bool:
+        """[Followup-4] 기동 체인이 실제로 동작 중인지 — 폴백 유예 판정."""
+        if self._pot_manager.is_busy():
+            return True
+        worker = getattr(self, "update_worker", None)
+        return bool(worker is not None and worker.isRunning())
+
+    def _log_gate_pending(self, reason: str):
+        """[Followup-4] 게이트 대기 원인을 F12/history에 남긴다(TUI 폭 예산 보존)."""
+        names = [f"pot={self._pot_manager.mode}"]
+        worker = getattr(self, "update_worker", None)
+        if worker is not None and worker.isRunning():
+            names.append("deps=running")
+        if getattr(self, "_deps_failed", []):
+            names.append("deps_fail=" + ",".join(self._deps_failed))
+        raw_log.raw(
+            "startup",
+            LogEvent(stage="SYS", status="RUN", scope="MAIN",
+                     msg=f"{reason} · " + " ".join(names)),
+            to_tui=False,
+        )
+
+    def _start_gate_watchdog(self):
+        """[Followup-3] POT gate 대기 2차 워치독 기동."""
+        self._gate_watchdog.start(_POT_GATE_TIMEOUT_MS)
+
+    def _stop_gate_watchdog(self):
+        self._gate_watchdog.stop()
+
+    def _on_gate_timeout(self):
+        """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
+        if not self._pot_manager.is_busy():
+            return
+        self._pot_manager.cancel()
+        self.append_concise_log(
+            log_console.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
+            is_status=False,
+            is_error=False,
+        )
+        self._pending_download = None
+        self.update_ui_state()
+
+    def _maybe_retry_analysis(self, err_msg: str) -> bool:
+        """[Followup-6] 봇 체크 실패 시 POT 서버 기동 후 1회만 재분석을 큐잉한다."""
+        if not _needs_pot_retry(err_msg):
+            return False
+        if self._pot_retry_pending:
+            return False
+        url = self.url_input.text().strip()
+        if not url or url in self._pot_retry_done:
+            return False
+        self._pot_retry_done.add(url)
+        self._pot_retry_url = url
+        self._pot_retry_pending = True
+        self.append_concise_log(
+            log_console.emit_event("POT", "RUN", "POT",
+                                   "bot-check detected — starting pot server, retrying once"),
+            is_status=True,
+            is_error=False,
+        )
+        if self._pot_manager.is_ready():
+            self._run_pending_retry()
+        else:
+            self._pot_manager.ensure_ready("gate")
+            self._start_gate_watchdog()
+        return True
+
+    def _run_pending_retry(self):
+        """[Followup-6] POT 준비 완료 후 재분석 — textChanged 디바운스로 재진입한다."""
+        url = self._pot_retry_url
+        self._pot_retry_pending = False
+        self._pot_retry_url = None
+        if not url:
+            return
+        self.append_concise_log(
+            log_console.emit_event("POT", "RUN", "YT", "retrying analysis with po token"),
+            is_status=True,
+            is_error=False,
+        )
+        self.url_input.setText(url)
 
     def defer_fallback_timer(self, extension_ms: int = 15000):
         """[P5] 수급 작업 진행 중에는 폴백 타이머를 연장해 섣부른 UI 개방을 막는다.
@@ -862,6 +1007,9 @@ class MainWindow(QMainWindow):
             True,
             True,
         )
+        # [Followup-6] 봇 체크/PO 토큰 사유면 POT 기동 후 1회 재시도를 큐잉한다.
+        if self._maybe_retry_analysis(err_msg):
+            return
 
     def get_current_app_state(self) -> str:
         # [P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
@@ -1103,6 +1251,7 @@ class MainWindow(QMainWindow):
             is_error=False,
         )
         self._pot_manager.ensure_ready("gate")
+        self._start_gate_watchdog()
 
     def _start_pick_flow(self, url):
         self._pick_targets = [url]

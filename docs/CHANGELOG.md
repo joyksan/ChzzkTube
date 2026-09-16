@@ -1,3 +1,19 @@
+### 2026-09-16 — v3.6.0 : 게이트 하드닝 — POT 트리 종료·2차 워치독·유예·deps FAIL·PO 재시도 (minor 업)
+
+#### 후속 과제 전량 해소 (v3.5.2 §8.3 잔여 6건)
+- **#1 POT 빌드 내부 하트비트**: `_communicate_with_ticks` — `communicate()` 무출력 대기를 tick_interval 주기로 반복 대기해 빌드 진행 하트비트 발화. 배선 `ensure_node_server` → `_POTWorker._tick` → `POTManager.pot_work_tick` → `defer_fallback_timer`. npm ci 장기 실행이 더 이상 "멈춤"으로 오인되지 않는다.
+- **#2 POT 서브프로세스 트리 종료**: `kill_tree()` 신설 — Windows Job Object(`TerminateJobObject` + 핸들 부착·반납) / POSIX 프로세스 그룹(`start_new_session` 리더). `_POTWorker.request_interruption`·`_cleanup`의 자식 정리 사각지대를 트리 종료로 교정(`_child_procs` 레지스트리 실체화).
+- **#3 gate hang 2차 워치독**: `_gate_watchdog`(120s) — READY 이후 `_pending_download` 대기 중 만기 시 `cancel()`(트리 킬) + `SYS │ WARN │ POT` + 큐 해제.
+- **#4 위양성 폴백 분리**: `defer→grace` — 만기 시 체인이 실제 동작 중(POT/UpdateWorker running)이면 3s 유예 1회 후 재판정하고, F12 대기 원인을 `_log_gate_pending`으로 기록(TUI 예산 보존).
+- **#5 deps FAIL 게이트 승격**: `UpdateWorker.deps_failed = Signal(list)` 신설 — `check_done(list)` 페이로드는 untouched(§5-13 교통 정리 유지), Main이 중계 후 `report_deps(False, "deps fail: …")`. stale(업데이트 대상)과 실제 FAIL을 분리.
+- **#6 PO 서버 실패 시 재시도**: 분석 실패가 봇 체크/PO 토큰 마커(`_BOT_CHECK_MARKERS`)면 `ensure_ready("gate")` 후 URL당 1회 재분석 자동 큐잉 — `_pot_retry_done` 집합으로 무한 루프 차단, `textChanged` 디바운스로 재진입.
+
+#### 검증
+- 신규 회귀 9건: `test_pot_manager` 2건(하트비트·레지스트리) · `test_startup_gate_regressions` 7건(게이트 워치독 2·유예 2·deps 승격 1·재시도 판별 1·1회 한계 1)
+- 전체 pytest **176 passed 0 failed** · smoke PASS · `sync_mirrors.py --check` 0건 · py_compile OK · 버전 3중 정합(`v3.6.0` / `3.6.0` / `3.6.0`)
+
+---
+
 ### 2026-09-16 — v3.5.2 : READY 폴백 결함 3건 수리 — deps 게이트 의미 분리·크래시 시그널 분기·POT 프리웜 보존
 
 #### 문제 (관측: 평범한 기동에서 "ready — input unlocked (fallback timeout)"이 출력)

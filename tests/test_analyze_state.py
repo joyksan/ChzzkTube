@@ -72,6 +72,15 @@ class _FakeMain:
         self._pick_targets = []
         self._last_input_len = 0
         self.analyze_timer = SimpleNamespace(stop=lambda: None)
+        # [Followup-3/5/6] gate 워치독·deps FAIL·봇 체크 재시도 계약 대역
+        self._deps_failed = []
+        self._pot_retry_pending = False
+        self._pot_retry_done = set()
+        self._pot_retry_url = None
+        self.watchdog_started = 0
+
+    def _start_gate_watchdog(self):
+        self.watchdog_started += 1
 
     # ── 실제 MainWindow 메서드 바인딩 ─────────────────────────────
     def _is_stale_analyze_signal(self):
@@ -85,6 +94,9 @@ class _FakeMain:
 
     def on_analyze_error(self, err_msg):
         main_module.MainWindow.on_analyze_error(self, err_msg)
+
+    def _maybe_retry_analysis(self, err_msg):
+        return main_module.MainWindow._maybe_retry_analysis(self, err_msg)
 
     def toggle_download(self):
         main_module.MainWindow.toggle_download(self)

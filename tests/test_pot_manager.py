@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 from PySide6.QtCore import QCoreApplication
 
-from chzzktube.control.pot_manager import POTManager
+from chzzktube.control.pot_manager import POTManager, _POTWorker
 
 
 def _app():
@@ -61,6 +61,34 @@ def test_use_existing_marks_ready():
     m = POTManager()
     m.use_existing()
     assert m.is_ready() is True
+
+
+def test_pot_worker_tick_emits_heartbeat():
+    """[Followup-1] 빌드 수급 하트비트는 무페이로드 신호로 릴레이된다."""
+    _app()
+    w = _POTWorker(mode="prewarm")
+    got = []
+    w.heartbeat.connect(lambda: got.append(1))
+    w._tick()
+    assert got == [1]
+
+
+def test_worker_registry_feeds_kill_tree():
+    """[Followup-2] _POTWorker가 자식 프로세스를 레지스트리에 등록해 취소 시 정리한다."""
+    _app()
+    w = _POTWorker(mode="prewarm")
+    assert w._child_procs == []
+
+    class _Proc:
+        killed = 0
+
+        def kill(self):
+            self.killed += 1
+
+    proc = _Proc()
+    w._child_procs.append(proc)
+    w.request_interruption()
+    assert proc.killed == 1  # kill_tree 경유(직접 kill 폴백)
 
 
 def test_worker_finished_keeps_reference_until_finished():

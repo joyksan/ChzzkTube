@@ -135,7 +135,12 @@ def assign_to_job_object(proc):
         )
 
         if hasattr(proc, "_handle") and proc._handle:
-            kernel32.AssignProcessToJobObject(h_job, proc._handle)
+            if kernel32.AssignProcessToJobObject(h_job, proc._handle):
+                # [후속2] 핸들을 프로세스에 부착 — kill_tree()가 TerminateJobObject로
+                # 트리 전체를 정리하고 CloseHandle로 반납한다(핸들 누수 방지).
+                proc._ct_job = h_job
+                return
+            kernel32.CloseHandle(h_job)
     except Exception:
         pass
 
@@ -229,6 +234,41 @@ def _kill(proc):
         proc.kill()
     except Exception:
         pass
+
+
+def kill_tree(proc):
+    """[Followup-2] Kill the whole process tree — Windows Job Object, POSIX group.
+
+    `_kill` only terminates the direct child, leaving npm's node grandchildren
+    alive (orphaned CPU/disk usage and a held prewarm lock). A process assigned
+    to our Job Object dies as a whole via TerminateJobObject; POSIX children get
+    killpg via the start_new_session group leader.
+    """
+    if proc is None:
+        return
+    job = getattr(proc, "_ct_job", None)
+    if job:
+        import ctypes
+        try:
+            ctypes.windll.kernel32.TerminateJobObject(job, 1)
+        except Exception:
+            pass
+        try:
+            ctypes.windll.kernel32.CloseHandle(job)
+        except Exception:
+            pass
+        try:
+            proc._ct_job = None
+        except Exception:
+            pass
+        return
+    if platform.system() != "Windows":
+        try:
+            os.killpg(os.getpgid(proc.pid), 9)
+            return
+        except Exception:
+            pass
+    _kill(proc)
 
 
 def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
@@ -624,7 +664,33 @@ def download_and_install_source(want_ver, log_func=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True, timeout=None):
+def _communicate_with_ticks(proc, timeout, tick_func, tick_interval):
+    """communicate waiting loop that fires tick_func() periodically.
+
+    [Followup-1] communicate() blocks without output, so a long npm ci/tsc run was
+    indistinguishable from a stall — the P5 fallback extension never got a heartbeat
+    during the POT build phase. Windows cannot select() on pipes, so we wait with a
+    short timeout repeatedly and emit a heartbeat each round; the final timeout is
+    still honored by re-raising TimeoutExpired.
+    """
+    if tick_func is None or not tick_interval or tick_interval <= 0:
+        return proc.communicate(timeout=timeout)
+    import time as _time
+    deadline = None if timeout is None else _time.monotonic() + timeout
+    while True:
+        try:
+            return proc.communicate(timeout=tick_interval)
+        except subprocess.TimeoutExpired:
+            if proc.poll() is not None:
+                return proc.communicate(timeout=1)
+            tick_func()
+            if deadline is not None and _time.monotonic() >= deadline:
+                raise
+
+
+def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
+                        timeout=None, tick_func=None, tick_interval=5.0,
+                        proc_registry=None):
     """서브프로세스 실행 + 출력 스트리밍.
 
     use_no_window=False로 설정하면 CREATE_NO_WINDOW 플래그를 적용하지 않음.
@@ -633,8 +699,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True, t
     [P3c] timeout 초과 시 직접 자식만 강제 종료하고 -1을 반환한다. npm ci/tsc가
     무응답이면 프리웜 워커가 영구 점유되어 is_busy()가 고정되고 POT 게이트
     다운로드가 큐에서 풀리지 않는다 — 상한이 반드시 필요하다.
-    (한계: Windows에서 npm이 낳은 자손 프로세스는 잔존할 수 있다. 트리 정리는
-     TerminateJobObject 도입이 필요한 후속 과제다.)
+    [Followup-2] job-object(TerminateJobObject)/process-group kill_tree로 트리 전체를 정리한다.
     """
     try:
         kwargs = {}
@@ -646,15 +711,23 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True, t
             text=True, encoding="utf-8", errors="replace",
             env=env, **kwargs,
         )
+        assign_to_job_object(proc)  # [Followup-2] app-exit cleanup (kill-on-close)
+        if proc_registry is not None:
+            proc_registry.append(proc)
         try:
-            stdout, _ = proc.communicate(timeout=timeout)
+            stdout, _ = _communicate_with_ticks(proc, timeout, tick_func, tick_interval)
         except subprocess.TimeoutExpired:
-            _kill(proc)
+            kill_tree(proc)  # [Followup-2] tree kill (job object / process group)
             if log_full_func:
                 log_full_func(
                     f"subprocess timeout ({timeout}s) — killed: {' '.join(map(str, cmd))}"
                 )
             return -1
+        if proc_registry is not None:
+            try:
+                proc_registry.remove(proc)
+            except ValueError:
+                pass
         if stdout and log_full_func:
             for line in stdout.splitlines():
                 stripped = line.strip()
@@ -679,7 +752,8 @@ def _prune_outdated_node_dirs(node_dir):
         pass
 
 
-def ensure_node_server(log, log_full, want_ver, rebuild=False):
+def ensure_node_server(log, log_full, want_ver, rebuild=False,
+                       tick_func=None, proc_registry=None):
     """Node.js HTTP 서버 및 빌드 소스 구성을 완료한다.
 
     [rebuild 플래그]
@@ -739,7 +813,9 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
 
             cmd_install = npm_cmd + ["ci", "--no-audit", "--no-fund"]
             ret = _run_and_stream_log(
-                cmd_install, server_dir, log_full, env=env, timeout=_NPM_CI_TIMEOUT
+                cmd_install, server_dir, log_full, env=env,
+                timeout=_NPM_CI_TIMEOUT, tick_func=tick_func,
+                proc_registry=proc_registry,
             )
             if ret != 0:
                 return None, f"npm install failed (exit code {ret})"
@@ -764,6 +840,7 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
             ret = _run_and_stream_log(
                 cmd_build, server_dir, log_full, env=env,
                 use_no_window=False, timeout=_TSC_TIMEOUT,
+                tick_func=tick_func, proc_registry=proc_registry,
             )
             if ret != 0:
                 return None, f"tsc failed (exit code {ret})"

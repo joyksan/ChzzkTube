@@ -59158,6 +59158,9 @@ import chzzktube.core.raw_log as raw_log
 class _POTWorker(QThread):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 시그널 폐기.
     finished_signal = Signal(bool, str)
+    # [Followup-1] 빌드 수급 진행 하트비트 — 문자열 없는 무페이로드 신호.
+    # MainWindow가 기동 폴백 타이머 연장(defer_fallback_timer)에 사용한다.
+    heartbeat = Signal()
     
     def __init__(self, parent=None, mode="prewarm"):
         super().__init__()
@@ -59169,13 +59172,16 @@ class _POTWorker(QThread):
     
     def request_interruption(self):
         self._abort = True
-        for proc in self._child_procs:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        # [Followup-2] 자식 트리를 통째로 정리한다 — 종전 loop는 _child_procs가
+        # 항상 빈 목록이라(append 0건) 아무것도 죽이지 못했다.
+        from chzzktube.infra.pot_server import kill_tree
+        for proc in list(self._child_procs):
+            kill_tree(proc)
     
+    def _tick(self):
+        """[Followup-1] 빌드 수급 진행 하트비트 — 폴백 타이머 연장용 무페이로드 신호."""
+        self.heartbeat.emit()
+
     def run(self):
         try:
             self._run()
@@ -59186,15 +59192,16 @@ class _POTWorker(QThread):
             self.finished_signal.emit(self.outcome[0], self.outcome[1])
     
     def _cleanup(self):
-        for proc in self._child_procs:
-            try: proc.kill()
-            except: pass
+        # [Followup-2] 자식 트리도 kill_tree로 정리 — 고아 프로세스 잔존 방지.
+        from chzzktube.infra.pot_server import kill_tree
+        for proc in list(self._child_procs):
+            kill_tree(proc)
         self._child_procs.clear()
         if self._server_proc:
             try:
-                from chzzktube.infra.pot_server import _kill
-                _kill(self._server_proc)
-            except: pass
+                kill_tree(self._server_proc)
+            except Exception:
+                pass
             self._server_proc = None
     
     def _note(self, msg, is_status=False, is_error=False):
@@ -59274,7 +59281,10 @@ class _POTWorker(QThread):
                 # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).
                 # remote·local 버전이 실제 어긋난 스테일일 때만 재빌드한다.
                 stale = bool(remote and local and remote != local)
-                _, err = ensure_node_server(self._note, self._dbg, ver, rebuild=stale)
+                _, err = ensure_node_server(
+                    self._note, self._dbg, ver, rebuild=stale,
+                    tick_func=self._tick, proc_registry=self._child_procs,
+                )
                 if err is None and built_server_js():
                     self.outcome = (True, "prewarm staged")
                 else:
@@ -59300,6 +59310,8 @@ class POTManager(QObject):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 릴레이 시그널 폐기.
     pot_status_changed = Signal(str)
     pot_finished = Signal(bool, str)
+    # [Followup-1] 빌드 수급 진행 하트비트 릴레이 — 문자열 없는 무페이로드 신호.
+    pot_work_tick = Signal()
 
     def __init__(self):
         super().__init__()
@@ -59354,6 +59366,8 @@ class POTManager(QObject):
         worker = _POTWorker(mode=mode)
         self._worker = worker
         worker.finished_signal.connect(self._on_worker_finished)
+        # [Followup-1] 빌드 수급 하트비트를 View로 릴레이 — 폴백 타이머 연장에 사용
+        worker.heartbeat.connect(self.pot_work_tick)
         worker.start()
         # [모드별 토큰] gate="starting" / prewarm="prewarm" — Coordinator가
         # 이 토큰을 raw 버스에 로그로 남긴다 (의미 왜곡 방지).
@@ -60258,7 +60272,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.5.2"
+_APP_VERSION = "v3.6.0"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -63254,7 +63268,12 @@ def assign_to_job_object(proc):
         )
 
         if hasattr(proc, "_handle") and proc._handle:
-            kernel32.AssignProcessToJobObject(h_job, proc._handle)
+            if kernel32.AssignProcessToJobObject(h_job, proc._handle):
+                # [후속2] 핸들을 프로세스에 부착 — kill_tree()가 TerminateJobObject로
+                # 트리 전체를 정리하고 CloseHandle로 반납한다(핸들 누수 방지).
+                proc._ct_job = h_job
+                return
+            kernel32.CloseHandle(h_job)
     except Exception:
         pass
 
@@ -63348,6 +63367,41 @@ def _kill(proc):
         proc.kill()
     except Exception:
         pass
+
+
+def kill_tree(proc):
+    """[Followup-2] Kill the whole process tree — Windows Job Object, POSIX group.
+
+    `_kill` only terminates the direct child, leaving npm's node grandchildren
+    alive (orphaned CPU/disk usage and a held prewarm lock). A process assigned
+    to our Job Object dies as a whole via TerminateJobObject; POSIX children get
+    killpg via the start_new_session group leader.
+    """
+    if proc is None:
+        return
+    job = getattr(proc, "_ct_job", None)
+    if job:
+        import ctypes
+        try:
+            ctypes.windll.kernel32.TerminateJobObject(job, 1)
+        except Exception:
+            pass
+        try:
+            ctypes.windll.kernel32.CloseHandle(job)
+        except Exception:
+            pass
+        try:
+            proc._ct_job = None
+        except Exception:
+            pass
+        return
+    if platform.system() != "Windows":
+        try:
+            os.killpg(os.getpgid(proc.pid), 9)
+            return
+        except Exception:
+            pass
+    _kill(proc)
 
 
 def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
@@ -63743,7 +63797,33 @@ def download_and_install_source(want_ver, log_func=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True, timeout=None):
+def _communicate_with_ticks(proc, timeout, tick_func, tick_interval):
+    """communicate waiting loop that fires tick_func() periodically.
+
+    [Followup-1] communicate() blocks without output, so a long npm ci/tsc run was
+    indistinguishable from a stall — the P5 fallback extension never got a heartbeat
+    during the POT build phase. Windows cannot select() on pipes, so we wait with a
+    short timeout repeatedly and emit a heartbeat each round; the final timeout is
+    still honored by re-raising TimeoutExpired.
+    """
+    if tick_func is None or not tick_interval or tick_interval <= 0:
+        return proc.communicate(timeout=timeout)
+    import time as _time
+    deadline = None if timeout is None else _time.monotonic() + timeout
+    while True:
+        try:
+            return proc.communicate(timeout=tick_interval)
+        except subprocess.TimeoutExpired:
+            if proc.poll() is not None:
+                return proc.communicate(timeout=1)
+            tick_func()
+            if deadline is not None and _time.monotonic() >= deadline:
+                raise
+
+
+def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
+                        timeout=None, tick_func=None, tick_interval=5.0,
+                        proc_registry=None):
     """서브프로세스 실행 + 출력 스트리밍.
 
     use_no_window=False로 설정하면 CREATE_NO_WINDOW 플래그를 적용하지 않음.
@@ -63752,8 +63832,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True, t
     [P3c] timeout 초과 시 직접 자식만 강제 종료하고 -1을 반환한다. npm ci/tsc가
     무응답이면 프리웜 워커가 영구 점유되어 is_busy()가 고정되고 POT 게이트
     다운로드가 큐에서 풀리지 않는다 — 상한이 반드시 필요하다.
-    (한계: Windows에서 npm이 낳은 자손 프로세스는 잔존할 수 있다. 트리 정리는
-     TerminateJobObject 도입이 필요한 후속 과제다.)
+    [Followup-2] job-object(TerminateJobObject)/process-group kill_tree로 트리 전체를 정리한다.
     """
     try:
         kwargs = {}
@@ -63765,15 +63844,23 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True, t
             text=True, encoding="utf-8", errors="replace",
             env=env, **kwargs,
         )
+        assign_to_job_object(proc)  # [Followup-2] app-exit cleanup (kill-on-close)
+        if proc_registry is not None:
+            proc_registry.append(proc)
         try:
-            stdout, _ = proc.communicate(timeout=timeout)
+            stdout, _ = _communicate_with_ticks(proc, timeout, tick_func, tick_interval)
         except subprocess.TimeoutExpired:
-            _kill(proc)
+            kill_tree(proc)  # [Followup-2] tree kill (job object / process group)
             if log_full_func:
                 log_full_func(
                     f"subprocess timeout ({timeout}s) — killed: {' '.join(map(str, cmd))}"
                 )
             return -1
+        if proc_registry is not None:
+            try:
+                proc_registry.remove(proc)
+            except ValueError:
+                pass
         if stdout and log_full_func:
             for line in stdout.splitlines():
                 stripped = line.strip()
@@ -63798,7 +63885,8 @@ def _prune_outdated_node_dirs(node_dir):
         pass
 
 
-def ensure_node_server(log, log_full, want_ver, rebuild=False):
+def ensure_node_server(log, log_full, want_ver, rebuild=False,
+                       tick_func=None, proc_registry=None):
     """Node.js HTTP 서버 및 빌드 소스 구성을 완료한다.
 
     [rebuild 플래그]
@@ -63858,7 +63946,9 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
 
             cmd_install = npm_cmd + ["ci", "--no-audit", "--no-fund"]
             ret = _run_and_stream_log(
-                cmd_install, server_dir, log_full, env=env, timeout=_NPM_CI_TIMEOUT
+                cmd_install, server_dir, log_full, env=env,
+                timeout=_NPM_CI_TIMEOUT, tick_func=tick_func,
+                proc_registry=proc_registry,
             )
             if ret != 0:
                 return None, f"npm install failed (exit code {ret})"
@@ -63883,6 +63973,7 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False):
             ret = _run_and_stream_log(
                 cmd_build, server_dir, log_full, env=env,
                 use_no_window=False, timeout=_TSC_TIMEOUT,
+                tick_func=tick_func, proc_registry=proc_registry,
             )
             if ret != 0:
                 return None, f"tsc failed (exit code {ret})"
@@ -66830,6 +66921,25 @@ _ANALYZE_DEBOUNCE_MS = 900
 # [벌크 입력 공출화] 붙여넣기·드래그&드롭·TXT 로드는 통째로 들어오므로 즉시 분석.
 # 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
 _BULK_INPUT_DELAY_MS = 150
+# [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang 보호.
+_POT_GATE_TIMEOUT_MS = 120_000
+# [Followup-4] 폴백 유예 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한 경우
+# 1회 유예 후 재판정한다(위양성 폴백 차단).
+_FALLBACK_GRACE_MS = 3000
+# [Followup-6] 분석 실패가 봇 체크/PO 토큰 사유인지 판별하는 마커(소문자 비교).
+_BOT_CHECK_MARKERS = (
+    "sign in to confirm you're not a bot",
+    "not a bot",
+    "po token",
+    "failed to extract any player response",
+    "confirm your age",
+)
+
+
+def _needs_pot_retry(err_msg: str) -> bool:
+    """[Followup-6] 분석 실패가 봇 체크/PO 토큰 사유인지 — POT 기동 후 1회 재시도 대상."""
+    text = (err_msg or "").lower()
+    return any(marker in text for marker in _BOT_CHECK_MARKERS)
 
 # [E1 단일화] POT 게이트 판정 — 3곳에 복사되던 판정식을 단일 진실로 통합한다.
 # HANDOVER §3 '다운로드 게이트' 상수 목록의 유일한 코드 출처이다.
@@ -66896,6 +67006,8 @@ class MainWindow(QMainWindow):
         self._pot_manager.pot_finished.connect(self._on_pot_finished)
         # [P5] POT 수급/빌드 진행 중에는 기동 폴백 타이머를 연장한다(맹인 폴백 방지).
         self._pot_manager.pot_status_changed.connect(self._on_pot_activity)
+        # [Followup-1] POT 빌드 수급 하트비트 → 폴백 타이머 연장
+        self._pot_manager.pot_work_tick.connect(self.defer_fallback_timer)
         self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
 
         self.settings_dlg = None
@@ -66927,6 +67039,18 @@ class MainWindow(QMainWindow):
         self._fallback_timer.setSingleShot(True)
         self._fallback_timer.timeout.connect(self._force_unlock_input)
         self._fallback_timer.start(15000)
+
+        # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang에도
+        # 보호를 둔다(1차는 위 폴백). 만료 시 POT 작업을 트리 종료하고 큐를 푼다.
+        self._gate_watchdog = QTimer(self)
+        self._gate_watchdog.setSingleShot(True)
+        self._gate_watchdog.timeout.connect(self._on_gate_timeout)
+        # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
+        self._deps_failed = []
+        # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
+        self._pot_retry_url = None
+        self._pot_retry_pending = False
+        self._pot_retry_done = set()
 
     def _platform_of_url(self) -> str:
             """[결함 수리] stop_analysis_anim 호출 대비 URL 플랫폼 축약 기호 추출."""
@@ -67372,6 +67496,7 @@ class MainWindow(QMainWindow):
                 is_error=False,
             )
             self._pot_manager.ensure_ready("gate")
+            self._start_gate_watchdog()
 
     def run_analysis(self):
         url = self.url_input.text().strip()
@@ -67512,6 +67637,8 @@ class MainWindow(QMainWindow):
             check_updates=self.cfg.get("auto_update_check", True),
         )
         self.update_worker.check_done.connect(self._on_update_check_done)
+        # [Followup-5] DEPS 검사 FAIL 목록 — 게이트 판정에 반영
+        self.update_worker.deps_failed.connect(self._on_deps_failed)
         self.update_worker.start(QThread.Priority.LowPriority)
 
     def _on_update_check_done(self, stale):
@@ -67526,7 +67653,7 @@ class MainWindow(QMainWindow):
         else:
             self._stale_updates = False
             self.append_concise_log(
-                log_console.emit_event("DEPS", "OK", "-", "deps ok"),
+                log_console.emit_event("DEPS", "", "-", "deps ok"),
                 is_status=False,
                 is_error=False,
             )
@@ -67547,10 +67674,30 @@ class MainWindow(QMainWindow):
         # 업데이트 적용은 업데이트 워커의 일이며, READY 게이트를 막으면 안 된다.
         # (stale 발생 시 deps_ok=False로 잠겨, 업데이트가 감지되는 모든 기동이 정상
         #  READY 대신 15초 폴백 문구로만 열리는 구조적 결함이 있었다.)
-        self._startup_coord.report_deps(True, "deps ok" if not stale else "update")
+        # [Followup-5] 실제 FAIL(미설치/미발견)은 게이트 사유로 승격한다.
+        if getattr(self, "_deps_failed", []):
+            self._startup_coord.report_deps(False, "deps fail: " + ", ".join(self._deps_failed))
+        else:
+            self._startup_coord.report_deps(True, "deps ok" if not stale else "update")
         self._pot_manager.ensure_ready("prewarm")
 
+    def _on_deps_failed(self, labels):
+        """[Followup-5] DEPS 검사 FAIL 목록 수신 — 게이트 판정에 반영한다."""
+        self._deps_failed = list(labels or [])
+        if self._deps_failed:
+            self.append_concise_log(
+                log_console.emit_event("DEPS", "FAIL", "MAIN",
+                                       "deps fail: " + ", ".join(self._deps_failed)),
+                is_status=False,
+                is_error=True,
+            )
+
     def _on_pot_finished(self, ok: bool, msg: str):
+        self._stop_gate_watchdog()
+        # [Followup-6] 봇 체크 재시도가 대기 중이면 POT 준비와 함께 재분석한다.
+        if ok and self._pot_retry_pending:
+            self._run_pending_retry()
+            return
         pending = getattr(self, "_pending_download", None)
         if pending is None or not ok or not self._pot_manager.is_ready():
             return
@@ -67565,7 +67712,96 @@ class MainWindow(QMainWindow):
     def _force_unlock_input(self):
         if self._startup_completed:
             return
+        # [Followup-4] 유예 1회 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한
+        # 경우를 건너뛴다. 체인이 실제로 동작 중이면 큐에 적재된 진행 신호가 도착할
+        # 짧은 유예를 주고, 그래도 열리지 않으면 폴백으로 개방한다(잠금 영구화 방지).
+        if not getattr(self, "_fallback_grace_used", False) and self._startup_chain_active():
+            self._fallback_grace_used = True
+            self._fallback_timer.start(_FALLBACK_GRACE_MS)
+            return
+        self._log_gate_pending("fallback fired")
         self._startup_coord.force_unlock()
+
+    def _startup_chain_active(self) -> bool:
+        """[Followup-4] 기동 체인이 실제로 동작 중인지 — 폴백 유예 판정."""
+        if self._pot_manager.is_busy():
+            return True
+        worker = getattr(self, "update_worker", None)
+        return bool(worker is not None and worker.isRunning())
+
+    def _log_gate_pending(self, reason: str):
+        """[Followup-4] 게이트 대기 원인을 F12/history에 남긴다(TUI 폭 예산 보존)."""
+        names = [f"pot={self._pot_manager.mode}"]
+        worker = getattr(self, "update_worker", None)
+        if worker is not None and worker.isRunning():
+            names.append("deps=running")
+        if getattr(self, "_deps_failed", []):
+            names.append("deps_fail=" + ",".join(self._deps_failed))
+        raw_log.raw(
+            "startup",
+            LogEvent(stage="SYS", status="RUN", scope="MAIN",
+                     msg=f"{reason} · " + " ".join(names)),
+            to_tui=False,
+        )
+
+    def _start_gate_watchdog(self):
+        """[Followup-3] POT gate 대기 2차 워치독 기동."""
+        self._gate_watchdog.start(_POT_GATE_TIMEOUT_MS)
+
+    def _stop_gate_watchdog(self):
+        self._gate_watchdog.stop()
+
+    def _on_gate_timeout(self):
+        """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
+        if not self._pot_manager.is_busy():
+            return
+        self._pot_manager.cancel()
+        self.append_concise_log(
+            log_console.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
+            is_status=False,
+            is_error=False,
+        )
+        self._pending_download = None
+        self.update_ui_state()
+
+    def _maybe_retry_analysis(self, err_msg: str) -> bool:
+        """[Followup-6] 봇 체크 실패 시 POT 서버 기동 후 1회만 재분석을 큐잉한다."""
+        if not _needs_pot_retry(err_msg):
+            return False
+        if self._pot_retry_pending:
+            return False
+        url = self.url_input.text().strip()
+        if not url or url in self._pot_retry_done:
+            return False
+        self._pot_retry_done.add(url)
+        self._pot_retry_url = url
+        self._pot_retry_pending = True
+        self.append_concise_log(
+            log_console.emit_event("POT", "RUN", "POT",
+                                   "bot-check detected — starting pot server, retrying once"),
+            is_status=True,
+            is_error=False,
+        )
+        if self._pot_manager.is_ready():
+            self._run_pending_retry()
+        else:
+            self._pot_manager.ensure_ready("gate")
+            self._start_gate_watchdog()
+        return True
+
+    def _run_pending_retry(self):
+        """[Followup-6] POT 준비 완료 후 재분석 — textChanged 디바운스로 재진입한다."""
+        url = self._pot_retry_url
+        self._pot_retry_pending = False
+        self._pot_retry_url = None
+        if not url:
+            return
+        self.append_concise_log(
+            log_console.emit_event("POT", "RUN", "YT", "retrying analysis with po token"),
+            is_status=True,
+            is_error=False,
+        )
+        self.url_input.setText(url)
 
     def defer_fallback_timer(self, extension_ms: int = 15000):
         """[P5] 수급 작업 진행 중에는 폴백 타이머를 연장해 섣부른 UI 개방을 막는다.
@@ -67621,6 +67857,9 @@ class MainWindow(QMainWindow):
             True,
             True,
         )
+        # [Followup-6] 봇 체크/PO 토큰 사유면 POT 기동 후 1회 재시도를 큐잉한다.
+        if self._maybe_retry_analysis(err_msg):
+            return
 
     def get_current_app_state(self) -> str:
         # [P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
@@ -67862,6 +68101,7 @@ class MainWindow(QMainWindow):
             is_error=False,
         )
         self._pot_manager.ensure_ready("gate")
+        self._start_gate_watchdog()
 
     def _start_pick_flow(self, url):
         self._pick_targets = [url]
@@ -68930,6 +69170,9 @@ class UpdateWorker(QThread):
     # 문자열 페이로드가 없으며 TUI 렌더에 관여하지 않는다(§5-11 준수).
     # MainWindow가 이 신호로 기동 폴백 타이머를 연장한다(defer_fallback_timer).
     work_tick = Signal()
+    # [Followup-5] DEPS 검사에서 실제 FAIL(미설치/미발견)인 구성요소 라벨 목록.
+    # stale(업데이트 대상)과 달리 게이트 사유로 승격된다.
+    deps_failed = Signal(list)
 
     def __init__(self, parent=None, upgrade=False, stale_updates=None, channel='stable', check_updates=True):
         super().__init__(parent)
@@ -68967,12 +69210,13 @@ class UpdateWorker(QThread):
         stale = []
         # [단일 호출] check_deps 내부 pot_readiness에 log_func 직접 전달 —
         # 판정+로그 1회 (별도 호출 시 standby 2중 출력).
-        for label, status, ver in updater.check_deps(
+        results = list(updater.check_deps(
             log_func=lambda m: raw_log.raw(
                 "pot-readiness",
                 LogEvent(stage="POT", status="RUN", scope="POT", msg=str(m)),
             )
-        ):
+        ))
+        for label, status, ver in results:
             raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "streamlink": "STRE", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
         # [raw] 실제 CLI 실행 — 수집은 원문 전량(history), F12 적재 시 절취(뷰).
         # ffmpeg -version 원문은 configuration: 1줄이 500자 — 적재 시 6줄+160자 절단.
@@ -68990,6 +69234,8 @@ class UpdateWorker(QThread):
                 raw_log.raw("pypi", f"[stale] {label} {cur} → {latest}")
         else:
             raw_log.raw("pypi", "pypi update check: disabled (auto_update_check=off)")
+        # [Followup-5] 실제 FAIL은 게이트 사유로 승격 — stale(업데이트 대상)과 구별.
+        self.deps_failed.emit([label for label, status, _ in results if status == "FAIL"])
         self.check_done.emit(stale)
 
     def _provision_cb(self, msg, is_status=False, is_error=False):

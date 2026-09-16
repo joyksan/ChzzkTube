@@ -10,6 +10,9 @@ import chzzktube.core.raw_log as raw_log
 class _POTWorker(QThread):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 시그널 폐기.
     finished_signal = Signal(bool, str)
+    # [Followup-1] 빌드 수급 진행 하트비트 — 문자열 없는 무페이로드 신호.
+    # MainWindow가 기동 폴백 타이머 연장(defer_fallback_timer)에 사용한다.
+    heartbeat = Signal()
     
     def __init__(self, parent=None, mode="prewarm"):
         super().__init__()
@@ -21,13 +24,16 @@ class _POTWorker(QThread):
     
     def request_interruption(self):
         self._abort = True
-        for proc in self._child_procs:
-            try:
-                proc.terminate()
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        # [Followup-2] 자식 트리를 통째로 정리한다 — 종전 loop는 _child_procs가
+        # 항상 빈 목록이라(append 0건) 아무것도 죽이지 못했다.
+        from chzzktube.infra.pot_server import kill_tree
+        for proc in list(self._child_procs):
+            kill_tree(proc)
     
+    def _tick(self):
+        """[Followup-1] 빌드 수급 진행 하트비트 — 폴백 타이머 연장용 무페이로드 신호."""
+        self.heartbeat.emit()
+
     def run(self):
         try:
             self._run()
@@ -38,15 +44,16 @@ class _POTWorker(QThread):
             self.finished_signal.emit(self.outcome[0], self.outcome[1])
     
     def _cleanup(self):
-        for proc in self._child_procs:
-            try: proc.kill()
-            except: pass
+        # [Followup-2] 자식 트리도 kill_tree로 정리 — 고아 프로세스 잔존 방지.
+        from chzzktube.infra.pot_server import kill_tree
+        for proc in list(self._child_procs):
+            kill_tree(proc)
         self._child_procs.clear()
         if self._server_proc:
             try:
-                from chzzktube.infra.pot_server import _kill
-                _kill(self._server_proc)
-            except: pass
+                kill_tree(self._server_proc)
+            except Exception:
+                pass
             self._server_proc = None
     
     def _note(self, msg, is_status=False, is_error=False):
@@ -126,7 +133,10 @@ class _POTWorker(QThread):
                 # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).
                 # remote·local 버전이 실제 어긋난 스테일일 때만 재빌드한다.
                 stale = bool(remote and local and remote != local)
-                _, err = ensure_node_server(self._note, self._dbg, ver, rebuild=stale)
+                _, err = ensure_node_server(
+                    self._note, self._dbg, ver, rebuild=stale,
+                    tick_func=self._tick, proc_registry=self._child_procs,
+                )
                 if err is None and built_server_js():
                     self.outcome = (True, "prewarm staged")
                 else:
@@ -152,6 +162,8 @@ class POTManager(QObject):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 릴레이 시그널 폐기.
     pot_status_changed = Signal(str)
     pot_finished = Signal(bool, str)
+    # [Followup-1] 빌드 수급 진행 하트비트 릴레이 — 문자열 없는 무페이로드 신호.
+    pot_work_tick = Signal()
 
     def __init__(self):
         super().__init__()
@@ -206,6 +218,8 @@ class POTManager(QObject):
         worker = _POTWorker(mode=mode)
         self._worker = worker
         worker.finished_signal.connect(self._on_worker_finished)
+        # [Followup-1] 빌드 수급 하트비트를 View로 릴레이 — 폴백 타이머 연장에 사용
+        worker.heartbeat.connect(self.pot_work_tick)
         worker.start()
         # [모드별 토큰] gate="starting" / prewarm="prewarm" — Coordinator가
         # 이 토큰을 raw 버스에 로그로 남긴다 (의미 왜곡 방지).

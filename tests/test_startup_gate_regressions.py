@@ -23,6 +23,10 @@ from chzzktube.workers.update_worker import UpdateWorker
 
 import chzzktube.ui.main_window as main_module
 
+# 게이트 하드닝 상수 — 소스와 값이 어긋나면 테스트가 즉시 잡아낸다.
+_FALLBACK_GRACE_MS = main_module._FALLBACK_GRACE_MS
+_POT_GATE_TIMEOUT_MS = main_module._POT_GATE_TIMEOUT_MS
+
 
 def _app():
     return QCoreApplication.instance() or QCoreApplication([])
@@ -284,3 +288,139 @@ def test_work_tick_fires_only_on_real_provisioning():
     worker._tick("Downloading yt_dlp-2026.8.19-py3-none-any.whl (3.1 MB)")
     worker._tick("Requirement already satisfied: streamlink")
     assert len(ticks) == 1
+
+
+# ── Followup-2/3/4/5/6: 게이트 하드닝 회귀 ──────────────────────────
+
+
+class _GateFake:
+    """게이트 하드닝(워치독·유예·재시도) 검증용 경량 대역."""
+
+    def __init__(self, *, pot_busy=False, pot_ready=True, worker_running=False,
+                 startup_completed=False, timer_active=True, url="https://youtu.be/abcDEFghijk"):
+        from unittest.mock import Mock
+
+        self._startup_completed = startup_completed
+        self._pot_manager = SimpleNamespace(
+            is_busy=lambda: pot_busy,
+            is_ready=lambda: pot_ready,
+            mode="prewarm" if pot_busy else "idle",
+            cancel=lambda: self.canceled.append(1),
+            ensure_ready=lambda *a, **k: self.ensure_ready_calls.append(a),
+        )
+        self.update_worker = SimpleNamespace(isRunning=lambda: worker_running)
+        self._fallback_timer = _FakeTimer(active=timer_active)
+        self._gate_watchdog = _FakeTimer(active=False)
+        self._startup_coord = Mock()
+        self.url_input = _FakeInput(url)
+        self._deps_failed = []
+        self._pending_download = None
+        self._pot_retry_pending = False
+        self._pot_retry_url = None
+        self._pot_retry_done = set()
+        self.canceled = []
+        self.ensure_ready_calls = []
+        self.logs = []
+
+    def _force_unlock_input(self):
+        return main_module.MainWindow._force_unlock_input(self)
+
+    def _startup_chain_active(self):
+        return main_module.MainWindow._startup_chain_active(self)
+
+    def _log_gate_pending(self, reason):
+        return main_module.MainWindow._log_gate_pending(self, reason)
+
+    def _start_gate_watchdog(self):
+        self._gate_watchdog.start(_POT_GATE_TIMEOUT_MS)
+
+    def _on_gate_timeout(self):
+        return main_module.MainWindow._on_gate_timeout(self)
+
+    def _maybe_retry_analysis(self, err_msg):
+        return main_module.MainWindow._maybe_retry_analysis(self, err_msg)
+
+    def append_concise_log(self, *a, **k):
+        ev = a[0] if a else None
+        self.logs.append(getattr(ev, "msg", str(ev)))
+
+    def update_ui_state(self):
+        pass
+
+
+def test_gate_watchdog_cancels_pot_and_clears_queue(monkeypatch):
+    """[Followup-3] gate hang 시 POT를 트리 종료하고 대기 큐를 해제한다."""
+    import chzzktube.core.raw_log as raw_log
+
+    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)  # 전역 버스 오염 격리
+    fake = _GateFake(pot_busy=True)
+    fake._pending_download = (["https://youtu.be/x"], "auto", "auto")
+    fake._on_gate_timeout()
+    assert fake.canceled == [1]
+    assert fake._pending_download is None
+    assert any("gate timeout" in line for line in fake.logs)
+
+
+def test_gate_watchdog_noop_when_pot_idle(monkeypatch):
+    import chzzktube.core.raw_log as raw_log
+
+    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)  # 전역 버스 오염 격리
+    fake = _GateFake()
+    fake._on_gate_timeout()
+    assert fake.canceled == []
+
+
+def test_fallback_grace_defers_when_chain_active(monkeypatch):
+    """[Followup-4] 체인이 실제로 동작 중이면 폴백을 1회 유예한다."""
+    import chzzktube.core.raw_log as raw_log
+
+    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
+    fake = _GateFake(pot_busy=True)
+    fake._force_unlock_input()
+    assert fake._startup_coord.force_unlock.call_count == 0
+    assert fake._fallback_timer.starts == [_FALLBACK_GRACE_MS]  # 유예로 재무장
+    assert getattr(fake, "_fallback_grace_used") is True
+
+
+def test_fallback_fires_after_grace_when_chain_idle(monkeypatch):
+    import chzzktube.core.raw_log as raw_log
+
+    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
+    fake = _GateFake(worker_running=True)
+    fake._force_unlock_input()  # 유예(체인 동작 중)
+    fake.update_worker.isRunning = lambda: False
+    fake._force_unlock_input()  # 유예 후 재판정 → 개방
+    assert fake._startup_coord.force_unlock.call_count == 1
+
+
+def test_deps_fail_promoted_to_gate(monkeypatch):
+    """[Followup-5] DEPS 실제 FAIL은 게이트를 막는다(stale은 막지 않는다)."""
+    import chzzktube.core.raw_log as raw_log
+
+    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)  # 전역 버스 오염 격리
+    fake = _GateFake()
+    main_module.MainWindow._on_deps_failed(fake, ["ytdlp"])
+    assert fake._deps_failed == ["ytdlp"]
+    # 수집된 FAIL 목록이 report_deps(False) 승격의 근거가 된다(_on_update_check_done).
+
+
+def test_needs_pot_retry_detection():
+    """[Followup-6] 봇 체크/PO 토큰 사유만 재시도 대상으로 판별한다."""
+    assert main_module._needs_pot_retry("Sign in to confirm you're not a bot") is True
+    assert main_module._needs_pot_retry("ERROR: po token provider failed") is True
+    assert main_module._needs_pot_retry("HTTP Error 404: Not Found") is False
+    assert main_module._needs_pot_retry("") is False
+
+
+def test_bot_retry_schedules_once_and_blocks_loop(monkeypatch):
+    """[Followup-6] 재시도는 URL당 1회 — 재실패 시 루프를 만들지 않는다."""
+    import chzzktube.core.raw_log as raw_log
+
+    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
+    fake = _GateFake(pot_ready=False)
+    first = fake._maybe_retry_analysis("Sign in to confirm you're not a bot")
+    second = fake._maybe_retry_analysis("Sign in to confirm you're not a bot")
+    assert (first, second) == (True, False)
+    assert fake.ensure_ready_calls == [("gate",)]
+    assert fake._pot_retry_pending is True
+    assert fake._pot_retry_done == {"https://youtu.be/abcDEFghijk"}

@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-16 - v3.5.2 — READY 폴백 결함 3건 수리 (deps 게이트 의미·크래시 시그널·POT 프리웜 보존)
+> 마지막 갱신: 2026-09-16 - v3.6.0 — 게이트 하드닝 후속 6건 전량 해소 (트리 종료·2차 워치독·유예·deps FAIL·PO 재시도)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.5.2` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.5.2"` (최신: 2026-09-16 READY 폴백 결함 3건 수리)
+- **버전**: `v3.6.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.6.0"` (최신: 2026-09-16 게이트 하드닝 후속 6건 전량 해소)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.5.2`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.6.0`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -491,6 +491,7 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 18. **스레드 경계 (v3.3.1)**: raw_log dispatcher(데몬 스레드)에서 GUI 슬롯을 직접 호출하는 회귀 금지 — 반드시 `main._GuiLogBridge` Signal.emit + QueuedConnection으로 GUI 스레드에 위임. raw_log에 Qt 링크 금지(순수 파이썬 유지), 스레드 경계 책임은 수신층(main.py).
 19. **POT 서버 단일 스폰 (v3.3.1)**: 서버 기동 진실의 근원은 `POTManager._POTWorker` 단독. `_spawn_existing` 등 스폰 함수는 1회만 호출(조건 평가+핸들 할당 원자화) — 이중 호출로 서버 2회 기동 방지. `pot_provider.POTProviderWorker` 재생성 금지.
 20. **기동 폴백 계약 (v3.5.2)**: 15초 폴백(`force_unlock`)은 **READY 발산만** 한다 — POT 프리웜 취소 금지(`POTManager.cancel()`은 closeEvent 종료 정리 전용). 입력 잠금 판정(`get_current_app_state`)에 `_pot_manager.is_busy()`를 넣지 말 것(POT 대기 다운로드는 `toggle_download`의 `_pending_download` 큐가 담당). POT 빌드 서브프로세스(npm ci/tsc)는 반드시 timeout 상한(`_NPM_CI_TIMEOUT`/`_TSC_TIMEOUT`)을 가진다 — 무제한 대기는 `is_busy()`를 고정해 큐를 영구히 잠근다. 15초 폴백 타이머는 **동적**이다 — 실제 수급 하트비트(`UpdateWorker.work_tick` / POT `prewarm`·`starting` 전이)가 오면 `defer_fallback_timer()`가 카운트다운을 되감는다(`QTimer.singleShot` 단발로의 회귀 금지).
+21. **하트비트·워치독·재시도 계약 (v3.6.0)**: (가) 하트비트(`work_tick`/`heartbeat`/`pot_work_tick`)는 **무페이로드**만 허용 — 문자열을 실으면 로그 시그널(§5-11)이 되므로 하드 금지. (나) 15초 폴백 발화 전 체인이 실제 동작 중이면 **유예 1회**(`_FALLBACK_GRACE_MS`) 후 재판정한다 — 재판정 없이 직접 발화 금지. (다) gate 대기(`_pending_download`)에는 **120초 2차 워치독**을 반드시 건다 — 만료 시 `cancel()`(트리 킬) + 큐 해제. (라) 봇 체크 재시도는 **URL당 1회**(`_pot_retry_done`) — 재실패 시 FAIL로 마무리, 루프 금지.
 
 ## 6. 하지 말 것 (회귀 방지)
 
@@ -568,12 +569,12 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - **DEPS 로그 확장** (v3.1.0 추가): `check_deps()`는 PyPI 패키지뿐 아니라 외부 바이너리(ffmpeg, node)와 PO 토큰 서버도 확인. `shutil.which()`로 존재 여부, `pot_provider`로 PO 서버 핑 체크.
 
 ### 8.3 선택 과제 (향후)
-- ❌ **PO 서버 실패 시 폴백**: 봇 체크 실패 시 PO 서버 가동 후 재시도 (현재는 info 사전 감지만 적용)
-- ❌ **POT 서브프로세스 트리 종료 (v3.5.2 후속)**: `_kill`은 직접 자식만 종료 — npm이 낳은 자손은 잔존한다. `TerminateJobObject` + 잡 핸들 보관으로 트리 종료를 일원화
-- ❌ **POT gate hang 2차 워치독 (v3.5.2 후속)**: 15초 폴백은 1회성 — READY 개방 이후 시작된 gate hang에는 보호가 없다
-- ❌ **위양성 폴백 분리 (v3.5.2 후속)**: GUI 스레드가 15초 이상 블록되면 500ms·15000ms 타이머가 연달아 발화해 "(fallback timeout)"이 오표기된다 — 원인 라벨 기반 워치독으로 분리
-- ❌ **deps FAIL의 게이트 승격 (v3.5.2 후속)**: `check_done` 페이로드가 stale `list` 고정이라 검사 실패를 게이트에 반영하려면 시그널 계약(§5-13) 변경이 선행돼야 한다
-- ❌ **POT 빌드 내부 하트비트 (v3.5.2 후속)**: npm ci/tsc 장기 실행 중에는 POT 측 하트비트가 없어 폴백 연장이 걸리지 않는다 — `_run_and_stream_log`의 진행 로그를 하트비트로 승격해 프리웜 단계도 연장 대상에 넣어야 한다
+- ✅ **PO 서버 실패 시 재시도** (v3.6.0 #6 완료): 봇 체크 마커 감지 시 `ensure_ready("gate")` 후 URL당 1회 재분석 큐잉 — `_pot_retry_done`으로 루프 차단
+- ✅ **POT 서브프로세스 트리 종료** (v3.6.0 #2 완료): `kill_tree()` — Windows Job Object(`TerminateJobObject`) / POSIX 프로세스 그룹(`start_new_session`)
+- ✅ **POT gate hang 2차 워치독** (v3.6.0 #3 완료): `_gate_watchdog`(120s) — 만료 시 `cancel()`(트리 킬) + 대기 큐 해제
+- ✅ **위양성 폴백 분리** (v3.6.0 #4 완료): 체인 동작 중이면 3초 유예 1회 후 재판정 + `_log_gate_pending` 원인 기록
+- ✅ **deps FAIL의 게이트 승격** (v3.6.0 #5 완료): `UpdateWorker.deps_failed = Signal(list)` 신설 — `check_done` untouched, Main 중계 후 `report_deps(False)` 승격
+- ✅ **POT 빌드 내부 하트비트** (v3.6.0 #1 완료): `_communicate_with_ticks` + `pot_work_tick` 릴레이 — npm ci 장기 실행을 수급 진행으로 인식
 - ✅ **설정 UI**: 업데이트 채널 (Stable/Night) 선택 다이얼로그 — 완료
 - ✅ **streamlink 직접 다운로드**: 포터블 빌드에서 streamlink whl 직접 수급 — 완료
 
@@ -609,6 +610,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 > **v3.5.0부터 [CHANGELOG.md](../CHANGELOG.md)로 단일화** — 상세 수정 내역은 [CHANGELOG.md](../CHANGELOG.md) 참조.
 > v3.5.2(2026-09-16) — READY 폴백 결함 3건 수리: deps 게이트 의미 분리(P1) · 업그레이드 크래시 시그널 분기(P2) · POT 프리웜 보존 + 서브프로세스 상한(P3·P3b·P3c).
+> v3.6.0(2026-09-16) — 게이트 하드닝 후속 6건 전량 해소: POT 내부 하트비트(#1)·트리 종료(#2)·gate 2차 워치독(#3)·폴백 유예(#4)·deps FAIL 승격(#5)·PO 재시도(#6).
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
