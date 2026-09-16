@@ -1,3 +1,11 @@
+### 2026-09-16 — v3.6.1 : 아키텍처 다이어그램(mermaid) 추가 — 문서 전용 패치
+
+- `docs/architecture.md` 말미에 mermaid 3종 append: ① 전체 계층도(flowchart) ② 기동 시퀀스(sequenceDiagram) ③ 상태·워치독 관계(stateDiagram-v2)
+- 소스 변경 없음(문서 패치) — §1.1.2에 따라 patch 버전 증가 및 3중 정합 유지
+- 검증: `python -m pytest tests -q` (176 passed 0 failed) · smoke PASS · `sync_mirrors.py --check` 0건
+
+---
+
 ### 2026-09-16 — v3.6.0 : 게이트 하드닝 — POT 트리 종료·2차 워치독·유예·deps FAIL·PO 재시도 (minor 업)
 
 #### 후속 과제 전량 해소 (v3.5.2 §8.3 잔여 6건)
