@@ -6,6 +6,18 @@
 ### 1) 전체 계층도 (L4 View → L0 Leaf, 단방향)
 
 ```mermaid
+%%{init: {
+  'theme': 'dark',
+  'themeVariables': {
+    'background': 'transparent',
+    'clusterBkg': '#161b22',
+    'clusterBorder': '#30363d',
+    'primaryColor': '#21262d',
+    'primaryBorderColor': '#8b949e',
+    'primaryTextColor': '#c9d1d9',
+    'lineColor': '#58a6ff'
+  }
+}}%%
 flowchart TB
     subgraph L4["L4 · View — Qt 위젯 보유"]
         direction TB
@@ -61,6 +73,20 @@ flowchart TB
 ### 2) 기동 시퀀스 (READY 게이트 · 15초 폴백 · 동적 워치독)
 
 ```mermaid
+%%{init: {
+  'theme': 'dark',
+  'themeVariables': {
+    'actorBkg': '#21262d',
+    'actorBorder': '#8b949e',
+    'actorTextColor': '#c9d1d9',
+    'signalColor': '#8b949e',
+    'signalTextColor': '#c9d1d9',
+    'labelBoxBkgColor': '#161b22',
+    'labelBoxBorderColor': '#30363d',
+    'labelTextSize': '13px',
+    'loopByBkgColor': '#0d1117'
+  }
+}}%%
 sequenceDiagram
     autonumber
     participant M as MainWindow
@@ -95,6 +121,18 @@ sequenceDiagram
 ### 3) 상태·워치독 관계 (게이트 · 큐 · 재시도)
 
 ```mermaid
+%%{init: {
+  'theme': 'dark',
+  'themeVariables': {
+    'stateBkg': '#21262d',
+    'stateBorder': '#8b949e',
+    'labelTextColor': '#c9d1d9',
+    'compositeStateBkg': '#161b22',
+    'compositeStateBorder': '#30363d',
+    'transitionLineColor': '#58a6ff',
+    'transitionLabelColor': '#c9d1d9'
+  }
+}}%%
 stateDiagram-v2
     [*] --> STARTUP: 창 생성
     STARTUP --> IDLE: ui_unlocked (READY 1회)
