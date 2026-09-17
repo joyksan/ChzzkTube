@@ -45,6 +45,7 @@ assert window._fallback_timer.isActive()
 assert not window._gate_watchdog_active
 assert not hasattr(window, "_gate_watchdog_timer")
 assert not hasattr(window, "_fallback_watchdog")
+assert not window._analysis_watchdog_active
 
 widgets = (window.url_input, window._fallback_timer, window._gate_watchdog)
 window._pot_retry_done.add("retained-url")

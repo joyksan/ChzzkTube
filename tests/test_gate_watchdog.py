@@ -12,6 +12,7 @@ def gate_view():
         _startup_completed=True,
         _gate_watchdog_active=False,
         _gate_watchdog=LivenessWatchdog(GATE_TIMEOUT_SEC, clock=lambda: now[0]),
+        _analysis_watchdog_active=False,
         _analysis_watchdog=Mock(check_timeout=Mock(return_value=False)),
         _pot_manager=Mock(),
         _pending_download=(['url'], 'auto', 'auto'),

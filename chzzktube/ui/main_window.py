@@ -181,8 +181,10 @@ class MainWindow(QMainWindow):
         self._gate_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
         self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC, 0.0)
         # [Watchdog] 워커의 무페이로드 진행 신호가 분석 워치독 수명을 연장한다.
-        # 만료 판정과 복구는 뷰(_on_analysis_timeout)가 단독 수행한다.
+        # 수명은 스폰 3곳의 명시적 무장에서만 시작되고, 만료 판정·복구·해제는
+        # 뷰(_on_analysis_timeout)가 단독 수행한다(만료의 영속 재판정 금지).
         self.ctrl.analyze_activity.connect(self._analysis_watchdog.heartbeat)
+        self._analysis_watchdog_active = False
 
         # 워치독 폴링용 타이머 (1초 주기)
         self._watchdog_poll_timer = QTimer(self)
@@ -227,7 +229,7 @@ class MainWindow(QMainWindow):
 
         # 2) 분석 워치독 — 워커의 activity 신호가 수명을 연장하고,
         #    만료 시 여기서 복구(워커 유기 + FAIL 마감)를 단독 수행한다.
-        if self._analysis_watchdog.check_timeout():
+        if self._analysis_watchdog_active and self._analysis_watchdog.check_timeout():
             self._on_analysis_timeout()
             return
 
@@ -560,6 +562,8 @@ class MainWindow(QMainWindow):
         elif state == "PICKING":
             self._cancel_pick()
         elif state == "ANALYZING":
+            self._disarm_analysis_watchdog()
+
             self.ctrl.request_cancel()
         else:
             self.url_input.clear()
@@ -621,6 +625,7 @@ class MainWindow(QMainWindow):
         if not text:
             self._last_input_len = 0
             self.extracted_data = {"info": None, "v_list": [], "a_list": []}
+            self._disarm_analysis_watchdog()
             self.ctrl._abandon_analyzer()
             self.console.clear_status_line()
             self._discard_analysis_result()
@@ -671,7 +676,7 @@ class MainWindow(QMainWindow):
         )
         self._discard_analysis_result()
         self.base_anim_url = url
-        self._analysis_watchdog.reset()
+        self._arm_analysis_watchdog()
         self.ctrl.spawn_analyzer(url, self.cfg)
         self.update_ui_state()
 
@@ -940,12 +945,22 @@ class MainWindow(QMainWindow):
         )
         self.update_ui_state()
 
+    def _arm_analysis_watchdog(self):
+        """[Watchdog] 분석 스폰 1회 무장 — 이후 만료 판정은 폴링이 담당한다."""
+        self._analysis_watchdog.reset()
+        self._analysis_watchdog_active = True
+
+    def _disarm_analysis_watchdog(self):
+        """[Watchdog] 분석 마감(성공/실패/만료) 해제 — 만료의 영속 재판정을 끊는다."""
+        self._analysis_watchdog_active = False
+
     def _on_analysis_timeout(self):
         """[Watchdog] 분석 무응답 — 워커를 유기하고 FAIL로 마감한다.
 
         강제 terminate() 금지. 유기된 워커는 좀비 패턴으로 자연 종료를 기다리고,
         늦게 도착한 결과는 `_is_stale_analyze_signal()`이 폐기한다.
         """
+        self._disarm_analysis_watchdog()
         if not self.ctrl.analyzing:
             return
         self.ctrl.abandon_analysis()
@@ -1000,7 +1015,7 @@ class MainWindow(QMainWindow):
             is_status=True,
             is_error=False,
         )
-        self._analysis_watchdog.reset()
+        self._arm_analysis_watchdog()
         self.ctrl.spawn_analyzer(url, self.cfg)
         self.update_ui_state()
 
@@ -1028,6 +1043,7 @@ class MainWindow(QMainWindow):
     def on_analyze_success(self, data):
         if self._is_stale_analyze_signal():
             return
+        self._disarm_analysis_watchdog()
         self.ctrl.state["analyzing"] = False
         self.extracted_data = data
         self._ensure_pot_for_info(data.get("info"))
@@ -1046,6 +1062,7 @@ class MainWindow(QMainWindow):
     def on_analyze_error(self, err_msg):
         if self._is_stale_analyze_signal():
             return
+        self._disarm_analysis_watchdog()
         self.ctrl.state["analyzing"] = False
         pick_pending = getattr(self, "_pick_pending", False)
         self._pick_pending = False
@@ -1312,7 +1329,7 @@ class MainWindow(QMainWindow):
             is_status=True,
             is_error=False,
         )
-        self._analysis_watchdog.reset()
+        self._arm_analysis_watchdog()
         self.ctrl.spawn_analyzer(url, self.cfg, deep=True)
         self.update_ui_state()
 

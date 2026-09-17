@@ -82,6 +82,10 @@ class _FakeMain:
     def _start_gate_watchdog(self):
         self.watchdog_started += 1
 
+    def _disarm_analysis_watchdog(self):
+        return main_module.MainWindow._disarm_analysis_watchdog(self)
+
+
     # ── 실제 MainWindow 메서드 바인딩 ─────────────────────────────
     def _is_stale_analyze_signal(self):
         return main_module.MainWindow._is_stale_analyze_signal(self)
@@ -221,3 +225,17 @@ def test_on_url_changed_clear_uses_controller_abandon():
     assert m.ctrl.worker_analyze is None
     assert m.ctrl.state["analyzing"] is False
     assert m.extracted_data["info"] is None
+    assert m._analysis_watchdog_active is False
+
+
+def test_escape_disarms_analysis_watchdog():
+    m = _FakeMain()
+    m.ctrl.worker_analyze = SimpleNamespace(isRunning=lambda: False)
+    m.ctrl.state["analyzing"] = True
+    m._analysis_watchdog_active = True
+
+    main_module.MainWindow._esc_action(m)
+
+    assert m._analysis_watchdog_active is False
+    assert m.ctrl.worker_analyze is None
+    assert m.ctrl.analyzing is False

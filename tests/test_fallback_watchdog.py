@@ -21,6 +21,7 @@ class _View:
         self._fallback_grace_used = False
         self._gate_watchdog_active = False
         self._gate_watchdog = SimpleNamespace(check_timeout=lambda: False)
+        self._analysis_watchdog_active = False
         self._analysis_watchdog = SimpleNamespace(check_timeout=lambda: False)
         self._fallback_timer = SimpleNamespace(isActive=lambda: True, start=self.starts.append)
         self._pot_manager = SimpleNamespace(is_busy=lambda: True, mode="prewarm")
