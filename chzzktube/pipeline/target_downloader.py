@@ -282,7 +282,9 @@ def download_target(ctx, url, failed_targets):
             or "the page needs to be reloaded" in err_str
         ):
             reason = "age/bot restricted"
-        elif "requested format not available" in err_str:
+        # [교정] yt-dlp 원문은 "Requested format is not available" — 기존
+        # 체크문("requested format not available")은 is 누락으로 미매칭.
+        elif "requested format is not available" in err_str or "no video formats found" in err_str:
             reason = "format missing"
         elif "video unavailable" in err_str or "this video is not available" in err_str:
             reason = "video unavailable"
