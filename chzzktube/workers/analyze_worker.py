@@ -361,6 +361,6 @@ class AnalyzeWorker(QThread):
                 m = re.search(r"ERROR:\s*\[[^\]]+\]\s*[^:]+:\s*(.+)", msg)
                 if m:
                     msg = m.group(1).strip()
-                msg = re.split(r";\s*please report|;\s*filling out|\. Use --list-formats", msg)[0]
+                msg = re.split(r";\s*please report|;\s*filling out|\.\s*[Uu]se --list-formats", msg)[0]
                 self.error_occurred.emit(f"analysis error: {msg[:60]}")
 

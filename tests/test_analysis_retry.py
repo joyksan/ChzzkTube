@@ -105,3 +105,34 @@ def test_rotation_succeeds_on_candidate(monkeypatch):
     assert info["formats"] == [{"id": "f1"}]
     # 통과한 클라이언트 기록 — 다운로드가 같은 클라이언트를 쓰도록 강제하는 값.
     assert w.client_used == "tv"
+
+
+# ── [TUI 규격] 최종 analysis error 메시지 축약 ──────────────────────────
+# [배경] yt-dlp 원문은 "please report this issue on ..." 보일러플레이트가
+# 뒤에 붙어 TUI MSG 컬럼을 넘쳤다. 핵심 구문 추출 + 60자 절단이 계약.
+
+
+def _minimal(msg: str) -> str:
+    msg = aw.clean_ansi(str(msg))
+    m = aw.re.search(r"ERROR:\s*\[[^\]]+\]\s*[^:]+:\s*(.+)", msg)
+    if m:
+        msg = m.group(1).strip()
+    msg = aw.re.split(r";\s*please report|;\s*filling out|\.\s*[Uu]se --list-formats", msg)[0]
+    return f"analysis error: {msg[:60]}"
+
+
+def test_minimal_error_strips_report_boilerplate():
+    raw = (
+        "ERROR: [youtube] 0VxDq_vzXcg: No video formats found!; please report "
+        "this issue on  https://github.com/yt-dlp/yt-dlp/issues?q= , filling "
+        "out the appropriate issue template. Confirm you are on the latest "
+        "version using  yt-dlp -U"
+    )
+    assert _minimal(raw) == "analysis error: No video formats found!"
+
+
+def test_minimal_error_truncates_to_tui_budget():
+    raw = "ERROR: [youtube] x: Requested format is not available. Use --list-formats for a list of available formats"
+    assert _minimal(raw) == "analysis error: Requested format is not available"
+    raw2 = "Only images are available for download. use --list-formats to see them"
+    assert _minimal(raw2) == "analysis error: Only images are available for download"
