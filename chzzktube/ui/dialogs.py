@@ -263,6 +263,49 @@ class ActionCountdownDialog(QDialog):
         self.reject()
 
 
+class CookieSetDoneDialog(QDialog):
+    """[신규] 쿠키 설정 완료 확인 — ExitConfirmDialog와 동일 규격(280x125,
+    칠흑 배경, 텍스트 중앙 정렬). OK/View 2버튼: View 누르면 확인창이 닫히고
+    CookieViewerDialog가 팝업된다."""
+    RESULT_VIEW = 2
+
+    def __init__(self, parent=None, source_name="", view_cb=None):
+        super().__init__(parent)
+        self.setWindowTitle("ChzzkTube")
+        self.setFixedSize(280, 125)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setStyleSheet(theme.DIALOG_BG_QSS)
+        self._view_cb = view_cb
+
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(14)
+        vbox.setContentsMargins(16, 16, 16, 16)
+
+        lbl = QLabel(f"✓ Cookie configured.\n({source_name})")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("font-size: 11px; color: #e3e3e3; line-height: 1.4;")
+        vbox.addWidget(lbl)
+
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(8)
+
+        btn_view = QPushButton("View")
+        btn_view.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+        btn_view.clicked.connect(self._on_view)
+
+        btn_ok = QPushButton("OK")
+        btn_ok.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+        btn_ok.clicked.connect(self.accept)
+
+        btn_box.addWidget(btn_view)
+        btn_box.addWidget(btn_ok)
+        vbox.addLayout(btn_box)
+
+    def _on_view(self):
+        self.done(self.RESULT_VIEW)
+
+
 class CookieViewerDialog(QDialog):
     """[교정] 10px 고밀도 TUI 뷰어 및 플랫 Close 버튼"""
     def __init__(self, title_text, content_text, parent=None):
@@ -727,7 +770,15 @@ class SettingsDialog(QDialog):
             self.cfg["cookie_file_path"] = dlg.selected_path
             self.save_cfg()
             self._refresh_cookie_status()
-            show_info_message(self, "성공", f"쿠키 설정이 완료되었습니다.\n({dlg.selected_type})")
+            # [교정] QMessageBox 대신 TUI 규격 확인창 — OK/View 2버튼.
+            # View 선택 시 확인창이 닫힌 뒤 쿠키 뷰어를 팝업한다.
+            names = {"cookie_file": "Cookies.txt 파일"}
+            src_name = names.get(dlg.selected_type, dlg.selected_type)
+            done_dlg = CookieSetDoneDialog(
+                self, source_name=src_name, view_cb=self.view_cookie
+            )
+            if done_dlg.exec() == CookieSetDoneDialog.RESULT_VIEW:
+                self.view_cookie()
 
     def reset_cookie(self):
         self.cfg["browser_cookie"] = "none"

@@ -68,18 +68,28 @@ class AnalyzeWorker(QThread):
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
         self.client_used = "auto"
 
-    # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — ios는 PO Token
-    # 불필요·SABR 무관(720p급), tv는 최후 수단(SABR 360p 리스크).
-    _RETRY_CLIENTS = ["ios", "tv"]
+    # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — tv는 쿠키 호환
+    # PO Token 계열, web_safari는 쿠키 호환 web 변체. [주의] ios는 쿠키
+    # 미지원(SUPPORTS_COOKIES=False)이라 쿠키 사용 중이면 yt-dlp가 클라이언트
+    # 자체를 스킵 → "No video formats found" 즉사하므로 회전 후보에서 제외.
+    _RETRY_CLIENTS = ["tv", "web_safari"]
 
     @staticmethod
     def _is_bot_block(ex):
-        """YouTube 봇 체크/JS 챌린지 실패 판별 — 클라이언트 회전 대상 여부."""
+        """YouTube 봇 체크/JS 챌린지 실패 판별 — 클라이언트 회전 대상 여부.
+
+        [주의] 회전 중간 클라이언트(ios 등 쿠키 미지원 스킵)의 2차 오류인
+        "No video formats found" / "Requested format is not available"도
+        bot-block에서 파생된 것이므로 회전을 계속해야 한다. 이를 포함하지
+        않으면 회전이 중간에 끊겨 마지막 폴백이 시도조차 되지 않는다.
+        """
         s = str(ex).lower()
         return (
             "the page needs to be reloaded" in s
             or "n challenge solving failed" in s
             or "challenge solving failed" in s
+            or "no video formats found" in s
+            or "requested format is not available" in s
         )
 
     def _extract_youtube(self, url, flat):
@@ -340,9 +350,17 @@ class AnalyzeWorker(QThread):
                     "age/membership restricted"
                 )
             elif "the page needs to be reloaded" in ex_str or "challenge solving failed" in ex_str:
-                # [봇 체크] EJS 솔버 + ios/tv 회전까지 실패하면 남은 수단은
+                # [봇 체크] EJS 솔버 + 클라이언트 회전까지 실패하면 남은 수단은
                 # 브라우저에서 영상 재생(세션 갱신) — 미니멀 영문 매핑.
                 self.error_occurred.emit("bot check — reload browser")
             else:
-                self.error_occurred.emit(f"analysis error: {clean_ansi(str(ex))}")
+                # [TUI 규격] yt-dlp 원문은 보일러플레이트("please report this
+                # issue...")가 메시지를 초과한다. 첫 ERROR 행의 핵심 구문만
+                # 추출해 60자로 절단 — 상세 원문은 F12 로그에 이미 기록됨.
+                msg = clean_ansi(str(ex))
+                m = re.search(r"ERROR:\s*\[[^\]]+\]\s*[^:]+:\s*(.+)", msg)
+                if m:
+                    msg = m.group(1).strip()
+                msg = re.split(r";\s*please report|;\s*filling out|\. Use --list-formats", msg)[0]
+                self.error_occurred.emit(f"analysis error: {msg[:60]}")
 
