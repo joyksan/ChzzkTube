@@ -116,6 +116,7 @@ class DownloadWorker(QThread):
             ctx.targets = _td.expand_targets(ctx)
             self.targets = ctx.targets
             self.total_count = len(self.targets)
+            ctx.total_count = self.total_count
 
             for idx, url in enumerate(self.targets, 1):
                 ctx.advance_target(idx, url)

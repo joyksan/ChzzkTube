@@ -2,6 +2,7 @@
 import datetime
 import json
 import re
+from urllib.parse import urljoin
 import urllib.request
 
 from chzzktube.core.cookies import get_browser_cookies
@@ -245,7 +246,12 @@ def _fetch_m3u8_streams(m3u8_url, headers, timeout=15):
     for line in content.splitlines():
         line = line.strip()
         if line.startswith("#EXT-X-STREAM-INF"):
-            attrs = dict(re.findall(r'(\w+)="([^"]*)"', line))
+            attrs = {
+                key: quoted or plain
+                for key, quoted, plain in re.findall(
+                    r'([\w-]+)=(?:"([^"]*)"|([^,\s]+))', line
+                )
+            }
             cur_bw = int(float(attrs.get("BANDWIDTH", 0) or 0)) // 1000
             cur_res = attrs.get("RESOLUTION", "")
         elif line and not line.startswith("#"):
@@ -264,7 +270,7 @@ def _fetch_m3u8_streams(m3u8_url, headers, timeout=15):
                     "height": height,
                     "fps": 0,
                     "bitrate": cur_bw,
-                    "url": line,
+                    "url": urljoin(m3u8_url, line),
                     "vcodec": "H.264",
                     "acodec": "AAC",
                 }
