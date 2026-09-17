@@ -233,113 +233,137 @@ flowchart TB
 ```mermaid
 flowchart TB
 %% ══════════════════════════════════════════════════════════════════
-%% ChzzkTube Architecture: GitHub Markdown Validated Vertical Stack
+%% ChzzkTube Architecture: Strict 1-Column Vertical Stack
 %% ══════════════════════════════════════════════════════════════════
 
+    %% [Layer 3: UI View]
     subgraph L3 ["Layer 3: View (chzzktube/ui/)"]
-        direction TB
-        MW["MainWindow<br/>(Event Loop & State Sync)"]
-        LC["ConciseLogConsole<br/>(In-place status & Pixel Clamp)"]
-        DLG["Dialogs (Settings / F12 Verbose)"]
-        BRIDGE["_GuiLogBridge<br/>(QObject QueuedConnection Boundary)"]
-        
-        MW --> LC
+        MW["MainWindow<br/>(Event Loop & Master)"]
+        DLG["Dialogs<br/>(Settings / F12 / Exit)"]
+        LC["ConciseLogConsole<br/>(In-place Status)"]
+        BRIDGE["_GuiLogBridge<br/>(QueuedConnection Boundary)"]
+
         MW --> DLG
-        BRIDGE -. "tui_signal / full_signal" .-> MW
+        MW --> LC
+        LC --> BRIDGE
+        DLG ~~~ BRIDGE
     end
 
-    subgraph L2 ["Layer 2: Control & Orchestration (chzzktube/control/)"]
-        direction TB
+    %% [Layer 2: Control]
+    subgraph L2 ["Layer 2: Control (chzzktube/control/)"]
         CTRL["MediaController<br/>(Session State Machine)"]
-        COORD["StartupCoordinator<br/>(Sequence Gates)"]
+        COORD["StartupCoordinator<br/>(Sequence Gatekeeper)"]
         STATE["StartupState<br/>(RLock Protected)"]
-        POTM["POTManager<br/>(Single Spawn Guard)"]
+        POTM["POTManager<br/>(Single Spawn Lifecycle)"]
 
-        COORD <--> STATE
-        COORD <--> POTM
+        CTRL --> STATE
+        CTRL --> COORD
+        COORD --> POTM
+        STATE ~~~ POTM
     end
 
+    %% [Layer 1: Workers]
     subgraph L1 ["Layer 1: Workers (chzzktube/workers/)"]
-        direction TB
-        W_UPD["UpdateWorker<br/>(DEPS / Upgrade)"]
-        W_ANA["AnalyzeWorker<br/>(Light Extraction)"]
         W_DL["DownloadWorker<br/>(Batch Execution)"]
-        W_POT["_POTWorker<br/>(Staging / Build)"]
+        W_UPD["UpdateWorker<br/>(DEPS / Bin Upgrade)"]
+        W_ANA["AnalyzeWorker<br/>(Light Manifest Extraction)"]
+        W_POT["_POTWorker<br/>(Node Staging & Build)"]
+
+        W_DL --> W_ANA
+        W_UPD --> W_POT
+        W_DL ~~~ W_UPD
+        W_ANA ~~~ W_POT
     end
 
+    %% [Layer 0.5: Pipeline Execution]
     subgraph L05 ["Layer 0.5: Pipeline (chzzktube/pipeline/)"]
-        direction TB
-        CTX["DownloadContext<br/>(Pipeline Data Contract)"]
-        TDL["target_downloader<br/>(Target Dispatcher)"]
-        LREC["live_recorder<br/>(Relay Pipe 256KB)"]
+        CTX["DownloadContext<br/>(Explicit Data Contract)"]
+        TDL["target_downloader<br/>(Dispatcher: VOD/Live/Chzzk)"]
+        LREC["live_recorder<br/>(ffmpeg Pipe 256KB)"]
         PEMIT["progress_emitter<br/>(0.5s Throttle Tick)"]
-        FIN["finalizer<br/>(Summary & txt)"]
+        FIN["finalizer<br/>(Batch Summary & failed_urls)"]
 
         CTX --> TDL
         TDL --> LREC
         TDL --> PEMIT
-        CTX --> FIN
+        TDL --> FIN
+        LREC ~~~ PEMIT ~~~ FIN
     end
 
-    subgraph L0_CORE ["Layer 0: Core Domain & Log SSOT (chzzktube/core/)"]
-        direction TB
-        RLOG["raw_log.raw()<br/>(SSOT Bus & Bounded Queue)"]
-        HIST["log_history.py<br/>(Daily File Append)"]
-        MEDIA["media.py<br/>(Codec Rank & Remux)"]
+    %% [Layer 0: Core Domain]
+    subgraph L0_CORE ["Layer 0: Core Domain (chzzktube/core/)"]
         CHZZK["chzzk_api.py<br/>(Clip / VOD / LIVE)"]
         OPTS["client_opts.py<br/>(Option Builder)"]
+        RLOG["raw_log.raw<br/>(SSOT Bus Dispatcher)"]
         WDOG["watchdog.py<br/>(LivenessWatchdog)"]
+        MEDIA["media.py<br/>(Codec Rank & Remux)"]
+        HIST["log_history.py<br/>(Daily Disk Append)"]
 
+        CHZZK --> WDOG
+        OPTS --> MEDIA
         RLOG --> HIST
+        CHZZK ~~~ OPTS ~~~ RLOG
+        WDOG ~~~ MEDIA ~~~ HIST
     end
 
+    %% [Layer 0: Infra & Runtime]
     subgraph L0_INFRA ["Layer 0: Infra & Runtime (chzzktube/infra/)"]
-        direction TB
-        FACADE["pot_provider.py<br/>(Re-export Facade)"]
-        POC["po_client.py<br/>(Pure HTTP /ping)"]
-        POTS["pot_server.py<br/>(Server Lifecycle)"]
-        NODE["node_provider.py<br/>(Node 22+ Runtime)"]
+        POTP["pot_provider.py<br/>(Re-export Facade)"]
         COMP["components.py<br/>(FFmpeg Auto)"]
+        POTS["pot_server.py<br/>(Server Lifecycle)"]
         UPDR["updater.py<br/>(PyPI / Wheel)"]
+        NODE["node_provider.py<br/>(Node 22+ Runtime)"]
+        POC["po_client.py<br/>(Pure HTTP /ping)"]
 
-        FACADE -.-> POC
-        FACADE -.-> POTS
-        FACADE -.-> NODE
+        POTP --> POTS
+        POTS --> NODE
+        POTS --> POC
+        COMP --> UPDR
+        POTP ~~~ COMP
+        NODE ~~~ POC ~~~ UPDR
     end
 
 %% ══════════════════════════════════════════════════════════════════
-%% Inter-Layer Structural Flow (Vertical Backbone)
+%% 수직 박스 고정 앵커 (계단 현상 방지: 상단 박스 바닥 -> 하단 박스 천장)
 %% ══════════════════════════════════════════════════════════════════
+    %% L3 바닥 -> L2 천장
+    DLG ~~~ CTRL
+    BRIDGE ~~~ COORD
 
-    %% L3 <-> L2 Control Link (교정: 파이프 라벨 구문 적용)
-    MW <--> |"User Interaction / Status Sync"| CTRL
-    MW <--> |"ready_emitted / ui_unlocked"| COORD
+    %% L2 바닥 -> L1 천장
+    STATE ~~~ W_DL
+    POTM ~~~ W_UPD
 
-    %% L2 -> L1 Lifecycle Spawning
-    CTRL --> W_DL
-    CTRL --> W_ANA
-    COORD -. "Check Trigger" .-> W_UPD
-    POTM --> W_POT
+    %% L1 바닥 -> L0.5 천장
+    W_ANA ~~~ CTX
+    W_POT ~~~ CTX
 
-    %% L1 -> L2 Signals
-    W_UPD -- "upgrade_done(ok)" --> COORD
-    W_ANA -- "result_ready(dict)" --> CTRL
-    W_DL -- "finished_all(int, int)" --> MW
-    W_POT -- "finished_signal(token)" --> POTM
+    %% L0.5 바닥 -> L0 Core 천장
+    LREC ~~~ CHZZK
+    PEMIT ~~~ OPTS
+    FIN ~~~ RLOG
 
-    %% L1 -> L0.5 Delegation (교정: 표준 두꺼운 링크 텍스트 구문)
-    W_DL == "Delegates with Context" ==> CTX
+    %% L0 Core 바닥 -> L0 Infra 천장
+    MEDIA ~~~ POTP
+    HIST ~~~ COMP
 
-    %% L0.5 -> L0 Core Integration
-    TDL -.-> OPTS
-    TDL -.-> MEDIA
+%% ══════════════════════════════════════════════════════════════════
+%% 비즈니스 데이터 플로우 (대칭 수직 연결)
+%% ══════════════════════════════════════════════════════════════════
+    MW ==> |"1. User Action"| CTRL
+    MW -.-> |"Startup Sync"| COORD
+
+    CTRL ==> |"2. Spawns"| W_DL
+    CTRL -.-> W_ANA
+    COORD -.-> W_UPD
+    POTM -.-> W_POT
+
+    W_DL ==> |"3. Delegates"| CTX
+
+    TDL ==> |"4. Extract & Mux"| OPTS
     TDL -.-> CHZZK
 
-    %% L1 -> L0 Infra Provisioning
-    W_UPD -.-> UPDR
-    W_UPD -.-> COMP
-    W_POT -.-> POTS
-
-    %% Event Boundary back to View (Log Loop)
-    RLOG -- "Worker to GUI Loop" --> BRIDGE
+    MEDIA ==> |"5. Runtime Integration"| POTP
+    MEDIA -.-> COMP
+    OPTS -.-> UPDR
 ```
