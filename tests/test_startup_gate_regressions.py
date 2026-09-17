@@ -349,6 +349,7 @@ class _GateFake:
         self.update_worker = SimpleNamespace(isRunning=lambda: worker_running)
         self._fallback_timer = _FakeTimer(active=timer_active)
         self._gate_watchdog = _FakeTimer(active=False)
+        self._gate_watchdog_active = True
         self._startup_coord = Mock()
         self.url_input = _FakeInput(url)
         self._deps_failed = []
@@ -371,6 +372,9 @@ class _GateFake:
 
     def _start_gate_watchdog(self):
         self._gate_watchdog.start(_POT_GATE_TIMEOUT_MS)
+
+    def _stop_gate_watchdog(self):
+        self._gate_watchdog_active = False
 
     def _on_gate_timeout(self):
         return main_module.MainWindow._on_gate_timeout(self)

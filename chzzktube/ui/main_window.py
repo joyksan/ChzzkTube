@@ -159,8 +159,8 @@ class MainWindow(QMainWindow):
         self._pot_manager.pot_finished.connect(self._on_pot_finished)
         # [P5] POT 수급/빌드 진행 중에는 기동 폴백 타이머를 연장한다(맹인 폴백 방지).
         self._pot_manager.pot_status_changed.connect(self._on_pot_activity)
-        # [Followup-1] POT 빌드 수급 하트비트 → 폴백 타이머 연장
-        self._pot_manager.pot_work_tick.connect(self.defer_fallback_timer)
+        # POT 진행은 기동 폴백과 활성 게이트의 생존 시간을 함께 연장한다.
+        self._pot_manager.pot_work_tick.connect(self._on_pot_work_tick)
         self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
 
         self.settings_dlg = None
@@ -204,11 +204,8 @@ class MainWindow(QMainWindow):
         self._fallback_timer.timeout.connect(self._force_unlock_input)
         self._fallback_timer.start(int(FALLBACK_TIMEOUT_SEC * 1000))
 
-        # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang에도
-        # 보호를 둔다(1차는 위 폴백). 만료 시 POT 작업을 트리 종료하고 큐를 푼다.
-        self._gate_watchdog_timer = QTimer(self)
-        self._gate_watchdog_timer.setSingleShot(True)
-        self._gate_watchdog_timer.timeout.connect(self._on_gate_timeout)
+        # 게이트 만료는 _gate_watchdog 하나로 판정한다. QTimer는 폴링에만 사용.
+        self._gate_watchdog_active = False
         # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
         self._deps_failed = []
         # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
@@ -226,7 +223,7 @@ class MainWindow(QMainWindow):
             return
 
         # 2) 게이트 워치독
-        if self._gate_watchdog_timer.isActive() and self._gate_watchdog.check_timeout():
+        if self._gate_watchdog_active and self._gate_watchdog.check_timeout():
             self._on_gate_timeout()
             return
 
@@ -916,22 +913,34 @@ class MainWindow(QMainWindow):
     def _start_gate_watchdog(self):
         """[Followup-3] POT gate 대기 2차 워치독 기동."""
         self._gate_watchdog.reset()
-        self._gate_watchdog_timer.start(_POT_GATE_TIMEOUT_MS)
+        self._gate_watchdog_active = True
 
     def _stop_gate_watchdog(self):
-        self._gate_watchdog_timer.stop()
+        self._gate_watchdog_active = False
+
+    def _on_pot_work_tick(self):
+        """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
+        self.defer_fallback_timer()
+        if self._gate_watchdog_active:
+            self._gate_watchdog.heartbeat()
 
     def _on_gate_timeout(self):
         """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
+        if not self._gate_watchdog_active:
+            return
+        self._stop_gate_watchdog()
         if not self._pot_manager.is_busy():
             return
+        # cancel()에서 pot_finished가 즉시 발행되어도 보류 요청은 재실행되지 않는다.
+        self._pending_download = None
+        self._pot_retry_pending = False
+        self._pot_retry_url = None
         self._pot_manager.cancel()
         self.append_concise_log(
             log_emitter.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
             is_status=False,
             is_error=False,
         )
-        self._pending_download = None
         self.update_ui_state()
 
     def _on_analysis_timeout(self):

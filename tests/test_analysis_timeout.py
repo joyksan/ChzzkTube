@@ -166,7 +166,7 @@ class _PollFake:
         self._startup_completed = True
         self._fallback_watchdog = _DeadWatchdog()
         self._gate_watchdog = _DeadWatchdog()
-        self._gate_watchdog_timer = _InactiveTimer()
+        self._gate_watchdog_active = False
         self._analysis_watchdog = _ExpiredWatchdog()
         self.timeout_calls = 0
 
