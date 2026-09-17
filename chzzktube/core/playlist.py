@@ -26,7 +26,7 @@ def normalize_youtube_channel_url(url):
         return u
 
     # 이미 /videos|streams|playlists|shorts|featured|about 탭이면 그대로
-    if re.search(r"/(videos|streams|playlists|shorts|featured|about)/?$", u_lower):
+    if re.search(r"/(videos|streams|playlists|shorts|featured|about|releases|live|community|membership|podcasts)/?$", u_lower):
         return u
 
     # /@handle 또는 /channel/UC... — 뒤의 탭 잔여물 제거 후 /videos

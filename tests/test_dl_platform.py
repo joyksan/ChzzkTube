@@ -52,5 +52,19 @@ class TestDetectContentType:
     def test_chzzk_live(self):
         assert detect_content_type("https://chzzk.naver.com/live/abc") == "live"
 
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            # [실측] shorts는 video 경로(yt-dlp가 쇼츠 추출 담당) — 전용 타입 신설 금지.
+            ("https://www.youtube.com/shorts/lq5_BTxiR8Y", "video"),
+            # [실측] watch+list는 단일 영상(URL 타입) — 자동 재생목록 전개 대상 아님.
+            ("https://www.youtube.com/watch?v=02KRAshCG0w&list=PLGPghxyurUFI&index=1", "video"),
+            ("https://www.youtube.com/watch?v=jn4SrymuA7U&list=PLGPghxyurUFI&index=3", "video"),
+            ("/Users/jskim/Documents/ChzzkTube/main.py", "video"),
+        ],
+    )
+    def test_youtube_routing_boundaries(self, url, expected):
+        assert detect_content_type(url) == expected
+
     def test_unknown(self):
         assert detect_content_type("https://example.com/video") == "video"
