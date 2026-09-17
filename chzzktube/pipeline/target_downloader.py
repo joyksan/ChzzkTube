@@ -173,10 +173,10 @@ def _download_youtube_live(ctx, url):
 def _download_streamlink(ctx, url):
     """streamlink 대상 — 자식 프로세스 녹화 파이프라인 (화질은 cfg fit)."""
     out_file = os.path.join(ctx.cfg["download_path"], "streamlink_live.mp4")
-    temp_ts, thumb, _ = _lr.prepare_live_paths(ctx, out_file, None)
+    temp_ts, _, _ = _lr.prepare_live_paths(ctx, out_file, None)
     quality = str(ctx.cfg.get("streamlink_quality") or "best").strip() or "best"
     cmd = ["streamlink", url, quality, "-O"]
-    return _lr.record_live_stream(ctx, cmd, temp_ts, out_file, thumb)
+    return _lr.record_live_stream(ctx, cmd, temp_ts)
 
 
 def _download_vod(ctx, url):

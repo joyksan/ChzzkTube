@@ -2,9 +2,9 @@
 
 ── Worker Contract ──────────────────────────────────────────────
 본 모듈의 함수들이 요구하는 worker 객체의 인터페이스:
-  worker.logger           : YtLoggerBridge — raw 버스 직행 (log_full/log_concise 시그널 폐기)
-  worker.total_count      : int   — 전체 대상 수
-  worker.current_url       : str   — 현재 처리 중인 URL (실패 시 참조)
+  ctx.logger           : YtLoggerBridge — raw 버스 직행 (log_full/log_concise 시그널 폐기)
+  ctx.total_count      : int   — 전체 대상 수
+  ctx.current_url       : str   — 현재 처리 중인 URL (실패 시 참조)
 ──────────────────────────────────────────────────────────────────
 """
 import os
@@ -14,8 +14,12 @@ from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.pipeline.progress_emitter import emit_dl, emit_err
 
 
-def finalize(ctx, total, failed_targets, success_count):
-    """완료 요약 — TUI 컬럼 라인 1줄 + 개별 실패는 ERR 라인. (버스 단일 경유)"""
+def finalize(ctx, total, failed_targets, success_count, *, notify=True):
+    """완료 요약을 기록한다.
+
+    워커는 notify=False로 호출하고 자체 finally에서 종료 신호를 발행한다.
+    notify=True는 기존 직접 호출자의 정상 마감 통지 호환용이다.
+    """
     fail_count = len(failed_targets)
 
     if ctx.state["canceled"]:
@@ -55,5 +59,6 @@ def finalize(ctx, total, failed_targets, success_count):
         to_tui=True,
     )
 
-    ctx.finished_all.emit(success_count, fail_count)
+    if notify:
+        ctx.finished_all.emit(success_count, fail_count)
     return not ctx.state["canceled"]

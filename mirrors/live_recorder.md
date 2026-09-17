@@ -2,10 +2,11 @@
 """유튜브·치지직 라이브를 ffmpeg 자식 프로세스로 녹화한다.
 
 - yt-dlp/streamlink 로 포맷 URL만 추출하고, 실제 수신은 ffmpeg로 위임
-- **릴레이 계측**: ffmpeg stdout 을 Python 이 256KB 청크로 읽어 실기록하며
-  그 바이트 수 = 네트워크 실수신량 → _speed_win(add) 로 속도 측정
+- **릴레이 계측**: ffmpeg stdout(파이프) 을 Python 이 256KB 청크로 읽어
+  최종 파일에 실기록하며, 그 바이트 수 = 네트워크 실수신량 → ctx.speed_win(add) 로 속도 측정
 - stderr 는 별도 스레드로 상세 로그 유지
 - 취소 시 kill + stdout 큐 drain (이후 'truncated' 오탐 방지)
+- **출력 소유권 단일화**: FFmpeg는 stdout 파이프로만 출력, Python이 파일 소유자로서 기록
 """
 import os
 import subprocess
@@ -29,11 +30,21 @@ from chzzktube.pipeline.progress_emitter import (
     log_success_info,
 )
 
+# FFmpeg stdout 읽기 청크 크기 (256KB)
+_READ_CHUNK = 256 * 1024
+# 진행 로그 발행 간격 (초)
+_TICK_INTERVAL = 1.0
 
-def download_youtube_live(worker, url):
-    """유튜브 라이브 — yt-dlp로 통합 포맷 URL만 추출 후 ffmpeg로 녹화."""
+
+def download_youtube_live(ctx, url):
+    """유튜브 라이브 — yt-dlp로 통합 포맷 URL만 추출 후 ffmpeg로 녹화.
+
+    Args:
+        ctx: DownloadContext (worker 대신 컨텍스트만 받음)
+        url: 라이브 스트림 URL
+    """
     opts = {
-        "logger": worker.logger,
+        "logger": ctx.logger,
         "noplaylist": True,
         "format": "bv*+ba/b",
         "skip_download": True,
@@ -46,8 +57,8 @@ def download_youtube_live(worker, url):
         _apply_ffmpeg_opts,
     )
 
-    _apply_cookie_opts(opts, worker.cfg)
-    _apply_client_opts(opts, worker.cfg, forced=worker.yt_client)
+    _apply_cookie_opts(opts, ctx.cfg)
+    _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
     _apply_ejs_opts(opts)
     _apply_ffmpeg_opts(opts)
 
@@ -62,13 +73,13 @@ def download_youtube_live(worker, url):
         raise RuntimeError("live URL missing")
 
     out_file = os.path.join(
-        worker.cfg["download_path"],
-        get_filename_template(worker.cfg) % info,
+        ctx.cfg["download_path"],
+        get_filename_template(ctx.cfg) % info,
     )
-    temp_ts, thumb, _ = prepare_live_paths(worker, out_file, info.get("thumbnail"))
 
-    cmd = ["ffmpeg", "-y", "-i", stream_url, "-c", "copy", "-f", "mpegts", temp_ts]
-    return record_live_stream(worker, cmd, temp_ts, out_file, thumb)
+    # FFmpeg는 stdout 파이프로 출력, Python이 out_file에 직접 기록
+    cmd = ["ffmpeg", "-y", "-i", stream_url, "-c", "copy", "-f", "mpegts", "pipe:1"]
+    return record_live_stream(ctx, cmd, out_file, info.get("thumbnail"))
 
 
 def prepare_live_paths(ctx, out_file, thumb_url=None):
@@ -79,17 +90,17 @@ def prepare_live_paths(ctx, out_file, thumb_url=None):
     return temp_ts, thumb_file, out_file
 
 
-def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
+def handle_stream_finish(ctx, is_live, temp_file, proc_code=0):
     """스트림 종료 후처리 — 컨테이너 리먹싱 + 임시 파일 정리 + 완료 로그."""
     if proc_code not in (0, None):
-        if worker.state.get("canceled"):
-            worker.live_partially_saved = True
+        if ctx.state.get("canceled"):
+            ctx.live_partially_saved = True
         else:
             raw_log.raw(
                 "dl",
                 emit_dl(
                     status="FAIL",
-                    scope=_dl_platform(getattr(worker, "current_url", "") or ""),
+                    scope=_dl_platform(ctx.current_url or ""),
                     stage="LIVE",
                     msg="exit code error",
                     is_error=True,
@@ -99,14 +110,14 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
         cleanup_temp_files(temp_file)
         return False
 
-    out_path = remux_live_to_container(temp_file, worker.cfg.get("container", "mp4"))
+    out_path = remux_live_to_container(temp_file, ctx.cfg.get("container", "mp4"))
     if out_path and os.path.exists(out_path):
         size = os.path.getsize(out_path)
         raw_log.raw(
             "dl",
             emit_dl(
                 status="DONE",
-                scope=_dl_platform(getattr(worker, "current_url", "") or ""),
+                scope=_dl_platform(ctx.current_url or ""),
                 pct=100,
                 bar_frac=1.0,
                 stage="LIVE",
@@ -114,7 +125,7 @@ def handle_stream_finish(worker, is_live, temp_file, proc_code=0):
             ),
             to_tui=True,
         )
-        log_success_info(worker, out_path)
+        log_success_info(ctx, out_path)
     cleanup_temp_files(temp_file)
     return True
 
@@ -122,7 +133,7 @@ _READ_CHUNK = 256 * 1024
 _TICK_INTERVAL = 0.5
 
 
-def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag="Streamlink"):
+def record_live_stream(ctx, cmd, temp_ts_file, out_file, thumb_file, log_tag="Streamlink"):
     """ffmpeg/streamlink 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리."""
     from chzzktube.infra.platform import spawn_kwargs
 
@@ -134,10 +145,10 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
         **spawn_kwargs(),
     )
 
-    # 워커에 프로세스 핸들 저장 (앱 종료 시 정리용)
-    worker._live_proc = proc
+    # 컨텍스트에 프로세스 핸들 저장 (앱 종료 시 정리용)
+    ctx._live_proc = proc
 
-    worker._speed_win.reset()
+    ctx.speed_win.reset()
     total_bytes = 0
     start_t = time.monotonic()
     last_tick = 0.0
@@ -160,27 +171,25 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
 
     returncode = -1
     try:
-        with open(temp_ts_file, "wb") as tmp:
+        with open(out_file, "wb") as out_f:
             while True:
                 chunk = proc.stdout.read(_READ_CHUNK)
                 if not chunk:
                     break
-                tmp.write(chunk)
+                out_f.write(chunk)
                 total_bytes += len(chunk)
-                worker._speed_win.add(total_bytes)
+                ctx.speed_win.add(total_bytes)
 
                 now = time.monotonic()
                 if now - last_tick >= _TICK_INTERVAL:
                     last_tick = now
-                    rate = worker._speed_win.speed()
+                    rate = ctx.speed_win.speed()
                     fname = os.path.basename(out_file)
                     raw_log.raw(
                         "dl",
                         emit_dl(
                             status="RUN",
-                            scope=_dl_platform(
-                                getattr(worker, "current_url", "") or ""
-                            ),
+                            scope=_dl_platform(ctx.current_url or ""),
                             speed=f"{format_bytes(rate)}/s" if rate else "-",
                             stage="LIVE",
                             msg=f"recording · {fname}",
@@ -190,18 +199,18 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
                     )
 
                 # 취소 요청 — 자식 죽이고 stdout queue drain ('truncated' 오탐 방지)
-                if worker.state.get("canceled") and proc.poll() is None:
+                if ctx.state.get("canceled") and proc.poll() is None:
                     with suppress(ProcessLookupError, OSError):
                         proc.kill()
                     with suppress(ValueError, OSError):
                         while proc.stdout.read(_READ_CHUNK):
                             pass
 
-        worker._speed_win.add(total_bytes)
+        ctx.speed_win.add(total_bytes)
         returncode = proc.wait()
-        if returncode not in (0, None) and not worker.state.get("canceled"):
+        if returncode not in (0, None) and not ctx.state.get("canceled"):
             raise RuntimeError(f"{log_tag} process exit code {returncode}")
-        emit_live_final_stats(worker, total_bytes, start_t)
+        emit_live_final_stats(ctx, total_bytes, start_t)
     except Exception as ex:  # noqa: BLE001
         if proc.poll() is None:
             with suppress(ProcessLookupError, OSError):
@@ -210,7 +219,7 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
             "dl",
             emit_dl(
                 status="FAIL",
-                scope=_dl_platform(getattr(worker, "current_url", "") or ""),
+                scope=_dl_platform(ctx.current_url or ""),
                 stage="LIVE",
                 msg=f"{log_tag} fail — {type(ex).__name__}: {ex}",
                 is_error=True,
@@ -220,4 +229,4 @@ def record_live_stream(worker, cmd, temp_ts_file, out_file, thumb_file, log_tag=
     finally:
         stderr_t.join(timeout=1.0)
 
-    return handle_stream_finish(worker, True, temp_ts_file, returncode)
+    return handle_stream_finish(ctx, True, temp_ts_file, returncode)

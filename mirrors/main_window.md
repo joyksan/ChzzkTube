@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 from chzzktube.control.controller import MediaController
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
-from chzzktube.core import config, log_history, raw_log
+from chzzktube.core import config, log_emitter, log_history, raw_log
 from chzzktube.core.dl_platform import _dl_platform, _short_platform
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
@@ -182,31 +182,14 @@ class MainWindow(QMainWindow):
         self._fallback_watchdog = LivenessWatchdog(FALLBACK_TIMEOUT_SEC, FALLBACK_GRACE_SEC)
         self._gate_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
         self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC, 0.0)
+        # [Watchdog] 워커의 무페이로드 진행 신호가 분석 워치독 수명을 연장한다.
+        # 만료 판정과 복구는 뷰(_on_analysis_timeout)가 단독 수행한다.
+        self.ctrl.analyze_activity.connect(self._analysis_watchdog.heartbeat)
 
         # 워치독 폴링용 타이머 (1초 주기)
         self._watchdog_poll_timer = QTimer(self)
         self._watchdog_poll_timer.setInterval(1000)
         self._watchdog_poll_timer.timeout.connect(self._poll_watchdogs)
-        self._watchdog_poll_timer.start()
-
-    def _poll_watchdogs(self):
-        """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리."""
-        # 1) 기동 폴백 워치독
-        if not self._startup_completed and self._fallback_watchdog.check_timeout():
-            # 워치독이 만료를 알리면 기존 _force_unlock_input 로직 위임
-            self._force_unlock_input()
-            return
-
-        # 2) 게이트 워치독
-        if self._gate_watchdog_timer.isActive() and self._gate_watchdog.check_timeout():
-            self._on_gate_timeout()
-            return
-
-        # 3) 분석 워치독 — AnalyzeWorker._analysis_watchdog.heartbeat() 호출 시 수명 연장
-        # 순수 워치독 모드: 워치독 만료 시 분석 워커가 스스로 terminate() 하므로 여기서는 로깅만
-        if self._analysis_watchdog.check_timeout():
-            from chzzktube.core import raw_log
-            raw_log.raw("analyze", "[watchdog] analysis timeout detected by LivenessWatchdog")
 
         self.init_ui()
 
@@ -232,6 +215,26 @@ class MainWindow(QMainWindow):
         self._pot_retry_url = None
         self._pot_retry_pending = False
         self._pot_retry_done = set()
+        self._watchdog_poll_timer.start()
+
+    def _poll_watchdogs(self):
+        """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리."""
+        # 1) 기동 폴백 워치독
+        if not self._startup_completed and self._fallback_watchdog.check_timeout():
+            # 워치독이 만료를 알리면 기존 _force_unlock_input 로직 위임
+            self._force_unlock_input()
+            return
+
+        # 2) 게이트 워치독
+        if self._gate_watchdog_timer.isActive() and self._gate_watchdog.check_timeout():
+            self._on_gate_timeout()
+            return
+
+        # 3) 분석 워치독 — 워커의 activity 신호가 수명을 연장하고,
+        #    만료 시 여기서 복구(워커 유기 + FAIL 마감)를 단독 수행한다.
+        if self._analysis_watchdog.check_timeout():
+            self._on_analysis_timeout()
+            return
 
     def _platform_of_url(self) -> str:
             """[결함 수리] stop_analysis_anim 호출 대비 URL 플랫폼 축약 기호 추출."""
@@ -535,13 +538,13 @@ class MainWindow(QMainWindow):
             if lines:
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
-                    log_console.emit_event("SYS", "OK", "MAIN", f"TXT — {len(lines)} URLs"),
+                    log_emitter.emit_event("SYS", "OK", "MAIN", f"TXT — {len(lines)} URLs"),
                     is_status=False,
                     is_error=False,
                 )
         except OSError:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "MAIN", "TXT read fail"),
+                log_emitter.emit_event("SYS", "FAIL", "MAIN", "TXT read fail"),
                 is_status=False,
                 is_error=True,
             )
@@ -550,7 +553,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_cancel()
             self.append_concise_log(
-                log_console.emit_event("DL", "ABORT", "-", "download canceled by user"),
+                log_emitter.emit_event("DL", "ABORT", "-", "download canceled by user"),
                 is_status=False,
                 is_error=True,
             )
@@ -591,13 +594,13 @@ class MainWindow(QMainWindow):
             self._update_path_label()
             self.save_cfg()
             self.append_concise_log(
-                log_console.emit_event("SYS", "OK", "CFG", f"path → {self.cfg['download_path']}"),
+                log_emitter.emit_event("SYS", "OK", "CFG", f"path → {self.cfg['download_path']}"),
                 is_status=False,
                 is_error=False,
             )
 
     def format_target_url(self, url, max_len=50):
-        return log_console.format_target_url(url, max_len)
+        return log_emitter.format_target_url(url, max_len)
 
     def open_settings(self):
         if hasattr(self, "settings_dlg") and self.settings_dlg and self.settings_dlg.isVisible():
@@ -655,7 +658,7 @@ class MainWindow(QMainWindow):
 
         if needs_pot:
             self.append_concise_log(
-                log_console.emit_event("POT", "RUN", "POT", "starting..."),
+                log_emitter.emit_event("POT", "RUN", "POT", "starting..."),
                 is_status=True,
                 is_error=False,
             )
@@ -667,12 +670,13 @@ class MainWindow(QMainWindow):
         if not url:
             return
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "YT", "analyzing..."),
+            log_emitter.emit_event("ANAL", "RUN", "YT", "analyzing..."),
             is_status=True,
             is_error=False,
         )
         self._discard_analysis_result()
         self.base_anim_url = url
+        self._analysis_watchdog.reset()
         self.ctrl.spawn_analyzer(url, self.cfg)
         self.update_ui_state()
 
@@ -704,7 +708,7 @@ class MainWindow(QMainWindow):
             if h:
                 res = f"{h}p{fps}" if fps else f"{h}p"
 
-        counts = log_console.format_analysis_counts(len(v_list), len(a_list))
+        counts = log_emitter.format_analysis_counts(len(v_list), len(a_list))
         base_msg = f"analyzed{counts}"
         if meta:
             base_msg += f" · {meta[:80]}"
@@ -809,7 +813,7 @@ class MainWindow(QMainWindow):
         if stale:
             summary = ", ".join(f"{label} {cur}→{latest}" for label, _, cur, latest in stale)
             self.append_concise_log(
-                log_console.emit_event("DEPS", "WARN", "-", f"update — {summary}"),
+                log_emitter.emit_event("DEPS", "WARN", "-", f"update — {summary}"),
                 is_status=False,
                 is_error=False,
             )
@@ -817,7 +821,7 @@ class MainWindow(QMainWindow):
         else:
             self._stale_updates = False
             self.append_concise_log(
-                log_console.emit_event("DEPS", "", "-", "deps ok"),
+                log_emitter.emit_event("DEPS", "OK", "-", "deps ok"),
                 is_status=False,
                 is_error=False,
             )
@@ -851,7 +855,7 @@ class MainWindow(QMainWindow):
         self._deps_failed = list(labels or [])
         if self._deps_failed:
             self.append_concise_log(
-                log_console.emit_event("DEPS", "FAIL", "MAIN",
+                log_emitter.emit_event("DEPS", "FAIL", "MAIN",
                                        "deps fail: " + ", ".join(self._deps_failed)),
                 is_status=False,
                 is_error=True,
@@ -923,12 +927,34 @@ class MainWindow(QMainWindow):
             return
         self._pot_manager.cancel()
         self.append_concise_log(
-            log_console.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
+            log_emitter.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
             is_status=False,
             is_error=False,
         )
         self._pending_download = None
         self.update_ui_state()
+
+    def _on_analysis_timeout(self):
+        """[Watchdog] 분석 무응답 — 워커를 유기하고 FAIL로 마감한다.
+
+        강제 terminate() 금지. 유기된 워커는 좀비 패턴으로 자연 종료를 기다리고,
+        늦게 도착한 결과는 `_is_stale_analyze_signal()`이 폐기한다.
+        """
+        if not self.ctrl.analyzing:
+            return
+        self.ctrl.abandon_analysis()
+        self._pick_pending = False
+        self._pick_targets = []
+        self.ctrl.state["picking"] = False
+        self.update_ui_state()
+        self.append_concise_log(
+            log_emitter.emit_event(
+                "ANAL", "FAIL", self._platform_of_url(),
+                f"analysis timeout ({ANALYSIS_TIMEOUT_SEC:.0f}s) - no progress",
+            ),
+            True,
+            True,
+        )
 
     def _maybe_retry_analysis(self, err_msg: str) -> bool:
         """[Followup-6] 봇 체크 실패 시 POT 서버 기동 후 1회만 재분석을 큐잉한다."""
@@ -943,7 +969,7 @@ class MainWindow(QMainWindow):
         self._pot_retry_url = url
         self._pot_retry_pending = True
         self.append_concise_log(
-            log_console.emit_event("POT", "RUN", "POT",
+            log_emitter.emit_event("POT", "RUN", "POT",
                                    "bot-check detected — starting pot server, retrying once"),
             is_status=True,
             is_error=False,
@@ -956,18 +982,21 @@ class MainWindow(QMainWindow):
         return True
 
     def _run_pending_retry(self):
-        """[Followup-6] POT 준비 완료 후 재분석 — textChanged 디바운스로 재진입한다."""
+        """[Followup-6] POT 준비 완료 후 보류 URL을 명시적으로 재분석한다."""
         url = self._pot_retry_url
         self._pot_retry_pending = False
         self._pot_retry_url = None
         if not url:
             return
+        self.url_input.setText(url)
         self.append_concise_log(
-            log_console.emit_event("POT", "RUN", "YT", "retrying analysis with po token"),
+            log_emitter.emit_event("POT", "RUN", "YT", "retrying analysis with po token"),
             is_status=True,
             is_error=False,
         )
-        self.url_input.setText(url)
+        self._analysis_watchdog.reset()
+        self.ctrl.spawn_analyzer(url, self.cfg)
+        self.update_ui_state()
 
     def defer_fallback_timer(self, extension_ms: int = 15000):
         """[P5] 수급 작업 진행 중에는 폴백 타이머를 연장해 섣부른 UI 개방을 막는다.
@@ -1020,7 +1049,7 @@ class MainWindow(QMainWindow):
         self.stop_analysis_anim(ok=False)
         self.update_ui_state()
         self.append_concise_log(
-            log_console.emit_event("ANAL", "FAIL", "-", err_msg),
+            log_emitter.emit_event("ANAL", "FAIL", "-", err_msg),
             True,
             True,
         )
@@ -1089,7 +1118,7 @@ class MainWindow(QMainWindow):
 
     def _render_concise(self, event, is_status=False, is_error=False):
         if isinstance(event, LogEvent):
-            line = log_console.format_log_line_for_event(event)
+            line = log_emitter.format_log_line_for_event(event)
             no_wrap = True
         else:
             line = str(event)
@@ -1141,7 +1170,7 @@ class MainWindow(QMainWindow):
             self.verbose_win = VerboseLogWindow(self)
             content = "\n".join(self._full_log_buf)
             if not content.strip():
-                content = log_console.emit_event("SYS", "OK", "LOG", "empty buffer")
+                content = log_emitter.emit_event("SYS", "OK", "LOG", "empty buffer")
             self.verbose_win.set_content(content)
             self._full_log_win_n = len(self._full_log_buf)
         else:
@@ -1195,7 +1224,7 @@ class MainWindow(QMainWindow):
             )
         except ValueError as e:
             self.append_concise_log(
-                log_console.emit_event("SYS", "FAIL", "-", f"parse error: {e}"),
+                log_emitter.emit_event("SYS", "FAIL", "-", f"parse error: {e}"),
                 False,
                 True,
             )
@@ -1212,7 +1241,7 @@ class MainWindow(QMainWindow):
         if needs_pot and self._pot_manager.is_busy():
             self._pending_download = (targets, "auto", "auto")
             self.append_concise_log(
-                log_console.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
+                log_emitter.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
                 is_status=True,
                 is_error=False,
             )
@@ -1222,7 +1251,7 @@ class MainWindow(QMainWindow):
             if not self._pot_manager.is_ready():
                 self._pending_download = (targets, "auto", "auto")
                 self.append_concise_log(
-                    log_console.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
+                    log_emitter.emit_event("SYS", "RUN", "POT", "queued — waiting for pot server"),
                     is_status=True,
                     is_error=False,
                 )
@@ -1233,7 +1262,7 @@ class MainWindow(QMainWindow):
     def _start_download(self, targets, v_id, a_id):
         self.ctrl.begin_download()
         self.append_concise_log(
-            log_console.emit_event("DL", "RUN", "YT", "downloading..."),
+            log_emitter.emit_event("DL", "RUN", "YT", "downloading..."),
             is_status=True,
             is_error=False,
         )
@@ -1263,7 +1292,7 @@ class MainWindow(QMainWindow):
             return
 
         self.append_concise_log(
-            log_console.emit_event("POT", "RUN", "POT", "starting server..."),
+            log_emitter.emit_event("POT", "RUN", "POT", "starting server..."),
             is_status=True,
             is_error=False,
         )
@@ -1274,10 +1303,11 @@ class MainWindow(QMainWindow):
         self._pick_targets = [url]
         self._pick_pending = True
         self.append_concise_log(
-            log_console.emit_event("ANAL", "RUN", "YT", "analyzing formats..."),
+            log_emitter.emit_event("ANAL", "RUN", "YT", "analyzing formats..."),
             is_status=True,
             is_error=False,
         )
+        self._analysis_watchdog.reset()
         self.ctrl.spawn_analyzer(url, self.cfg, deep=True)
         self.update_ui_state()
 
@@ -1286,7 +1316,7 @@ class MainWindow(QMainWindow):
         a_list = data.get("a_list", [])
         if not v_list and not a_list:
             self.append_concise_log(
-                log_console.emit_event("ANAL", "FAIL", "YT", "no formats for pick"),
+                log_emitter.emit_event("ANAL", "FAIL", "YT", "no formats for pick"),
                 False,
                 True,
             )
@@ -1325,14 +1355,14 @@ class MainWindow(QMainWindow):
                     a_id = a_list[idx - 1]["id"]
             except (ValueError, IndexError):
                 self.append_concise_log(
-                    log_console.emit_event("ANAL", "FAIL", "YT", "pick fail — retry"),
+                    log_emitter.emit_event("ANAL", "FAIL", "YT", "pick fail — retry"),
                     False,
                     True,
                 )
                 return
         self.ctrl.state["picking"] = False
         self.append_concise_log(
-            log_console.emit_event("DL", "OK", "YT", f"picked {v_id} · {a_id}"),
+            log_emitter.emit_event("DL", "OK", "YT", f"picked {v_id} · {a_id}"),
             False,
             False,
         )
@@ -1343,7 +1373,7 @@ class MainWindow(QMainWindow):
         self._pick_pending = False
         self._pick_targets = []
         self.append_concise_log(
-            log_console.emit_event("DL", "ABORT", "YT", "format pick canceled"),
+            log_emitter.emit_event("DL", "ABORT", "YT", "format pick canceled"),
             False,
             True,
         )
@@ -1353,7 +1383,7 @@ class MainWindow(QMainWindow):
         if self.ctrl.running:
             self.ctrl.request_skip()
             self.append_concise_log(
-                log_console.emit_event("DL", "SKIP", "MAIN", "skip requested"),
+                log_emitter.emit_event("DL", "SKIP", "MAIN", "skip requested"),
                 is_status=False,
                 is_error=False,
             )

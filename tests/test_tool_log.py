@@ -86,7 +86,7 @@ def test_streamlink_quality_fit():
             return ("t.ts", None, out_file)
 
         @staticmethod
-        def record_live_stream(ctx, cmd, temp_ts, out_file, thumb):
+        def record_live_stream(ctx, cmd, temp_ts):
             seen["cmd"] = cmd
             return True
 

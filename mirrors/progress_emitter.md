@@ -1,7 +1,7 @@
 ##### progress_emitter.py - DownloadWorker 진행률/헤더 emit 파이프라인
 """다운로드 진행률·완료·헤더 로그의 단일 출처.
 
-- VOD 진행 틱: yt-dlp hook → `_speed_win`(10초 이동평균) → 0.5초 스로틀 컬럼 라인
+- VOD 진행 틱: yt-dlp hook → `ctx.speed_win`(10초 이동평균) → 0.5초 스로틀 컬럼 라인
 - 라이브 틱·마감: 릴레이 파이프 계수 → 동일 컬럼 규격 (용량 rjust(9) / 속도 rjust(11))
 - 헤더(다운로드/라이브/치지직): 제목·포맷 트리 조판, 통합 포맷은 오디오 가지 미표기
 - media.cli_format_desc 가 포맷 표기의 단일 출처.
@@ -14,7 +14,7 @@
   worker.audio_desc       : str   — 오디오 설명
   worker.current_url       : str   — 현재 처리 중인 URL
   worker.current_file      : str|None — 현재 다운로드 파일 경로
-  worker._speed_win        : SpeedWindow — 이동평균 속도 (hook 내부에서 add)
+  ctx.speed_win        : SpeedWindow — 이동평균 속도 (hook 내부에서 add)
   worker.total_count / current_idx : int — 배치 진행 현황
   worker.live_partially_saved : bool — 라이브 부분 저장 플래그
 ──────────────────────────────────────────────────────────────────
@@ -67,6 +67,8 @@ def emit_progress_tick(ctx, d):
     # 실제 하트비트는 DownloadWorker.run()에서 _gate_watchdog/_analysis_watchdog에 직접 연결 권장
     # 여기서는 진행 중임을 알리는 이벤트만 로깅
     raw_log.raw("dl", "progress_tick", to_tui=False)
+    # 실제 워치독 하트비트는 DownloadWorker가 대상 진입 직전/직후에 호출한다.
+    # 이 모듈은 UI/워커 역참조 없이 진행 데이터만 처리한다.
 
     now = time.monotonic()
     last = ctx._last_tick_t or 0

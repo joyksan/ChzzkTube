@@ -27,6 +27,8 @@ class MediaController(QObject):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — analyze_log_full 포워딩 폐기.
     analyze_result_ready = Signal(dict)
     analyze_error_occurred = Signal(str)
+    # [Watchdog] 분석 진행 하트비트 포워딩. 뷰가 소유한 분석 워치독 수명을 연장한다.
+    analyze_activity = Signal()
 
     def __init__(self, view):
         super().__init__()
@@ -67,6 +69,7 @@ class MediaController(QObject):
         # View 시그널로 포워딩 (Controller가 중개)
         self.worker_analyze.result_ready.connect(self.analyze_result_ready)
         self.worker_analyze.error_occurred.connect(self.analyze_error_occurred)
+        self.worker_analyze.activity.connect(self.analyze_activity)
         self.worker_analyze.start()
 
     def _abandon_analyzer(self):
@@ -76,7 +79,7 @@ class MediaController(QObject):
             return
         if w.isRunning():
             # 시그널을 끊어 UI 오염 차단
-            for sig in (w.result_ready, w.error_occurred):
+            for sig in (w.result_ready, w.error_occurred, w.activity):
                 try:
                     sig.disconnect()
                 except TypeError:
@@ -85,6 +88,10 @@ class MediaController(QObject):
             self._zombie_workers.append(w)
         self.worker_analyze = None
         self.state["analyzing"] = False
+
+    def abandon_analysis(self):
+        """분석 중단 — 워커 유기(좀비 패턴). 취소와 타임아웃의 공용 진입점."""
+        self._abandon_analyzer()
 
     def _reap_zombie(self):
         """자연 종료된 유기 워커를 메모리에서 우아하게 소거한다."""

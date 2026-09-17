@@ -48,6 +48,9 @@ class DownloadContext:
     # 속도 계산 (SpeedWindow — 이동평균)
     speed_win: Any = None
 
+    # 진행 틱 타임스탬프 (progress_emitter에서 사용)
+    _last_tick_t: float = 0.0
+
     # 배치 진행 현황
     total_count: int = 0
     current_idx: int = 0
@@ -55,6 +58,10 @@ class DownloadContext:
     # 라이브 관련
     is_live_hint: bool = False
     live_partially_saved: bool = False
+    # 라이브 녹화 프로세스 핸들 (kill_live_process에서 사용)
+    _live_proc: Any = None
+    # 메타 로그 발행 여부 (advance_target에서 초기화)
+    _meta_logged: bool = False
 
     # 포맷 선택 (분석 단계에서 결정된 클라이언트)
     yt_client: str = "auto"

@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import json
+import platform
 import shutil
 import zipfile
 import tarfile
@@ -18,7 +19,6 @@ import urllib.request
 
 import chzzktube.core.config as config
 from chzzktube.core.log_emitter import emit_component
-from chzzktube.ui.log_console import emit_event, emit_dl, emit_err
 
 
 # ── 상수 (node_provider 전용) ──────────────────────────────────────

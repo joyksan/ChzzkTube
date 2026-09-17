@@ -97,19 +97,26 @@ class DownloadWorker(QThread):
         self._tick_last = 0
 
     def run(self):
-        """DownloadWorker 메인 스레드 — 하이퍼미니멀리즘 실행부."""
-        # [Watchdog] 다운로드 시작 시 게이트 워치독 리셋 (하트비트 연장 시작)
-        from chzzktube.core import raw_log
-        self._download_watchdog.reset()
-        ctx = self.extract()
-        self._ctx = ctx  # [A4] 라이브 녹화 proc 핸들이 ctx._live_proc에 부착된다
-        ctx.targets = _td.expand_targets(ctx)
-        self.targets = ctx.targets  # 동기화 (current_file 등 내부 상태 유지)
-        self.total_count = len(self.targets)
+        """DownloadWorker 메인 스레드 — 세션 종료 통지는 반드시 정확히 한 번."""
+        ctx = None
         failed_targets = []
         success_count = 0
+        def report_error(message):
+            # 로그 장애가 제어용 종료 통지를 막아서는 안 된다.
+            try:
+                raw_log.raw("dl", _pe.emit_err(message), to_tui=True)
+            except Exception:
+                pass
 
         try:
+            # [Watchdog] 다운로드 시작 시 게이트 워치독 리셋
+            self._download_watchdog.reset()
+            ctx = self.extract()
+            self._ctx = ctx
+            ctx.targets = _td.expand_targets(ctx)
+            self.targets = ctx.targets
+            self.total_count = len(self.targets)
+
             for idx, url in enumerate(self.targets, 1):
                 ctx.advance_target(idx, url)
                 self.current_idx = ctx.current_idx
@@ -126,23 +133,24 @@ class DownloadWorker(QThread):
                     )
                     continue
 
-                # [Watchdog] 각 타겟 다운로드 전 워치독 하트비트
+                # [Watchdog] 실제 대상 진입 전 하트비트
                 self._download_watchdog.heartbeat()
                 if _td.download_target(ctx, url, failed_targets):
                     success_count += 1
-                # [Watchdog] 각 타겟 다운로드 후 워치독 하트비트 (진행 지속 알림)
+                # [Watchdog] 대상 완료 후 하트비트
                 self._download_watchdog.heartbeat()
-
-            _fin.finalize(ctx, self.total_count, failed_targets, success_count)
-
         except Exception as ex:  # noqa: BLE001
-            # 워커 최상위 안전망이므로 BLE001 무시 명시
-            if "CANCELED_BY_USER" in str(ex) or "중지되었습니다" in str(ex) or self.state["canceled"]:
-                pass
-            else:
-                raw_log.raw("dl", _pe.emit_err(str(ex)), to_tui=True)
-
-            _fin.finalize(ctx, self.total_count, failed_targets, success_count)
+            if "CANCELED_BY_USER" not in str(ex) and "중지되었습니다" not in str(ex) and not self.state["canceled"]:
+                failed_targets.append((self.current_url or "", str(ex)))
+                report_error(str(ex))
+        finally:
+            try:
+                if ctx is not None:
+                    _fin.finalize(ctx, self.total_count, failed_targets, success_count, notify=False)
+            except Exception as ex:  # noqa: BLE001
+                report_error(f"finalization error: {ex}")
+            finally:
+                self.finished_all.emit(success_count, len(failed_targets))
 
     def kill_live_process(self):
         """[A4] 라이브 녹화 프로세스 정리 — worker·ctx 양쪽 핸들을 모두 킬."""

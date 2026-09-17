@@ -2,9 +2,9 @@
 
 ── Worker Contract ──────────────────────────────────────────────
 본 모듈의 함수들이 요구하는 worker 객체의 인터페이스:
-  worker.logger           : YtLoggerBridge — raw 버스 직행 (log_full/log_concise 시그널 폐기)
-  worker.total_count      : int   — 전체 대상 수
-  worker.current_url       : str   — 현재 처리 중인 URL (실패 시 참조)
+  ctx.logger           : YtLoggerBridge — raw 버스 직행 (log_full/log_concise 시그널 폐기)
+  ctx.total_count      : int   — 전체 대상 수
+  ctx.current_url       : str   — 현재 처리 중인 URL (실패 시 참조)
 ──────────────────────────────────────────────────────────────────
 """
 import os
