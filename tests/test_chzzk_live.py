@@ -115,3 +115,58 @@ high/index.m3u8
     ]
     # 분석 때 노출한 id를 다운로드 때도 그대로 선택할 수 있어야 한다.
     assert [f["id"] for f in formats] == ["high/index.m3u8", "/low/index.m3u8"]
+
+
+def test_live_detail_parses_hls_and_progress():
+    content = {
+        "liveId": 21160101,
+        "liveTitle": "롤",
+        "status": "OPEN",
+        "openDate": "2026-09-17 20:30:47",
+        "channel": {"channelName": "한동숙"},
+        "livePlaybackJson": (
+            '{"media": [{"mediaId": "HLS", "protocol": "HLS", "path": "https://media.example/hls.m3u8"},'
+            ' {"mediaId": "LLHLS", "protocol": "HLS", "path": "https://media.example/llhls.m3u8"}],'
+            ' "live": {"status": "STARTED"}}'
+        ),
+    }
+    assert api._parse_live_status(content) == "PROGRESS"
+    assert api._parse_live_playback_url(content) == "https://media.example/hls.m3u8"
+    assert api._parse_live_status({**content, "status": "CLOSE"}) == "CLOSE"
+    assert api._parse_live_status({}) == "UNKNOWN"
+    assert api._parse_live_playback_url({}) == ""
+
+
+def test_live_api_routes_channel_hash_to_v2(monkeypatch):
+    seen = []
+
+    def fake_get_json(url, headers):
+        seen.append(url)
+        if "live-detail" in url:
+            return {"content": {
+                "liveId": 21160101, "liveTitle": "롤", "status": "OPEN",
+                "openDate": "2026-09-17 20:30:47",
+                "channel": {"channelName": "한동숙"},
+                "livePlaybackJson": '{"media": [], "live": {"status": "STARTED"}}',
+            }}
+        raise AssertionError(f"v1 must not be used: {url}")
+
+    monkeypatch.setattr(api, "_get_json", fake_get_json)
+    info = api.analyze_chzzk_live_api("https://chzzk.naver.com/live/75cbf189b3bb8f9f687d2aca0d0a382b")
+    assert seen == ["https://api.chzzk.naver.com/service/v2/channels/75cbf189b3bb8f9f687d2aca0d0a382b/live-detail"]
+    assert (info["title"], info["live_status"], info["channel_name"]) == ("롤", "PROGRESS", "한동숙")
+    assert info["live_id"] == "21160101"
+    assert info["formats"] == []
+
+
+def test_live_api_routes_numeric_id_to_v1(monkeypatch):
+    seen = []
+
+    def fake_get_json(url, headers):
+        seen.append(url)
+        return {"content": {"liveTitle": "t", "liveStatus": "PROGRESS"}}
+
+    monkeypatch.setattr(api, "_get_json", fake_get_json)
+    monkeypatch.setattr(api, "_fetch_m3u8_streams", lambda *a, **k: [])
+    api.analyze_chzzk_live_api("https://chzzk.naver.com/live/12345")
+    assert seen == ["https://api.chzzk.naver.com/service/v1/live/12345"]

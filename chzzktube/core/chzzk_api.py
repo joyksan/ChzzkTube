@@ -277,6 +277,107 @@ def _fetch_m3u8_streams(m3u8_url, headers, timeout=15):
     return sorted(fmt_by_res.values(), key=lambda x: x["height"], reverse=True)
 
 
+def _parse_live_playback_url(content):
+    raw = content.get("livePlaybackJson") or ""
+    try:
+        playback = json.loads(raw) if isinstance(raw, str) else {}
+    except Exception:
+        return ""
+    media = playback.get("media") if isinstance(playback, dict) else None
+    if not isinstance(media, list):
+        return ""
+    hls = [m for m in media if isinstance(m, dict) and m.get("protocol") == "HLS" and m.get("path")]
+    if not hls:
+        return ""
+    for m in hls:
+        if m.get("mediaId") == "HLS":
+            return m["path"]
+    return hls[0]["path"]
+
+
+def _parse_live_status(content):
+    raw = content.get("livePlaybackJson") or ""
+    live_state = ""
+    try:
+        playback = json.loads(raw) if isinstance(raw, str) else {}
+        inner = (playback.get("live") or {}) if isinstance(playback, dict) else {}
+        live_state = inner.get("status", "")
+    except Exception:
+        live_state = ""
+    status = str(content.get("status") or "").upper()
+    live_state = str(live_state or "").upper()
+    if status == "OPEN" and live_state in ("", "STARTED"):
+        return "PROGRESS"
+    if status in ("CLOSE", "CLOSED", "ENDED") or live_state in ("STOPPED", "ENDED", "CLOSED"):
+        return "CLOSE"
+    return "UNKNOWN"
+
+
+def _analyze_chzzk_live_v2(channel_id, headers):
+    meta = (
+        _get_json(
+            f"https://api.chzzk.naver.com/service/v2/channels/{channel_id}/live-detail",
+            headers,
+        ).get("content", {})
+        or {}
+    )
+    title = meta.get("liveTitle") or channel_id
+    title = re.sub(r"\.(mp4|mkv|ts|webm|mov)$", "", title, flags=re.IGNORECASE)
+    date = (meta.get("openDate") or "").split(" ")[0] or None
+    channel = meta.get("channel") or {}
+    channel_name = channel.get("channelName") or meta.get("channelName")
+    live_status = _parse_live_status(meta)
+    m3u8_url = _parse_live_playback_url(meta)
+    formats = _fetch_m3u8_streams(m3u8_url, headers) if m3u8_url else []
+    return {
+        "title": title,
+        "date": date,
+        "duration": None,
+        "live_id": str(meta.get("liveId") or channel_id),
+        "live_status": live_status,
+        "formats": formats,
+        "channel_name": channel_name,
+    }
+
+
+def _analyze_chzzk_live_v1(live_id, headers):
+    meta = (
+        _get_json(
+            f"https://api.chzzk.naver.com/service/v1/live/{live_id}",
+            headers,
+        ).get("content", {})
+        or {}
+    )
+    title = meta.get("liveTitle") or live_id
+    title = re.sub(r"\.(mp4|mkv|ts|webm|mov)$", "", title, flags=re.IGNORECASE)
+    date = (meta.get("liveStartTime") or "").split(" ")[0] or None
+    channel = meta.get("channel") or {}
+    channel_name = channel.get("channelName") or meta.get("channelName")
+    live_status = meta.get("liveStatus", "PROGRESS")
+    stream_info = meta.get("liveStreamInfo", {})
+    if isinstance(stream_info, dict):
+        m3u8_url = (
+            stream_info.get("serviceUrl")
+            or stream_info.get("streamingUrl")
+            or stream_info.get("sourceUrl")
+            or ""
+        )
+    elif isinstance(stream_info, str):
+        m3u8_url = stream_info
+    else:
+        m3u8_url = ""
+    formats = _fetch_m3u8_streams(m3u8_url, headers) if m3u8_url else []
+    return {
+        "title": title,
+        "date": date,
+        "duration": None,
+        "live_id": live_id,
+        "live_status": live_status,
+        "formats": formats,
+        "channel_name": channel_name,
+    }
+
+
 def analyze_chzzk_live_api(target_url):
     """치지직 실시간 방송 — 메타 + HLS 포맷 목록 (m3u8 경량 스캔).
 
@@ -296,37 +397,25 @@ def analyze_chzzk_live_api(target_url):
     video_formats = []
     live_status = "UNKNOWN"
 
+    live_id_out = live_id
+
     try:
-        meta = (
-            _get_json(
-                f"https://api.chzzk.naver.com/service/v1/live/{live_id}",
-                headers,
-            ).get("content", {})
-            or {}
-        )
-        title = meta.get("liveTitle") or live_id
-        title = re.sub(r"\.(mp4|mkv|ts|webm|mov)$", "", title, flags=re.IGNORECASE)
-        date = (meta.get("liveStartTime") or "").split(" ")[0] or None
-        channel = meta.get("channel") or {}
-        channel_name = channel.get("channelName") or meta.get("channelName")
-        live_status = meta.get("liveStatus", "PROGRESS")
-
-        # 스트림 URL 추출
-        stream_info = meta.get("liveStreamInfo", {})
-        if isinstance(stream_info, dict):
-            m3u8_url = (
-                stream_info.get("serviceUrl")
-                or stream_info.get("streamingUrl")
-                or stream_info.get("sourceUrl")
-                or ""
-            )
-        elif isinstance(stream_info, str):
-            m3u8_url = stream_info
+        if re.fullmatch(r"[0-9a-fA-F]{32}", live_id):
+            info = _analyze_chzzk_live_v2(live_id, headers)
+        elif live_id.isdigit():
+            info = _analyze_chzzk_live_v1(live_id, headers)
         else:
-            m3u8_url = ""
-
-        if m3u8_url:
-            video_formats = _fetch_m3u8_streams(m3u8_url, headers)
+            try:
+                info = _analyze_chzzk_live_v2(live_id, headers)
+            except Exception:
+                info = _analyze_chzzk_live_v1(live_id, headers)
+        title = info.get("title") or live_id
+        date = info.get("date")
+        duration = info.get("duration")
+        channel_name = info.get("channel_name")
+        live_status = info.get("live_status", "UNKNOWN")
+        video_formats = info.get("formats") or []
+        live_id_out = info.get("live_id") or live_id
     except Exception as e:
         # [증거 남김] live API 실패 → formats 비어 상위에서 fail-fast.
         import chzzktube.core.raw_log as raw_log
@@ -349,7 +438,7 @@ def analyze_chzzk_live_api(target_url):
                 "chzzk",
                 LogEvent(
                     stage="ANAL", status="WARN", scope="CHZ",
-                    msg=f"chzzk live offline ({live_status}) - live/{live_id}",
+                    msg=f"chzzk live offline ({live_status}) - live/{live_id_out}",
                     is_error=False,
                 ),
                 to_tui=False,
@@ -363,7 +452,7 @@ def analyze_chzzk_live_api(target_url):
         "title": title,
         "date": date,
         "duration": duration,
-        "live_id": live_id,
+        "live_id": live_id_out,
         "live_status": live_status,
         "formats": video_formats,
         "channel_name": channel_name,
