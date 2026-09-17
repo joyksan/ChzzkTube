@@ -25,7 +25,6 @@ import chzzktube.ui.main_window as main_module
 
 # 게이트 하드닝 상수 — 소스와 값이 어긋나면 테스트가 즉시 잡아낸다.
 _FALLBACK_GRACE_MS = main_module._FALLBACK_GRACE_MS
-_POT_GATE_TIMEOUT_MS = main_module._POT_GATE_TIMEOUT_MS
 
 
 def _app():
@@ -277,7 +276,6 @@ class _TimerFake:
         self._startup_completed = startup_completed
         self._fallback_timer = _FakeTimer(active=start)
         # 워치독 대역 (check_timeout은 항상 False, heartbeat는 no-op)
-        self._fallback_watchdog = _WatchdogFake()
         self._gate_watchdog = _WatchdogFake()
         self._analysis_watchdog = _WatchdogFake()
         if start:
@@ -371,7 +369,7 @@ class _GateFake:
         return main_module.MainWindow._log_gate_pending(self, reason)
 
     def _start_gate_watchdog(self):
-        self._gate_watchdog.start(_POT_GATE_TIMEOUT_MS)
+        self._gate_watchdog_active = True
 
     def _stop_gate_watchdog(self):
         self._gate_watchdog_active = False
