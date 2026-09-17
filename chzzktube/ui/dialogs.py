@@ -39,30 +39,29 @@ except ImportError:
 
 
 def show_info_message(parent, title, text, detail=None, is_error=False):
-    msg_box = QMessageBox(parent)
-    msg_box.setIcon(QMessageBox.Icon.NoIcon)
-    msg_box.setWindowTitle(title)
-    # Prepend monochrome icon
-    prefix = "▲  " if is_error else "✓  "
-    msg_box.setText(prefix + text)
+    """[교정] 기본 경로는 TUI 규격 TuiNoticeDialog로 위임 — 텍스트 중앙 정렬·
+    플랫 버튼으로 앱 안내창 규격을 통일한다. setDetailedText가 필요한
+    (detail 지정) 예외 케이스만 기존 QMessageBox 경로를 유지한다."""
     if detail:
+        msg_box = QMessageBox(parent)
+        msg_box.setIcon(QMessageBox.Icon.NoIcon)
+        msg_box.setWindowTitle(title)
+        prefix = "▲  " if is_error else "✓  "
+        msg_box.setText(prefix + text)
         msg_box.setDetailedText(detail)
-    msg_box.setStyleSheet(theme.MSGBOX_QSS)
-    msg_box.addButton(
-        "OK" if not is_error else "Close", QMessageBox.ButtonRole.AcceptRole
-    )
-
-    # Programmatic text alignment centering for success / left alignment for error
-    label = msg_box.findChild(QLabel)
-    if label:
-        if is_error:
-            label.setAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-            )
-        else:
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-    msg_box.exec()
+        msg_box.setStyleSheet(theme.MSGBOX_QSS)
+        msg_box.addButton(
+            "OK" if not is_error else "Close", QMessageBox.ButtonRole.AcceptRole
+        )
+        msg_box.exec()
+        return
+    prefix = "▲  " if is_error else "✓  "
+    TuiNoticeDialog(
+        parent,
+        title=title,
+        text=prefix + text,
+        ok_label="Close" if is_error else "OK",
+    ).exec()
 
 
 class CustomComboBox(QComboBox):
@@ -263,25 +262,28 @@ class ActionCountdownDialog(QDialog):
         self.reject()
 
 
-class CookieSetDoneDialog(QDialog):
-    """[신규] 쿠키 설정 완료 확인 — ExitConfirmDialog와 동일 규격(280x125,
-    칠흑 배경, 텍스트 중앙 정렬). OK/View 2버튼: View 누르면 확인창이 닫히고
-    CookieViewerDialog가 팝업된다."""
-    RESULT_VIEW = 2
+class TuiNoticeDialog(QDialog):
+    """[신규] TUI 규격 통합 안내창 — ExitConfirmDialog와 동일 규격(280x125,
+    칠흑 배경, 텍스트 중앙 정렬). show_info_message의 QMessageBox를 대체하며,
+    alt_label 지정 시 부가 버튼(View 등)이 추가된다. done 코드로 구분:
+    RESULT_OK(0, 기본) / RESULT_ALT(2, 부가 — View 누르면 확인창이 닫히고
+    호출자가 부가 동작을 이어간다)."""
 
-    def __init__(self, parent=None, source_name="", view_cb=None):
+    RESULT_OK = 0
+    RESULT_ALT = 2
+
+    def __init__(self, parent=None, title="", text="", ok_label="OK", alt_label=None):
         super().__init__(parent)
-        self.setWindowTitle("ChzzkTube")
+        self.setWindowTitle(title or "ChzzkTube")
         self.setFixedSize(280, 125)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
         self.setStyleSheet(theme.DIALOG_BG_QSS)
-        self._view_cb = view_cb
 
         vbox = QVBoxLayout(self)
         vbox.setSpacing(14)
         vbox.setContentsMargins(16, 16, 16, 16)
 
-        lbl = QLabel(f"✓ Cookie configured.\n({source_name})")
+        lbl = QLabel(text)
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setWordWrap(True)
         lbl.setStyleSheet("font-size: 11px; color: #e3e3e3; line-height: 1.4;")
@@ -290,20 +292,18 @@ class CookieSetDoneDialog(QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(8)
 
-        btn_view = QPushButton("View")
-        btn_view.setStyleSheet(theme.BTN_NEUTRAL_QSS)
-        btn_view.clicked.connect(self._on_view)
+        if alt_label:
+            btn_alt = QPushButton(alt_label)
+            btn_alt.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+            btn_alt.clicked.connect(lambda: self.done(self.RESULT_ALT))
+            btn_box.addWidget(btn_alt)
 
-        btn_ok = QPushButton("OK")
+        btn_ok = QPushButton(ok_label)
         btn_ok.setStyleSheet(theme.BTN_NEUTRAL_QSS)
         btn_ok.clicked.connect(self.accept)
-
-        btn_box.addWidget(btn_view)
         btn_box.addWidget(btn_ok)
-        vbox.addLayout(btn_box)
 
-    def _on_view(self):
-        self.done(self.RESULT_VIEW)
+        vbox.addLayout(btn_box)
 
 
 class CookieViewerDialog(QDialog):
@@ -770,14 +770,17 @@ class SettingsDialog(QDialog):
             self.cfg["cookie_file_path"] = dlg.selected_path
             self.save_cfg()
             self._refresh_cookie_status()
-            # [교정] QMessageBox 대신 TUI 규격 확인창 — OK/View 2버튼.
+            # [교정] QMessageBox 대신 TUI 규격 확인창 — View/OK 2버튼.
             # View 선택 시 확인창이 닫힌 뒤 쿠키 뷰어를 팝업한다.
             names = {"cookie_file": "Cookies.txt 파일"}
             src_name = names.get(dlg.selected_type, dlg.selected_type)
-            done_dlg = CookieSetDoneDialog(
-                self, source_name=src_name, view_cb=self.view_cookie
+            notice = TuiNoticeDialog(
+                self,
+                title="ChzzkTube",
+                text=f"✓ 쿠키 설정이 완료되었습니다.\n({src_name})",
+                alt_label="View",
             )
-            if done_dlg.exec() == CookieSetDoneDialog.RESULT_VIEW:
+            if notice.exec() == TuiNoticeDialog.RESULT_ALT:
                 self.view_cookie()
 
     def reset_cookie(self):
