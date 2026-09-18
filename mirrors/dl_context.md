@@ -90,5 +90,6 @@ class DownloadContext:
         self.current_url = url
         self.current_file = None
         self._meta_logged = False
+        self._last_tick_t = 0.0
         if self.speed_win:
             self.speed_win.reset()

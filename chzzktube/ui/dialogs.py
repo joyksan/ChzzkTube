@@ -127,7 +127,7 @@ class CookieSelectDialog(QDialog):
         super().__init__(parent)
         self.selected_type = None
         self.selected_path = ""
-        self.setWindowTitle("쿠키 불러오기...")
+        self.setWindowTitle("Load cookies…")
         self.setFixedSize(320, 220)  # [수정] 300x380 -> 320x220 컴팩트화
         self.setStyleSheet(theme.DIALOG_BG_QSS)
         layout = QVBoxLayout(self)
@@ -735,14 +735,14 @@ class SettingsDialog(QDialog):
 
     def view_cookie(self):
         cookie_src = self.cfg.get("browser_cookie", "none")
-        content = "로드된 쿠키가 없습니다."
+        content = "no cookies loaded."
         if cookie_src == "cookie_file" and os.path.exists(self.cfg.get("cookie_file_path", "")):
             try:
                 with open(self.cfg["cookie_file_path"], "r", encoding="utf-8") as f:
                     file_size = os.path.getsize(self.cfg["cookie_file_path"])
-                    content = f.read(5000) + ("\n... (생략)" if file_size > 5000 else "")
+                    content = f.read(5000) + ("\n... (truncated)" if file_size > 5000 else "")
             except Exception as ex:  # noqa: BLE001
-                content = f"파일 읽기 오류: {ex}"
+                content = f"file read error: {ex}"
         elif cookie_src not in ["none", "auto"]:
             try:
                 # [교정] 인라인 import get_browser_cookies 제거
@@ -754,13 +754,13 @@ class SettingsDialog(QDialog):
                         for k, v in kv_dict.items():
                             lines.append(f"  {k} = {v}")
                         lines.append("")
-                    content = f"[{cookie_src}] 브라우저 추출 전체 쿠키 목록:\n\n" + "\n".join(lines)
+                    content = f"[{cookie_src}] extracted browser cookies:\n\n" + "\n".join(lines)
                 else:
-                    content = f"[{cookie_src}] 브라우저에서 쿠키를 가져오지 못했습니다. (브라우저 실행 중 또는 권한 문제)"
+                    content = f"[{cookie_src}] browser returned no cookies (running browser or permission denied)"
             except Exception as ex:  # noqa: BLE001
-                content = f"쿠키 조회 중 오류 발생: {ex}"
+                content = f"cookie lookup error: {ex}"
 
-        viewer = CookieViewerDialog("쿠키 뷰어 (상세)", content, self)
+        viewer = CookieViewerDialog("Cookie Viewer (details)", content, self)
         viewer.exec()
 
     def load_cookie(self):
@@ -770,14 +770,12 @@ class SettingsDialog(QDialog):
             self.cfg["cookie_file_path"] = dlg.selected_path
             self.save_cfg()
             self._refresh_cookie_status()
-            # [교정] QMessageBox 대신 TUI 규격 확인창 — View/OK 2버튼.
-            # View 선택 시 확인창이 닫힌 뒤 쿠키 뷰어를 팝업한다.
-            names = {"cookie_file": "Cookies.txt 파일"}
+            names = {"cookie_file": "Cookies.txt"}
             src_name = names.get(dlg.selected_type, dlg.selected_type)
             notice = TuiNoticeDialog(
                 self,
                 title="ChzzkTube",
-                text=f"✓ 쿠키 설정이 완료되었습니다.\n({src_name})",
+                text=f"\u2713 Cookie configured.\n({src_name})",
                 alt_label="View",
             )
             if notice.exec() == TuiNoticeDialog.RESULT_ALT:
@@ -788,19 +786,19 @@ class SettingsDialog(QDialog):
         self.cfg["cookie_file_path"] = ""
         self.save_cfg()
         self._refresh_cookie_status()
-        show_info_message(self, "초기화", "쿠키가 초기화되었습니다.")
+        show_info_message(self, "Reset", "Cookie cleared.")
 
     def _cookie_status_text(self):
         src = self.cfg.get("browser_cookie", "none")
         names = {
-            "none": "사용 안 함",
-            "auto": "자동 (브라우저 탐색)",
-            "cookie_file": "Cookies.txt 파일",
+            "none": "None",
+            "auto": "Auto (browser)",
+            "cookie_file": "Cookies.txt",
         }
-        label = names.get(src, f"브라우저 직접 추출 ({src})")
+        label = names.get(src, f"Browser ({src})")
         if src == "cookie_file" and self.cfg.get("cookie_file_path"):
-            label += f" — {os.path.basename(self.cfg['cookie_file_path'])}"
-        return f"현재: {label}"
+            label += f" \u2014 {os.path.basename(self.cfg['cookie_file_path'])}"
+        return f"Current: {label}"
 
     def _refresh_cookie_status(self):
         self.lbl_cookie_status.setText(self._cookie_status_text())

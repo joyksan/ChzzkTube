@@ -1,6 +1,6 @@
 # ChzzkTube 아키텍처
 
-> 2026-09-17 · v3.6.3 소스 대조. 문서의 계층은 **책임 구분**이며 엄격한 import DAG를 뜻하지 않는다.
+> 2026-09-18 · v3.6.4 소스 대조. 문서의 계층은 **책임 구분**이며 엄격한 import DAG를 뜻하지 않는다.
 > 기준 루트: `/Users/jskim/Documents/ChzzkTube`. 아래 모듈명은 각 그룹의 절대 경로에 속한다.
 > **집계:** 패키지 기능 모듈 40개 + 루트 실행·검증 진입점 2개 = 도식 내 Python 파일 42개.
 > 빈 `__init__.py` 7개, 테스트·미러·빌드/유지보수 스크립트는 기능 모듈 집계에서 제외한다.
@@ -222,7 +222,7 @@ flowchart TB
 
 **분기 주의:** 현재 `live` 타입에는 치지직 라이브도 들어가지만 `download_target()`은 이를
 `_download_youtube_live()`로 보낸다. 위 그림은 현행 함수 분기이며 플랫폼별 정상 녹화를 검증했다는 뜻이 아니다.
-또한 `expand_targets()`는 워커의 최상위 `try` 앞에 있어 모든 예외에서 `finished_all`이 보장되는 구조는 아니다.
+또한 `expand_targets()`는 워커 최상위 `try` 밖(루프 진입 직후)에서 호출되며, `finally` → `_fin.finalize()` → `finished_all.emit`이 정확히 한 번만 발행되도록 구조화됐다(v3.6.3).
 
 ## 7) POT 수명주기 — 준비와 가동을 분리
 
@@ -269,7 +269,7 @@ flowchart TB
 ```
 
 - 분석 재시도 처리가 대기 다운로드 회수보다 먼저다. 오류 문자열 전부가 아니라 `_needs_pot_retry()`의 지정 마커만 대상이다.
-- `_pot_retry_done`은 URL당 반복 시도를 차단한다. **같은 문자열의 `setText()`가 재분석을 반드시 유발하는 것은 아니다.**
+- `_pot_retry_done`은 URL당 반복 시도를 차단한다. v3.6.4부터 재시도는 `url_input.setText(url)`(textChanged 비파리)에서 `Controller.spawn_analyzer(url)` 명시 호출로 전환 — 문자열 동등성에 관계없이 분석이 재시작된다.
 - gate timeout은 Manager가 busy일 때 취소하고 `_pending_download`를 해제한다. 분석 재시도 플래그까지 모두 청소하는 계약은 현재 코드에 없다.
 - 일반 공개 영상은 POT 백그라운드 작업만을 이유로 입력을 잠그지 않는다. 입력 READY는 서버 준비 보증이 아니다.
 
@@ -301,17 +301,28 @@ flowchart LR
 
 > `docs/HANDOVER.md`의 정책과 이력은 참고하되, 현재 구조와 신호 연결은 소스와 대조해야 한다. 아래는 v3.6.3 기준 수리 완료와 남은 항목을 구분한 것이다.
 
+> `docs/HANDOVER.md`의 정책과 이력은 참고하되, 현재 구조와 신호 연결은 소스와 대조해야 한다. 아래는 v3.6.4 기준 수리 완료와 남은 항목을 구분한 것이다.
+
 ### 수리 완료 (v3.6.3)
 
-- 폴링 내 UI 재초기화 제거 — 초기화는 생성자 1회, 링 타이머는 초기화 완료 후 시작. 기동 폴백·게이트 타이머와 재시도 상태가 매초 교체되던 결함을 없앴다.
-- 분석 타임아웃은 뷰가 단독 소유 — 워커는 무페이로드 `activity`만 발행하고, 만료 시 `_on_analysis_timeout()`이 워커를 유기하고 FAIL로 마감한다. 강제 terminate와 죽은 타이머 참조는 제거했다.
-- Infra→UI 역참조 제거(`node_provider`)와 테스트 세션 QApplication 단일화(`tests/conftest.py`).
+- **워치독 단일 진실**: 폴링 내 UI 재초기화 제거(초기화는 생성자 1회, 링 타이머는 초기화 완료 후 시작) · 게이트 QTimer 폐지(`_gate_watchdog_active` 플래그) · fallback `_fallback_timer` 단일 판정(`_fallback_watchdog` 삭제) · 분석 워커는 3 spawn-site에서 arm/disarm. (참고: `DownloadWorker`는 다운로드 중 파일/스트림 liveness만 판별하는 자체 watchdog을 유지 — 게이트/폴백 워치독과는 별개.)
+- **분석 타임아웃 뷰 소유**: 워커는 무페이로드 `activity`만 발행하고, 만료 시 `_on_analysis_timeout()`이 워커를 유기하고 FAIL로 마감. 강제 terminate와 죽은 타이머 참조는 제거.
+- `DownloadContext` — `_last_tick_t/_live_proc/_meta_logged` 속성 선언 충족.
+- `live_recorder` — stdout-relay 단일 소유권: FFmpeg `pipe:1` → Python이 TS 기록(replace-on-success / 실패·취소 시 TS 유지 / empty→False).
+- POT 재시도 — `Controller.spawn_analyzer()` 명시 재시도(`url_input.setText` 비파리 의존 제거).
+- `expand_targets()`를 워커 최상위 try 밖에서 호출해 `finally` → `_fin.finalize()` → `finished_all.emit` 정확히 한 번 보장.
+- Infra→UI 역참조 제거(`node_provider`) + 테스트 세션 QApplication 단일화(`tests/conftest.py`).
+- Chzzk live v2 API(`_analyze_chzzk_live_v2`) + `playlist` 채널 탭 정규화.
 
-### 남은 항목 (미수리 — §2 도식은 계약이며 검증 보증이 아니다)
+### 수리 완료 (v3.6.4)
 
-- 워치독 소유권이 분산돼 있다. `DownloadWorker`는 자체 워치독을 만들지만 외부 검사 주체가 없고, `progress_emitter`는 진행 로그만 남긴다. 게이트·폴백은 QTimer와 워치독이 병존한다.
-- `DownloadContext` 소비자는 `_speed_win`, `_last_tick_t`, `_live_proc`, `_meta_logged`처럼 선언되지 않은 속성에 의존한다.
-- 라이브 녹화는 FFmpeg 출력 대상과 파이썬 stdout 릴레이 파일이 같은 임시 TS를 가리킨다. 파일 소유자가 둘이다.
-- POT 재시도는 `url_input.setText(url)`에 의존한다. 같은 문자열이면 textChanged가 발생하지 않아 재분석이 시작되지 않을 수 있다.
-- `expand_targets()`가 워커 최상위 try 밖에 있어 그 구간 예외에서 `finished_all`이 보장되지 않는다.
+- **근원 원인**: 앱이 포터블 Node.js(`~/.chzzktube/node`)를 수급했으나 yt-dlp가 PATH의 `deno`만 탐색 → n-challenge(EJS) 해결이 불가 → `No video formats found` 회전 실패.
+- `client_opts._apply_ejs_opts` — `node_provider.node_exe()` 탐색 node를 `js_runtimes={'node':{'path':...}}`로 명시 주입(분석/라이브/다운로드 4 경로). node 없으면 기본(deno) 유지.
+- `analyze_worker` — 회전 후보 `ios`(쿠키 미지원) → `tv`/`web_safari`(쿠키 호환); bot-block 판정에 no-video-formats/requested-format 포함.
+- `analyze_worker` — analysis error를 60자로 절약(TUI MSG 컬럼), `[youtube] <id>:` 접두와 보고서 꼬리 절삭.
+- `target_downloader` — "Requested format is not available" 분류 `is` 누락 교정 + no-video-formats → `format missing`.
+- `ui/dialogs.py` — `TuiNoticeDialog`(280×125·칠흑·중앙정렬·OK/View) 신설; `show_info_message` 위임 + 쿠키 흐름 영어 사용자 문자열.
+
+### 남은 항목 (미수리 — §2 도식은 계약이며 검증 보장이 아니다)
+
 - `client_opts.py`(Core)가 `infra.po_client`를 사용한다. 폴더 기준 L1→L2 방향이므로 말단 HTTP 클라이언트로 볼지 계층 정책 결정이 필요하다.

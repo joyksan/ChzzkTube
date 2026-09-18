@@ -24,8 +24,7 @@ yt_dlp.plugins.plugin_dirs.value = []
 
 from PySide6.QtCore import QThread, Signal
 
-from chzzktube.core.watchdog import LivenessWatchdog
-
+from chzzktube.core.watchdog import ANALYSIS_TIMEOUT_SEC
 from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api
 from chzzktube.core.log_emitter import format_kv_line, format_tree_item
 from chzzktube.core.media import (
@@ -55,6 +54,9 @@ class AnalyzeWorker(QThread):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 시그널 폐기.
     result_ready = Signal(dict)
     error_occurred = Signal(str)
+    # [Watchdog] 무페이로드 진행 하트비트. 뷰가 소유한 분석 워치독 수명 연장 전용.
+    # §5-21에 따라 문자열을 싣지 않으며, 만료 판정·복구는 뷰가 단독 수행한다.
+    activity = Signal()
 
     def __init__(self, target_url, cfg, deep=False):
         super().__init__()
@@ -65,40 +67,36 @@ class AnalyzeWorker(QThread):
         # [다운로드 일관성] 분석에서 통과한 클라이언트 기록 — 다운로드가
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
         self.client_used = "auto"
-        # [Watchdog] 45초 분석 타임아웃을 LivenessWatchdog으로 완전 대체 — QTimer 맹인 타임아웃 제거
-        self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC)
 
-    # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — ios는 PO Token
-    # 불필요·SABR 무관(720p급), tv는 최후 수단(SABR 360p 리스크).
-    _RETRY_CLIENTS = ["ios", "tv"]
-
-    def _on_analysis_timeout(self):
-        """[hang-prevention] 분석 타임아웃 — 워치독이 만료를 알리면 스레드 강제 종료 + 에러 보고."""
-        import chzzktube.core.raw_log as raw_log
-        raw_log.raw(
-            "analyze",
-            f"[analyze] timed out after {ANALYSIS_TIMEOUT_SEC:.0f}s - yt-dlp hung.",
-        )
-        self.terminate()
-        self.error_occurred.emit(
-            f"Analysis timed out after {ANALYSIS_TIMEOUT_SEC:.0f}s."
-        )
+    # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — tv는 쿠키 호환
+    # PO Token 계열, web_safari는 쿠키 호환 web 변체. [주의] ios는 쿠키
+    # 미지원(SUPPORTS_COOKIES=False)이라 쿠키 사용 중이면 yt-dlp가 클라이언트
+    # 자체를 스킵 → "No video formats found" 즉사하므로 회전 후보에서 제외.
+    _RETRY_CLIENTS = ["tv", "web_safari"]
 
     @staticmethod
     def _is_bot_block(ex):
-        """YouTube 봇 체크/JS 챌린지 실패 판별 — 클라이언트 회전 대상 여부."""
+        """YouTube 봇 체크/JS 챌린지 실패 판별 — 클라이언트 회전 대상 여부.
+
+        [주의] 회전 중간 클라이언트(ios 등 쿠키 미지원 스킵)의 2차 오류인
+        "No video formats found" / "Requested format is not available"도
+        bot-block에서 파생된 것이므로 회전을 계속해야 한다. 이를 포함하지
+        않으면 회전이 중간에 끊겨 마지막 폴백이 시도조차 되지 않는다.
+        """
         s = str(ex).lower()
         return (
             "the page needs to be reloaded" in s
             or "n challenge solving failed" in s
             or "challenge solving failed" in s
+            or "no video formats found" in s
+            or "requested format is not available" in s
         )
 
     def _extract_youtube(self, url, flat):
-        # yt-dlp progress_hook으로 워치독 하트비트 연장
+        # yt-dlp progress_hook → 무페이로드 하트비트 (뷰 워치독 수명 연장)
         def _progress_hook(d):
-            if d.get("status") == "downloading":
-                self._analysis_watchdog.heartbeat()
+            if d.get("status"):
+                self.activity.emit()
 
         # ydl_opts에 훅 추가할 예정이므로 flat 분기 전에 준비
         """yt-dlp 추출 — bot-check 실패 시 ios→tv 클라이언트 회전.
@@ -127,6 +125,8 @@ class AnalyzeWorker(QThread):
 
         last_err = None
         for idx, client in enumerate(attempts):
+            # 클라이언트 회전도 진행이다. 뷰 분석 워치독 수명을 연장한다.
+            self.activity.emit()
             ydl_opts = dict(base)
             ydl_opts["progress_hooks"] = [_progress_hook]
             _apply_cookie_opts(ydl_opts, self.cfg)
@@ -158,189 +158,186 @@ class AnalyzeWorker(QThread):
     def run(self):
         import chzzktube.core.raw_log as raw_log
         raw_log.raw("analyze", f"--- [format analysis start] {self.target_url} ---")
-        # [Watchdog] 순수 워치독 모드 — QTimer 백업 완전 제거
-        self._analysis_watchdog.reset()
+        # 분석 시작 통보 — 뷰 워치독 수명 연장
+        self.activity.emit()
 
         try:
-            try:
-                m_clip = re.search(r"chzzk\.naver\.com/clips?/", self.target_url)
-                m_vod = re.search(r"chzzk\.naver\.com/video/(\d+)", self.target_url)
-                m_live = re.search(r"chzzk\.naver\.com/live/", self.target_url)
-                if m_clip or m_vod or m_live:
-                    # 콘텐츠 타입 감지
-                    content_type = "CLIP" if m_clip else ("LIVE" if m_live else "VOD")
+            m_clip = re.search(r"chzzk\.naver\.com/clips?/", self.target_url)
+            m_vod = re.search(r"chzzk\.naver\.com/video/(\d+)", self.target_url)
+            m_live = re.search(r"chzzk\.naver\.com/live/", self.target_url)
+            if m_clip or m_vod or m_live:
+                # 콘텐츠 타입 감지
+                content_type = "CLIP" if m_clip else ("LIVE" if m_live else "VOD")
                 
-                    ch_info = (
-                        analyze_chzzk_clip_api(self.target_url)
-                        if m_clip
-                        else (analyze_chzzk_live_api(self.target_url) if m_live
-                              else analyze_chzzk_vod_api(self.target_url))
+                ch_info = (
+                    analyze_chzzk_clip_api(self.target_url)
+                    if m_clip
+                    else (analyze_chzzk_live_api(self.target_url) if m_live
+                          else analyze_chzzk_vod_api(self.target_url))
+                )
+                v_list = []
+                a_list = []
+                for fmt in ch_info.get("formats", []):
+                    vcodec = fmt.get("vcodec", "")
+                    acodec = fmt.get("acodec", "")
+                    has_v = bool(vcodec)
+                    has_a = bool(acodec)
+                    base = {
+                        "id": fmt["id"],
+                        "height": fmt["height"],
+                        "fps": fmt.get("fps", 0),
+                        "vcodec": vcodec,
+                        "acodec": acodec,
+                        "bitrate": fmt["bitrate"],
+                        "tbr": fmt["bitrate"],
+                    }
+                    if has_v:
+                        v_list.append({
+                            **base,
+                            "label": format_dropdown_label(
+                                {
+                                    "ext": "mp4",
+                                    "height": fmt.get("height"),
+                                    "fps": fmt.get("fps") or None,
+                                    "tbr": fmt.get("bitrate"),
+                                    "protocol": "https",
+                                    "vcodec": vcodec,
+                                    "acodec": "",
+                                },
+                                content_type,
+                            ),
+                        })
+                    elif has_a:
+                        a_list.append({
+                            **base,
+                            "abr": fmt.get("bitrate", 0),
+                            "label": format_dropdown_label(
+                                {
+                                    "ext": "m4a",
+                                    "tbr": fmt.get("bitrate"),
+                                    "protocol": "https",
+                                    "vcodec": "none",
+                                    "acodec": acodec,
+                                },
+                                content_type,
+                            ),
+                        })
+                if not v_list and not a_list:
+                    self.error_occurred.emit(
+                        "chzzk stream fail (cookie)"
                     )
-                    v_list = []
-                    a_list = []
-                    for fmt in ch_info.get("formats", []):
-                        vcodec = fmt.get("vcodec", "")
-                        acodec = fmt.get("acodec", "")
-                        has_v = bool(vcodec)
-                        has_a = bool(acodec)
-                        base = {
-                            "id": fmt["id"],
-                            "height": fmt["height"],
-                            "fps": fmt.get("fps", 0),
-                            "vcodec": vcodec,
-                            "acodec": acodec,
-                            "bitrate": fmt["bitrate"],
-                            "tbr": fmt["bitrate"],
-                        }
-                        if has_v:
-                            v_list.append({
-                                **base,
-                                "label": format_dropdown_label(
-                                    {
-                                        "ext": "mp4",
-                                        "height": fmt.get("height"),
-                                        "fps": fmt.get("fps") or None,
-                                        "tbr": fmt.get("bitrate"),
-                                        "protocol": "https",
-                                        "vcodec": vcodec,
-                                        "acodec": "",
-                                    },
-                                    content_type,
-                                ),
-                            })
-                        elif has_a:
-                            a_list.append({
-                                **base,
-                                "abr": fmt.get("bitrate", 0),
-                                "label": format_dropdown_label(
-                                    {
-                                        "ext": "m4a",
-                                        "tbr": fmt.get("bitrate"),
-                                        "protocol": "https",
-                                        "vcodec": "none",
-                                        "acodec": acodec,
-                                    },
-                                    content_type,
-                                ),
-                            })
-                    if not v_list and not a_list:
-                        self.error_occurred.emit(
-                            "chzzk stream fail (cookie)"
+                    return
+                self.result_ready.emit(
+                    {"info": ch_info, "v_list": v_list, "a_list": [], "is_chzzk": True}
+                )
+            else:
+                is_playlist = ("playlist?list=" in self.target_url) or ("list=" in self.target_url)
+                is_channel = any(k in self.target_url for k in ["/@", "/channel/", "/c/", "/user/"])
+                
+                if is_playlist or is_channel:
+                    info = self._extract_youtube(
+                        normalize_youtube_channel_url(self.target_url), flat=True
+                    )
+                    
+                    entries = info.get("entries") or []
+                    video_count = len(entries)
+                    title = info.get("title") or "playlist/channel"
+                    
+                    self.result_ready.emit({
+                        "is_playlist": True,
+                        "title": title,
+                        "count": video_count,
+                        "v_list": [],
+                        "a_list": [],
+                    })
+                    return
+
+                info = self._extract_youtube(self.target_url, flat=False)
+
+                if info:
+                    if "entries" in info:
+                        info = info["entries"][0]
+                    
+                    # 콘텐츠 타입 감지 (URL + 메타데이터)
+                    content_type = detect_content_type(self.target_url, info)
+                    
+                    v_list, a_list = [], []
+                    for f in info.get("formats", []):
+                        fid, ext = f.get("format_id", "?"), f.get("ext", "?")
+                        vcodec, acodec = f.get("vcodec", "none"), f.get("acodec", "none")
+                        tbr, fps, height = (
+                            int(f.get("tbr") or 0),
+                            f.get("fps") or 0,
+                            f.get("height") or 0,
                         )
-                        return
+                        proto = f.get("protocol") or ""
+                        has_v = str(vcodec or "").strip() not in ("none", "", "None")
+                        has_a = str(acodec or "").strip() not in (
+                            "none",
+                            "",
+                            "None",
+                        )
+
+                        if has_v:
+                            # 비디오 드롭다운: 비디오 정보만 (오디오 코덱 생략)
+                            v_list.append(
+                                {
+                                    "id": fid,
+                                    "height": height,
+                                    "fps": fps,
+                                    "tbr": tbr,
+                                    "vcodec": vcodec,
+                                    "acodec": acodec,
+                                    "proto": proto,
+                                    "ext": ext,
+                                    "label": format_dropdown_label(
+                                        {**f, "acodec": ""}, content_type
+                                    ),
+                                }
+                            )
+                        if has_a and not has_v:
+                            a_list.append(
+                                {
+                                    "id": fid,
+                                    "abr": int(f.get("abr") or tbr or 0),
+                                    "acodec": acodec,
+                                    "ext": ext,
+                                    "proto": proto,
+                                    "label": format_dropdown_label(f, content_type),
+                                }
+                            )
+
+                    v_list.sort(
+                        key=lambda x: (
+                            x["height"],
+                            x["fps"],
+                            get_video_codec_rank(x["vcodec"]),
+                            x["tbr"],
+                        ),
+                        reverse=True,
+                    )
+                    a_list.sort(
+                        key=lambda x: (
+                            x["abr"],
+                            get_audio_codec_rank(x["acodec"], x["id"]),
+                        ),
+                        reverse=True,
+                    )
+
+                    v_list = _dedupe_by_label(v_list)
+                    a_list = _dedupe_by_label(a_list)
+
                     self.result_ready.emit(
-                        {"info": ch_info, "v_list": v_list, "a_list": [], "is_chzzk": True}
+                        {
+                            "info": info,
+                            "v_list": v_list,
+                            "a_list": a_list,
+                            "is_chzzk": False,
+                            "yt_client": getattr(self, "client_used", "auto") or "auto",
+                        }
                     )
                 else:
-                    is_playlist = ("playlist?list=" in self.target_url) or ("list=" in self.target_url)
-                    is_channel = any(k in self.target_url for k in ["/@", "/channel/", "/c/", "/user/"])
-                
-                    if is_playlist or is_channel:
-                        info = self._extract_youtube(
-                            normalize_youtube_channel_url(self.target_url), flat=True
-                        )
-                    
-                        entries = info.get("entries") or []
-                        video_count = len(entries)
-                        title = info.get("title") or "playlist/channel"
-                    
-                        self.result_ready.emit({
-                            "is_playlist": True,
-                            "title": title,
-                            "count": video_count,
-                            "v_list": [],
-                            "a_list": [],
-                        })
-                        return
-
-                    info = self._extract_youtube(self.target_url, flat=False)
-
-                    if info:
-                        if "entries" in info:
-                            info = info["entries"][0]
-                    
-                        # 콘텐츠 타입 감지 (URL + 메타데이터)
-                        content_type = detect_content_type(self.target_url, info)
-                    
-                        v_list, a_list = [], []
-                        for f in info.get("formats", []):
-                            fid, ext = f.get("format_id", "?"), f.get("ext", "?")
-                            vcodec, acodec = f.get("vcodec", "none"), f.get("acodec", "none")
-                            tbr, fps, height = (
-                                int(f.get("tbr") or 0),
-                                f.get("fps") or 0,
-                                f.get("height") or 0,
-                            )
-                            proto = f.get("protocol") or ""
-                            has_v = str(vcodec or "").strip() not in ("none", "", "None")
-                            has_a = str(acodec or "").strip() not in (
-                                "none",
-                                "",
-                                "None",
-                            )
-
-                            if has_v:
-                                # 비디오 드롭다운: 비디오 정보만 (오디오 코덱 생략)
-                                v_list.append(
-                                    {
-                                        "id": fid,
-                                        "height": height,
-                                        "fps": fps,
-                                        "tbr": tbr,
-                                        "vcodec": vcodec,
-                                        "acodec": acodec,
-                                        "proto": proto,
-                                        "ext": ext,
-                                        "label": format_dropdown_label(
-                                            {**f, "acodec": ""}, content_type
-                                        ),
-                                    }
-                                )
-                            if has_a and not has_v:
-                                a_list.append(
-                                    {
-                                        "id": fid,
-                                        "abr": int(f.get("abr") or tbr or 0),
-                                        "acodec": acodec,
-                                        "ext": ext,
-                                        "proto": proto,
-                                        "label": format_dropdown_label(f, content_type),
-                                    }
-                                )
-
-                        v_list.sort(
-                            key=lambda x: (
-                                x["height"],
-                                x["fps"],
-                                get_video_codec_rank(x["vcodec"]),
-                                x["tbr"],
-                            ),
-                            reverse=True,
-                        )
-                        a_list.sort(
-                            key=lambda x: (
-                                x["abr"],
-                                get_audio_codec_rank(x["acodec"], x["id"]),
-                            ),
-                            reverse=True,
-                        )
-
-                        v_list = _dedupe_by_label(v_list)
-                        a_list = _dedupe_by_label(a_list)
-
-                        self.result_ready.emit(
-                            {
-                                "info": info,
-                                "v_list": v_list,
-                                "a_list": a_list,
-                                "is_chzzk": False,
-                                "yt_client": getattr(self, "client_used", "auto") or "auto",
-                            }
-                        )
-                    else:
-                        self.error_occurred.emit("media info fail")
-            finally:
-                self._timeout_timer.stop()
+                    self.error_occurred.emit("media info fail")
         except Exception as ex:
             ex_str = str(ex).lower()
             if (
@@ -353,9 +350,17 @@ class AnalyzeWorker(QThread):
                     "age/membership restricted"
                 )
             elif "the page needs to be reloaded" in ex_str or "challenge solving failed" in ex_str:
-                # [봇 체크] EJS 솔버 + ios/tv 회전까지 실패하면 남은 수단은
+                # [봇 체크] EJS 솔버 + 클라이언트 회전까지 실패하면 남은 수단은
                 # 브라우저에서 영상 재생(세션 갱신) — 미니멀 영문 매핑.
                 self.error_occurred.emit("bot check — reload browser")
             else:
-                self.error_occurred.emit(f"analysis error: {clean_ansi(str(ex))}")
+                # [TUI 규격] yt-dlp 원문은 보일러플레이트("please report this
+                # issue...")가 메시지를 초과한다. 첫 ERROR 행의 핵심 구문만
+                # 추출해 60자로 절단 — 상세 원문은 F12 로그에 이미 기록됨.
+                msg = clean_ansi(str(ex))
+                m = re.search(r"ERROR:\s*\[[^\]]+\]\s*[^:]+:\s*(.+)", msg)
+                if m:
+                    msg = m.group(1).strip()
+                msg = re.split(r";\s*please report|;\s*filling out|\.\s*[Uu]se --list-formats", msg)[0]
+                self.error_occurred.emit(f"analysis error: {msg[:60]}")
 

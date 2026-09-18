@@ -74,8 +74,6 @@ _ANALYZE_DEBOUNCE_MS = 900
 # [벌크 입력 공출화] 붙여넣기·드래그&드롭·TXT 로드는 통째로 들어오므로 즉시 분석.
 # 0ms 대신 150ms를 두는 건 프로그램적 다중 setText가 한 프레임에 겹칠 때의 점화 병합용.
 _BULK_INPUT_DELAY_MS = 150
-# [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang 보호.
-_POT_GATE_TIMEOUT_MS = int(GATE_TIMEOUT_SEC * 1000)
 # [Followup-4] 폴백 유예 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한 경우
 # 1회 유예 후 재판정한다(위양성 폴백 차단).
 _FALLBACK_GRACE_MS = int(FALLBACK_GRACE_SEC * 1000)
@@ -159,8 +157,8 @@ class MainWindow(QMainWindow):
         self._pot_manager.pot_finished.connect(self._on_pot_finished)
         # [P5] POT 수급/빌드 진행 중에는 기동 폴백 타이머를 연장한다(맹인 폴백 방지).
         self._pot_manager.pot_status_changed.connect(self._on_pot_activity)
-        # [Followup-1] POT 빌드 수급 하트비트 → 폴백 타이머 연장
-        self._pot_manager.pot_work_tick.connect(self.defer_fallback_timer)
+        # POT 진행은 기동 폴백과 활성 게이트의 생존 시간을 함께 연장한다.
+        self._pot_manager.pot_work_tick.connect(self._on_pot_work_tick)
         self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
 
         self.settings_dlg = None
@@ -178,13 +176,15 @@ class MainWindow(QMainWindow):
         self._startup_completed = False
         self._pending_download = None
 
-        # [워치독] 단일 진실 시간(monotonic) 기반 워치독 인스턴스들
-        self._fallback_watchdog = LivenessWatchdog(FALLBACK_TIMEOUT_SEC, FALLBACK_GRACE_SEC)
+        # [워치독] 단일 진실 시간(monotonic) 기반 워치독 인스턴스들.
+        # 기동 폴백은 워치독으로 감시하지 않는다 — 만료의 단일 기준은 아래 _fallback_timer.
         self._gate_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
         self._analysis_watchdog = LivenessWatchdog(ANALYSIS_TIMEOUT_SEC, 0.0)
         # [Watchdog] 워커의 무페이로드 진행 신호가 분석 워치독 수명을 연장한다.
-        # 만료 판정과 복구는 뷰(_on_analysis_timeout)가 단독 수행한다.
+        # 수명은 스폰 3곳의 명시적 무장에서만 시작되고, 만료 판정·복구·해제는
+        # 뷰(_on_analysis_timeout)가 단독 수행한다(만료의 영속 재판정 금지).
         self.ctrl.analyze_activity.connect(self._analysis_watchdog.heartbeat)
+        self._analysis_watchdog_active = False
 
         # 워치독 폴링용 타이머 (1초 주기)
         self._watchdog_poll_timer = QTimer(self)
@@ -203,12 +203,11 @@ class MainWindow(QMainWindow):
         self._fallback_timer.setSingleShot(True)
         self._fallback_timer.timeout.connect(self._force_unlock_input)
         self._fallback_timer.start(int(FALLBACK_TIMEOUT_SEC * 1000))
+        # [정리] 기동 폴백 만료의 단일 기준 — 이 타이머가 유일한 판정자다(폴링
+        # 워치독이 같은 만료를 따로 판정해 유예를 끊던 이중 구조 제거).
 
-        # [Followup-3] POT gate 대기 2차 워치독 — READY 개방 이후 시작된 gate hang에도
-        # 보호를 둔다(1차는 위 폴백). 만료 시 POT 작업을 트리 종료하고 큐를 푼다.
-        self._gate_watchdog_timer = QTimer(self)
-        self._gate_watchdog_timer.setSingleShot(True)
-        self._gate_watchdog_timer.timeout.connect(self._on_gate_timeout)
+        # 게이트 만료는 _gate_watchdog 하나로 판정한다. QTimer는 폴링에만 사용.
+        self._gate_watchdog_active = False
         # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
         self._deps_failed = []
         # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
@@ -218,21 +217,19 @@ class MainWindow(QMainWindow):
         self._watchdog_poll_timer.start()
 
     def _poll_watchdogs(self):
-        """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리."""
-        # 1) 기동 폴백 워치독
-        if not self._startup_completed and self._fallback_watchdog.check_timeout():
-            # 워치독이 만료를 알리면 기존 _force_unlock_input 로직 위임
-            self._force_unlock_input()
-            return
+        """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리.
 
-        # 2) 게이트 워치독
-        if self._gate_watchdog_timer.isActive() and self._gate_watchdog.check_timeout():
+        기동 폴백은 여기서 판정하지 않는다 — 만료의 단일 기준은 _fallback_timer며,
+        이중 판정은 Followup-4 유예(재무장 직후 폴링이 유예를 끊는 결함)를 낳았다.
+        """
+        # 1) 게이트 워치독
+        if self._gate_watchdog_active and self._gate_watchdog.check_timeout():
             self._on_gate_timeout()
             return
 
-        # 3) 분석 워치독 — 워커의 activity 신호가 수명을 연장하고,
+        # 2) 분석 워치독 — 워커의 activity 신호가 수명을 연장하고,
         #    만료 시 여기서 복구(워커 유기 + FAIL 마감)를 단독 수행한다.
-        if self._analysis_watchdog.check_timeout():
+        if self._analysis_watchdog_active and self._analysis_watchdog.check_timeout():
             self._on_analysis_timeout()
             return
 
@@ -565,6 +562,8 @@ class MainWindow(QMainWindow):
         elif state == "PICKING":
             self._cancel_pick()
         elif state == "ANALYZING":
+            self._disarm_analysis_watchdog()
+
             self.ctrl.request_cancel()
         else:
             self.url_input.clear()
@@ -626,6 +625,7 @@ class MainWindow(QMainWindow):
         if not text:
             self._last_input_len = 0
             self.extracted_data = {"info": None, "v_list": [], "a_list": []}
+            self._disarm_analysis_watchdog()
             self.ctrl._abandon_analyzer()
             self.console.clear_status_line()
             self._discard_analysis_result()
@@ -676,7 +676,7 @@ class MainWindow(QMainWindow):
         )
         self._discard_analysis_result()
         self.base_anim_url = url
-        self._analysis_watchdog.reset()
+        self._arm_analysis_watchdog()
         self.ctrl.spawn_analyzer(url, self.cfg)
         self.update_ui_state()
 
@@ -835,9 +835,8 @@ class MainWindow(QMainWindow):
             check_updates=self.cfg.get("auto_update_check", True),
         )
         self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
-        # [P5] 수급 진행 하트비트 → 폴백 타이머 연장 + 워치독 하트비트
+        # [P5] 수급 진행 하트비트 → 폴백 타이머 연장
         self.update_worker.work_tick.connect(self.defer_fallback_timer)
-        self.update_worker.work_tick.connect(lambda: self._fallback_watchdog.heartbeat())
         self.update_worker.start()
         # [P1] deps 게이트의 의미는 "검사 단계 완료"다 — stale(업데이트 대상) 존재는 게이트 사유가 아니다.
         # 업데이트 적용은 업데이트 워커의 일이며, READY 게이트를 막으면 안 된다.
@@ -916,23 +915,44 @@ class MainWindow(QMainWindow):
     def _start_gate_watchdog(self):
         """[Followup-3] POT gate 대기 2차 워치독 기동."""
         self._gate_watchdog.reset()
-        self._gate_watchdog_timer.start(_POT_GATE_TIMEOUT_MS)
+        self._gate_watchdog_active = True
 
     def _stop_gate_watchdog(self):
-        self._gate_watchdog_timer.stop()
+        self._gate_watchdog_active = False
+
+    def _on_pot_work_tick(self):
+        """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
+        self.defer_fallback_timer()
+        if self._gate_watchdog_active:
+            self._gate_watchdog.heartbeat()
 
     def _on_gate_timeout(self):
         """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
+        if not self._gate_watchdog_active:
+            return
+        self._stop_gate_watchdog()
         if not self._pot_manager.is_busy():
             return
+        # cancel()에서 pot_finished가 즉시 발행되어도 보류 요청은 재실행되지 않는다.
+        self._pending_download = None
+        self._pot_retry_pending = False
+        self._pot_retry_url = None
         self._pot_manager.cancel()
         self.append_concise_log(
             log_emitter.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
             is_status=False,
             is_error=False,
         )
-        self._pending_download = None
         self.update_ui_state()
+
+    def _arm_analysis_watchdog(self):
+        """[Watchdog] 분석 스폰 1회 무장 — 이후 만료 판정은 폴링이 담당한다."""
+        self._analysis_watchdog.reset()
+        self._analysis_watchdog_active = True
+
+    def _disarm_analysis_watchdog(self):
+        """[Watchdog] 분석 마감(성공/실패/만료) 해제 — 만료의 영속 재판정을 끊는다."""
+        self._analysis_watchdog_active = False
 
     def _on_analysis_timeout(self):
         """[Watchdog] 분석 무응답 — 워커를 유기하고 FAIL로 마감한다.
@@ -940,6 +960,7 @@ class MainWindow(QMainWindow):
         강제 terminate() 금지. 유기된 워커는 좀비 패턴으로 자연 종료를 기다리고,
         늦게 도착한 결과는 `_is_stale_analyze_signal()`이 폐기한다.
         """
+        self._disarm_analysis_watchdog()
         if not self.ctrl.analyzing:
             return
         self.ctrl.abandon_analysis()
@@ -994,7 +1015,7 @@ class MainWindow(QMainWindow):
             is_status=True,
             is_error=False,
         )
-        self._analysis_watchdog.reset()
+        self._arm_analysis_watchdog()
         self.ctrl.spawn_analyzer(url, self.cfg)
         self.update_ui_state()
 
@@ -1012,7 +1033,6 @@ class MainWindow(QMainWindow):
         """[P5] POT 수급/기동 국면(prewarm·starting)에서는 폴백을 서두르지 않는다."""
         if status in ("prewarm", "starting"):
             self.defer_fallback_timer()
-            self._fallback_watchdog.heartbeat()
 
     def _is_stale_analyze_signal(self) -> bool:
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단."""
@@ -1023,6 +1043,7 @@ class MainWindow(QMainWindow):
     def on_analyze_success(self, data):
         if self._is_stale_analyze_signal():
             return
+        self._disarm_analysis_watchdog()
         self.ctrl.state["analyzing"] = False
         self.extracted_data = data
         self._ensure_pot_for_info(data.get("info"))
@@ -1041,6 +1062,7 @@ class MainWindow(QMainWindow):
     def on_analyze_error(self, err_msg):
         if self._is_stale_analyze_signal():
             return
+        self._disarm_analysis_watchdog()
         self.ctrl.state["analyzing"] = False
         pick_pending = getattr(self, "_pick_pending", False)
         self._pick_pending = False
@@ -1307,7 +1329,7 @@ class MainWindow(QMainWindow):
             is_status=True,
             is_error=False,
         )
-        self._analysis_watchdog.reset()
+        self._arm_analysis_watchdog()
         self.ctrl.spawn_analyzer(url, self.cfg, deep=True)
         self.update_ui_state()
 

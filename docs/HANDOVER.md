@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-17 - v3.6.3 — 초기화 단일화 + 분석 워치독 계약 복구 (패치 업)
+> 마지막 갱신: 2026-09-18 - v3.6.4 — analysis dead-end fix (patch up)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.6.3` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.6.3"` (최신: 2026-09-17 초기화 단일화 + 분석 워치독 계약 복구)
+- **버전**: `v3.6.4` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.6.4"` (최신: 2026-09-18 analysis dead-end fix — EJS JS runtime 주입, 쿠키 호환 회전, TUI notice dialog)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.6.2`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.6.4`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -199,10 +199,11 @@
 |---|---|---|---|
 | `ExitConfirmDialog` | `Fixed: 280×125` | 텍스트 중앙 정렬, 위험(빨강)/중립(회색) 2열 버튼 | 앱 종료 경고창 |
 | `SettingsDialog` | `Fixed: 660×680` | 스크롤 바디 + 하단 고정 풋터 분리형 TUI | 설정 패널 (F3) |
-| `CookieSelectDialog` | `Fixed: 300×380` | 브라우저별 선택 버튼 수직 스택 | 쿠키 소스 지정 |
-| `CookieViewerDialog` | `Fixed: 650×500` | 읽기 전용 텍스트 에디트 + 우하단 Close 태그 | 쿠키 덤프 뷰어 |
+| `CookieSelectDialog` | `Fixed: 320×220` | 브라우저별 선택 버튼 수직 스택 | 쿠키 소스 지정 |
+| `CookieViewerDialog` | `Fixed: 650×480` | 읽기 전용 텍스트 에디트 + 우하단 Close 태그 | 쿠키 덤프 뷰어 |
 | `VerboseLogWindow` | `Resize: 760×480`| 미러링 라인 카운터 상태 바 + Close | F12 상세 로그 |
-| `ActionCountdownDialog`| `Fixed: 380×160` | 60초 카운트다운 타이머 + 즉시실행/취소 | 사후 동작 확인 |
+| `ActionCountdownDialog`| `Fixed: 300×125` | 60초 카운트다운 타이머 + 즉시실행/취소 | 사후 동작 확인 |
+| `TuiNoticeDialog` | `Fixed: 280×125` | 텍스트 중앙 정렬, OK/보조(View) 2버튼(alt) | `show_info_message` 기본 안내창·쿠키 설정 완료 확인 |
 
 #### 4.2 SettingsDialog 모던 TUI 조립 규칙
 - **프레임리스 섹션**: 무거운 `QGroupBox` 대신 `_sec_header("// TITLE")` 라벨과 `_tui_sep()`(1px HLine, `#1a1a1a`) 조합 사용.
@@ -213,6 +214,7 @@
 ### 5. 시각적 디테일 및 영문 미니멀화
 - **파스텔 팔레트는 현행 유지**: `SUCCESS #6a9955`, `ERROR #e06c75`, `WARN #e5c07b`.
 - `MSG`는 영문 소문자 CLI 태그를 원칙으로 한다.
+- **팝업·다이얼로그 문구도 영문 소문자**로 통일한다(설정값 키·사용자 데이터 제외). §4.1 `TuiNoticeDialog`가 SSOT이며 `show_info_message`는 이를 위임한다(한국어 사용자 문자열 배제).
 - 채널명/영상 제목 같은 사용자 데이터는 번역하지 않는다.
 - TUI와 F12 모두 발행된 원문을 동일하게 보존한다.
 
@@ -224,7 +226,7 @@ YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 �
   - 가동 조건: `age_limit > 0` (연령 제한) 또는 `availability` in ('needs_auth', 'premium_only', 'subscriber_only', 'private')
   - 일반 공개 영상은 PO 서버 없이 다운로드 → 리소스 절약
   - 분석(`AnalyzeWorker`) 완료 후 판단, 필요 시 `[POT] RUN — starting...` 로그 출력
-- **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`ios` → `tv`), JS 런타임 Solver(`ejs:github` + deno), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
+- **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`tv`/`web_safari`, 쿠키 미지원 `ios` 배제), JS 런타임 Solver(`ejs:github` 원격 수급 + 앱 포터블 Node.js `js_runtimes` 명시 주입), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
 - **운용 경계**: `cfg["yt_player_client"]`가 `"auto"`일 때만 Tier 2 폴백이 활성화된다. 사용자가 특정 클라이언트를 지정하면 Tier 1 해당 클라이언트 1회 시도 후 즉시 실패 처리(폴백 무한 방지).
 - **측정**: 어떤 Tier로 다운로드가 성공했는지 상세 로그(F12)에 기록(`[client retry] bot check — X → Y`). 이는 "왜 폴백이 발동했는지" 추적하는 유일한 증거이며, 로컬 전용(간결 로그 미노출).
 
@@ -613,6 +615,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 > v3.6.0(2026-09-16) — 게이트 하드닝 후속 6건 전량 해소: POT 내부 하트비트(#1)·트리 종료(#2)·gate 2차 워치독(#3)·폴백 유예(#4)·deps FAIL 승격(#5)·PO 재시도(#6).
 > v3.6.1(2026-09-16) — 아키텍처 다이어그램(mermaid 3종) 추가: 전체 계층도·기동 시퀀스·상태·워치독 관계(문서 패치, 소스 변경 없음).
 > v3.6.3(2026-09-17) — 기동 초기화 단일화 + 분석 워치독 계약 복구: 폴링 내 UI 재초기화 제거(위젯·타이머 매초 교체, 업데이트 확인 반복 예약, URL당 1회 재시도 이력 소거 수리) · 분석 워치독 뷰 단독 소유(무페이로드 activity, 강제 terminate 제거) · Infra→UI 역참조와 죽은 타이머 참조 정리 · 테스트 세션 QApplication 단일화(tests/conftest.py).
+> v3.6.4(2026-09-18) — analysis dead-end fix: EJS JS 런타임(앱 포터블 Node 주입)·쿠키 호환 회전(tv/web_safari, ios 배제)·analysis error 60자 절약·TuiNoticeDialog + 쿠키 흐름 영어 문자열.
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)

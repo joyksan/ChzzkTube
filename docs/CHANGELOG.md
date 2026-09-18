@@ -1,4 +1,28 @@
-### 2026-09-17 — v3.6.2 : OS 격리 HAL + 구독형 워치독 완전 전환 — 15s/45s/120s 맹인 타이머 소거 (patch 업)
+### 2026-09-18 — v3.6.4 : analysis dead-end fix — EJS JS runtime + cookie-aware rotation + TUI notice dialog
+- **근본 원인**: yt-dlp의 기본 JS 런타임은 `deno`(PATH 탐색)뿐이고 앱이 PATH 밖(`~/.chzzktube/node`)에 자체 수급한 포터블 Node.js를 탐색하지 못해 n-challenge(EJS) 해결이 불가능 → "No video formats found" 회전 실패로 이어졌다.
+- `client_opts._apply_ejs_opts` — `node_provider.node_exe()`로 탐색한 포터블 node를 `js_runtimes={'node': {'path': ...}}`로 명시 주입(분석/라이브/다운로드 4 경로 커버). node 없으면 기본(deno) 유지.
+- `analyze_worker` — 회전 후보 `ios`(쿠키 미지원 → yt-dlp 스킵 즉사) → `["tv", "web_safari"]`(쿠키 호환)로 교체; bot-block 판정에 "no video formats found"/"requested format is not available" 포함해 회전 완주.
+- `analyze_worker` — 최종 analysis error를 60자로 절약(TUI MSG 컬럼 예산); `[youtube] <id>:` 접두와 보고서 꼬리(`; please report…`, `Use --list-formats`) 절삭.
+- `target_downloader` — "Requested format is not available" 분류에 `is` 누락 교정 + no-video-formats → `format missing`.
+- `ui/dialogs.py` — `TuiNoticeDialog`(280×125·칠흑·중앙정렬·OK/View 2버튼) 신설; `show_info_message`를 위임해 쿠키 완료/초기화/브라우저 오류 안내도 동일 규격. 쿠키 흐름 사용자 문자열 한국어→영어(§5).
+- 검증: 문제 URL 실측(일반 31포맷, 멤버십 `0VxDq_vzXcg` 9포맷 `&t=&pp=` 포함) + pytest **239 passed** + offscreen UI 스모크(중앙정렬/2버튼/RESULT_ALT 코드).
+- 커밋: `8408103`(근본수정) `0b42775`(분류 교정) `95c179f`(분기 보강) `dd24cd1`(UI 통일)
+
+---
+
+### 2026-09-17 — v3.6.3 : architecture contract restoration (P0–P2 audit)
+- **워치독 단일 진실**: gate QTimer 폐지(`_gate_watchdog_active` 플래그), fallback `_fallback_timer` 단일 판정(`_fallback_watchdog` 삭제), analysis watchdog 3 spawn-site arm/disarm(§5-21: 성공/실패/타임아웃/Esc/클리어 disarm; polling은 disarmed 워치독 skip).
+- `DownloadContext` — `_last_tick_t/_live_proc/_meta_logged` 필드 선언.
+- `DownloadWorker.run` finally → `_fin.finalize(ctx, …, notify=False)` → `finished_all.emit` 정확히 한 번(분석/충전/다운로드/파이널라이즈/로그/예외 전부 생존).
+- `live_recorder` — stdout-relay 단일 소유권: FFmpeg `pipe:1` → Python이 TS 기록(임시본 replace-on-success, 실패/취소 시 TS 유지, empty→False).
+- `analyze_worker` — `ctrl.spawn_analyzer()` 명시 재시도, streamlink 5-arg TypeError 수정, `ANALYSIS_TIMEOUT_SEC` import 정리.
+- Chzzk live v2 API: `_analyze_chzzk_live_v2`(v2/channels/{hash}/live-detail → `livePlaybackJson` HLS) + numeric-id v1 fallback; 32-hex 채널 해시는 channel id(v1 404 루트케이즈), `status=OPEN`+`live.status=STARTED`→PROGRESS.
+- `playlist.normalize_youtube_channel_url` — `releases|live|community|membership|podcasts` 보존, `/videos` 강제-rewrite 회귀 방지.
+- URL sweep(16 URLs) 분석/라우팅 레벨 검증(Chzzk clip/VOD API OK; YouTube VOD/live/shorts/playlist/watch+list/channel tabs OK; 멤버십 전용은 쿠키 필요 — 기대 동작).
+- 검증: pytest **227 passed**, `test_coordinator.py` 20× 반복 무실패, py_compile·`git diff --check` clean.
+- 커밋: `ab03548`(중간 체크포인트·31파일) `d8b0ad4`(chzzk live 브랜치 + Context 동기화) `1c7d9f8`(POT gate 단일 워치독) `6bc49d1`(fallback timer single authority) `4dd88b3`(analysis watchdog arm/disarm) `6f3cad7`(chzzk v2 live-detail path) `59cf630`(채널 탭 정규화 + 라우팅 경계)
+
+
 
 - `infra/platform.py` 신설 — 크로스플랫폼 HAL 단일 격리 계층
   - `is_windows()` / `is_macos()` — `sys.platform` 단일 판정 출처

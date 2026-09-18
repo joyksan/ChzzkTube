@@ -39,30 +39,29 @@ except ImportError:
 
 
 def show_info_message(parent, title, text, detail=None, is_error=False):
-    msg_box = QMessageBox(parent)
-    msg_box.setIcon(QMessageBox.Icon.NoIcon)
-    msg_box.setWindowTitle(title)
-    # Prepend monochrome icon
-    prefix = "▲  " if is_error else "✓  "
-    msg_box.setText(prefix + text)
+    """[교정] 기본 경로는 TUI 규격 TuiNoticeDialog로 위임 — 텍스트 중앙 정렬·
+    플랫 버튼으로 앱 안내창 규격을 통일한다. setDetailedText가 필요한
+    (detail 지정) 예외 케이스만 기존 QMessageBox 경로를 유지한다."""
     if detail:
+        msg_box = QMessageBox(parent)
+        msg_box.setIcon(QMessageBox.Icon.NoIcon)
+        msg_box.setWindowTitle(title)
+        prefix = "▲  " if is_error else "✓  "
+        msg_box.setText(prefix + text)
         msg_box.setDetailedText(detail)
-    msg_box.setStyleSheet(theme.MSGBOX_QSS)
-    msg_box.addButton(
-        "OK" if not is_error else "Close", QMessageBox.ButtonRole.AcceptRole
-    )
-
-    # Programmatic text alignment centering for success / left alignment for error
-    label = msg_box.findChild(QLabel)
-    if label:
-        if is_error:
-            label.setAlignment(
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-            )
-        else:
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-    msg_box.exec()
+        msg_box.setStyleSheet(theme.MSGBOX_QSS)
+        msg_box.addButton(
+            "OK" if not is_error else "Close", QMessageBox.ButtonRole.AcceptRole
+        )
+        msg_box.exec()
+        return
+    prefix = "▲  " if is_error else "✓  "
+    TuiNoticeDialog(
+        parent,
+        title=title,
+        text=prefix + text,
+        ok_label="Close" if is_error else "OK",
+    ).exec()
 
 
 class CustomComboBox(QComboBox):
@@ -128,7 +127,7 @@ class CookieSelectDialog(QDialog):
         super().__init__(parent)
         self.selected_type = None
         self.selected_path = ""
-        self.setWindowTitle("쿠키 불러오기...")
+        self.setWindowTitle("Load cookies…")
         self.setFixedSize(320, 220)  # [수정] 300x380 -> 320x220 컴팩트화
         self.setStyleSheet(theme.DIALOG_BG_QSS)
         layout = QVBoxLayout(self)
@@ -261,6 +260,50 @@ class ActionCountdownDialog(QDialog):
     def cancel_action(self):
         self.timer.stop()
         self.reject()
+
+
+class TuiNoticeDialog(QDialog):
+    """[신규] TUI 규격 통합 안내창 — ExitConfirmDialog와 동일 규격(280x125,
+    칠흑 배경, 텍스트 중앙 정렬). show_info_message의 QMessageBox를 대체하며,
+    alt_label 지정 시 부가 버튼(View 등)이 추가된다. done 코드로 구분:
+    RESULT_OK(0, 기본) / RESULT_ALT(2, 부가 — View 누르면 확인창이 닫히고
+    호출자가 부가 동작을 이어간다)."""
+
+    RESULT_OK = 0
+    RESULT_ALT = 2
+
+    def __init__(self, parent=None, title="", text="", ok_label="OK", alt_label=None):
+        super().__init__(parent)
+        self.setWindowTitle(title or "ChzzkTube")
+        self.setFixedSize(280, 125)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setStyleSheet(theme.DIALOG_BG_QSS)
+
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(14)
+        vbox.setContentsMargins(16, 16, 16, 16)
+
+        lbl = QLabel(text)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("font-size: 11px; color: #e3e3e3; line-height: 1.4;")
+        vbox.addWidget(lbl)
+
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(8)
+
+        if alt_label:
+            btn_alt = QPushButton(alt_label)
+            btn_alt.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+            btn_alt.clicked.connect(lambda: self.done(self.RESULT_ALT))
+            btn_box.addWidget(btn_alt)
+
+        btn_ok = QPushButton(ok_label)
+        btn_ok.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+        btn_ok.clicked.connect(self.accept)
+        btn_box.addWidget(btn_ok)
+
+        vbox.addLayout(btn_box)
 
 
 class CookieViewerDialog(QDialog):
@@ -692,14 +735,14 @@ class SettingsDialog(QDialog):
 
     def view_cookie(self):
         cookie_src = self.cfg.get("browser_cookie", "none")
-        content = "로드된 쿠키가 없습니다."
+        content = "no cookies loaded."
         if cookie_src == "cookie_file" and os.path.exists(self.cfg.get("cookie_file_path", "")):
             try:
                 with open(self.cfg["cookie_file_path"], "r", encoding="utf-8") as f:
                     file_size = os.path.getsize(self.cfg["cookie_file_path"])
-                    content = f.read(5000) + ("\n... (생략)" if file_size > 5000 else "")
+                    content = f.read(5000) + ("\n... (truncated)" if file_size > 5000 else "")
             except Exception as ex:  # noqa: BLE001
-                content = f"파일 읽기 오류: {ex}"
+                content = f"file read error: {ex}"
         elif cookie_src not in ["none", "auto"]:
             try:
                 # [교정] 인라인 import get_browser_cookies 제거
@@ -711,13 +754,13 @@ class SettingsDialog(QDialog):
                         for k, v in kv_dict.items():
                             lines.append(f"  {k} = {v}")
                         lines.append("")
-                    content = f"[{cookie_src}] 브라우저 추출 전체 쿠키 목록:\n\n" + "\n".join(lines)
+                    content = f"[{cookie_src}] extracted browser cookies:\n\n" + "\n".join(lines)
                 else:
-                    content = f"[{cookie_src}] 브라우저에서 쿠키를 가져오지 못했습니다. (브라우저 실행 중 또는 권한 문제)"
+                    content = f"[{cookie_src}] browser returned no cookies (running browser or permission denied)"
             except Exception as ex:  # noqa: BLE001
-                content = f"쿠키 조회 중 오류 발생: {ex}"
+                content = f"cookie lookup error: {ex}"
 
-        viewer = CookieViewerDialog("쿠키 뷰어 (상세)", content, self)
+        viewer = CookieViewerDialog("Cookie Viewer (details)", content, self)
         viewer.exec()
 
     def load_cookie(self):
@@ -727,26 +770,35 @@ class SettingsDialog(QDialog):
             self.cfg["cookie_file_path"] = dlg.selected_path
             self.save_cfg()
             self._refresh_cookie_status()
-            show_info_message(self, "성공", f"쿠키 설정이 완료되었습니다.\n({dlg.selected_type})")
+            names = {"cookie_file": "Cookies.txt"}
+            src_name = names.get(dlg.selected_type, dlg.selected_type)
+            notice = TuiNoticeDialog(
+                self,
+                title="ChzzkTube",
+                text=f"\u2713 Cookie configured.\n({src_name})",
+                alt_label="View",
+            )
+            if notice.exec() == TuiNoticeDialog.RESULT_ALT:
+                self.view_cookie()
 
     def reset_cookie(self):
         self.cfg["browser_cookie"] = "none"
         self.cfg["cookie_file_path"] = ""
         self.save_cfg()
         self._refresh_cookie_status()
-        show_info_message(self, "초기화", "쿠키가 초기화되었습니다.")
+        show_info_message(self, "Reset", "Cookie cleared.")
 
     def _cookie_status_text(self):
         src = self.cfg.get("browser_cookie", "none")
         names = {
-            "none": "사용 안 함",
-            "auto": "자동 (브라우저 탐색)",
-            "cookie_file": "Cookies.txt 파일",
+            "none": "None",
+            "auto": "Auto (browser)",
+            "cookie_file": "Cookies.txt",
         }
-        label = names.get(src, f"브라우저 직접 추출 ({src})")
+        label = names.get(src, f"Browser ({src})")
         if src == "cookie_file" and self.cfg.get("cookie_file_path"):
-            label += f" — {os.path.basename(self.cfg['cookie_file_path'])}"
-        return f"현재: {label}"
+            label += f" \u2014 {os.path.basename(self.cfg['cookie_file_path'])}"
+        return f"Current: {label}"
 
     def _refresh_cookie_status(self):
         self.lbl_cookie_status.setText(self._cookie_status_text())

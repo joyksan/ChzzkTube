@@ -12,6 +12,7 @@ import re
 import urllib.request
 import yt_dlp
 
+import chzzktube.core.chzzk_api as chzzk_api
 from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
 from chzzktube.core.client_opts import (
     _apply_client_opts,
@@ -23,7 +24,7 @@ from chzzktube.core.client_opts import (
     _apply_pot_opts,
     _concurrent_fragments,
 )
-from chzzktube.core.dl_platform import detect_content_type
+from chzzktube.core.dl_platform import detect_content_type, _dl_platform
 from chzzktube.core.playlist import normalize_youtube_channel_url
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.utils import get_filename_template
@@ -165,6 +166,36 @@ def _download_chzzk(ctx, url, content_type):
     return True
 
 
+def _download_chzzk_live(ctx, url):
+    """치지직 API의 HLS 포맷을 FFmpeg stdout 릴레이로 녹화한다."""
+    info = chzzk_api.analyze_chzzk_live_api(url)
+    if info.get("live_status") != "PROGRESS":
+        raise RuntimeError("chzzk live offline")
+    formats = [fmt for fmt in info.get("formats", []) if fmt.get("url")]
+    selection = str(ctx.v_sel or "auto").strip()
+    if selection and selection != "auto":
+        formats = [fmt for fmt in formats if str(fmt.get("id")) == selection]
+    else:
+        limit = str(ctx.cfg.get("max_video_res") or "none")
+        if limit.isdigit():
+            formats = [fmt for fmt in formats if 0 < (fmt.get("height") or 0) <= int(limit)]
+    if not formats:
+        raise RuntimeError("chzzk live format unavailable")
+    fmt = max(formats, key=lambda f: (f.get("height") or 0, f.get("bitrate") or 0))
+    if not ctx._meta_logged:
+        _pe.emit_chzzk_header(ctx, info, fmt)
+    out_file = os.path.join(ctx.cfg["download_path"], _chzzk_filename(info, fmt, ctx.cfg))
+    temp_ts, _, _ = _lr.prepare_live_paths(ctx, out_file)
+    cmd = ["ffmpeg", "-y", "-i", fmt["url"]]
+    if ctx.cfg.get("audio_only"):
+        cmd.append("-vn")
+    cmd.extend(["-c", "copy", "-f", "mpegts", "pipe:1"])
+    ok = _lr.record_live_stream(ctx, cmd, temp_ts, log_tag="FFmpeg")
+    if not ok and not ctx.state.get("canceled"):
+        raise RuntimeError("chzzk live recording failed")
+    return ok
+
+
 def _download_youtube_live(ctx, url):
     """유튜브 라이브 — ffmpeg 녹화 파이프라인 (live_recorder)."""
     return _lr.download_youtube_live(ctx, url)
@@ -173,10 +204,10 @@ def _download_youtube_live(ctx, url):
 def _download_streamlink(ctx, url):
     """streamlink 대상 — 자식 프로세스 녹화 파이프라인 (화질은 cfg fit)."""
     out_file = os.path.join(ctx.cfg["download_path"], "streamlink_live.mp4")
-    temp_ts, thumb, _ = _lr.prepare_live_paths(ctx, out_file, None)
+    temp_ts, _, _ = _lr.prepare_live_paths(ctx, out_file, None)
     quality = str(ctx.cfg.get("streamlink_quality") or "best").strip() or "best"
     cmd = ["streamlink", url, quality, "-O"]
-    return _lr.record_live_stream(ctx, cmd, temp_ts, out_file, thumb)
+    return _lr.record_live_stream(ctx, cmd, temp_ts)
 
 
 def _download_vod(ctx, url):
@@ -234,6 +265,8 @@ def download_target(ctx, url, failed_targets):
         if ct in ("clip", "vod"):
             return _download_chzzk(ctx, url, ct)
         if ct == "live":
+            if _dl_platform(url) == "chzzk":
+                return _download_chzzk_live(ctx, url)
             return _download_youtube_live(ctx, url)
         if ct == "stream":
             return _download_streamlink(ctx, url)
@@ -249,7 +282,9 @@ def download_target(ctx, url, failed_targets):
             or "the page needs to be reloaded" in err_str
         ):
             reason = "age/bot restricted"
-        elif "requested format not available" in err_str:
+        # [교정] yt-dlp 원문은 "Requested format is not available" — 기존
+        # 체크문("requested format not available")은 is 누락으로 미매칭.
+        elif "requested format is not available" in err_str or "no video formats found" in err_str:
             reason = "format missing"
         elif "video unavailable" in err_str or "this video is not available" in err_str:
             reason = "video unavailable"

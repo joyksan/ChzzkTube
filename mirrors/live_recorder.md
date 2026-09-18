@@ -21,7 +21,6 @@ from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.media import (
     cleanup_temp_files,
     format_bytes,
-    remux_live_to_container,
 )
 from chzzktube.core.utils import get_filename_template
 from chzzktube.pipeline.progress_emitter import (
@@ -37,11 +36,10 @@ _TICK_INTERVAL = 1.0
 
 
 def download_youtube_live(ctx, url):
-    """유튜브 라이브 — yt-dlp로 통합 포맷 URL만 추출 후 ffmpeg로 녹화.
+    """유튜브 라이브 — yt-dlp로 포맷 URL만 추출 후 Python이 파일을 기록한다.
 
-    Args:
-        ctx: DownloadContext (worker 대신 컨텍스트만 받음)
-        url: 라이브 스트림 URL
+    FFmpeg는 MPEG-TS를 stdout으로만 출력한다. Python이 최종 출력 파일의 유일한
+    작성자가 되어 FFmpeg와 파일 소유권을 공유하지 않는다.
     """
     opts = {
         "logger": ctx.logger,
@@ -77,40 +75,81 @@ def download_youtube_live(ctx, url):
         get_filename_template(ctx.cfg) % info,
     )
 
-    # FFmpeg는 stdout 파이프로 출력, Python이 out_file에 직접 기록
+    temp_ts, _, _ = prepare_live_paths(ctx, out_file)
     cmd = ["ffmpeg", "-y", "-i", stream_url, "-c", "copy", "-f", "mpegts", "pipe:1"]
-    return record_live_stream(ctx, cmd, out_file, info.get("thumbnail"))
+    return record_live_stream(ctx, cmd, temp_ts, log_tag="FFmpeg")
 
 
 def prepare_live_paths(ctx, out_file, thumb_url=None):
-    """라이브 녹화용 임시 TS 파일 및 썸네일 경로 도출."""
+    """릴레이 기록용 임시 TS 및 썸네일·최종 출력 경로를 도출한다."""
     base, _ = os.path.splitext(out_file)
     temp_ts = f"{base}_temp.ts"
     thumb_file = f"{base}_temp_thumb.jpg" if thumb_url else None
     return temp_ts, thumb_file, out_file
 
 
+def _remux_live_output(ctx, out_file):
+    """TS를 별도 파일로 변환한 뒤 교체한다. 실패하면 원본을 보존한다."""
+    from chzzktube.infra.platform import spawn_kwargs
+
+    if not out_file or not os.path.isfile(out_file) or not os.path.getsize(out_file):
+        return None
+    target_ext = str(ctx.cfg.get("container", "mp4") or "mp4").lower()
+    if target_ext not in ("mp4", "mkv"):
+        target_ext = "mp4"
+    base = os.path.splitext(out_file)[0].removesuffix("_temp")
+    out_path = base + f".{target_ext}"
+    # 기존 최종 파일과 원본 TS는 변환 성공 전까지 건드리지 않는다.
+    import tempfile
+    fd, staging = tempfile.mkstemp(suffix=f".{target_ext}", dir=os.path.dirname(out_file) or ".")
+    os.close(fd)
+    cmd = ["ffmpeg", "-y", "-i", out_file, "-c", "copy", staging]
+    try:
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       check=True, timeout=120, **spawn_kwargs())
+        if not os.path.getsize(staging):
+            raise RuntimeError("empty remux output")
+        os.replace(staging, out_path)
+        if os.path.abspath(out_file) != os.path.abspath(out_path):
+            os.remove(out_file)
+        return out_path
+    except Exception as ex:
+        raw_log.raw(
+            "media",
+            emit_dl(status="FAIL", scope=_dl_platform(ctx.current_url or ""),
+                    stage="LIVE", msg=f"live remux failed — {ex}; source retained: {out_file}",
+                    is_error=True),
+            to_tui=False,
+        )
+        return None
+    finally:
+        with suppress(OSError):
+            os.remove(staging)
+
+
+
 def handle_stream_finish(ctx, is_live, temp_file, proc_code=0):
-    """스트림 종료 후처리 — 컨테이너 리먹싱 + 임시 파일 정리 + 완료 로그."""
+    """성공한 변환만 완료 처리하고, 취소/실패한 원본 녹화는 보존한다."""
+    has_data = bool(temp_file and os.path.isfile(temp_file) and os.path.getsize(temp_file))
+    if ctx.state.get("canceled"):
+        ctx.live_partially_saved = has_data
+        if has_data:
+            raw_log.raw("dl", emit_dl(status="ABORT", stage="LIVE",
+                        msg=f"partial recording retained: {temp_file}"), to_tui=True)
+        return False
+    if not has_data:
+        raw_log.raw("dl", emit_dl(status="FAIL", stage="LIVE",
+                    msg="empty or missing recording", is_error=True), to_tui=True)
+        return False
     if proc_code not in (0, None):
-        if ctx.state.get("canceled"):
-            ctx.live_partially_saved = True
-        else:
-            raw_log.raw(
-                "dl",
-                emit_dl(
-                    status="FAIL",
-                    scope=_dl_platform(ctx.current_url or ""),
-                    stage="LIVE",
-                    msg="exit code error",
-                    is_error=True,
-                ),
-                to_tui=True,
-            )
-        cleanup_temp_files(temp_file)
+        raw_log.raw("dl", emit_dl(status="FAIL", stage="LIVE",
+                    msg=f"exit code {proc_code}; source retained: {temp_file}",
+                    is_error=True), to_tui=True)
         return False
 
-    out_path = remux_live_to_container(temp_file, ctx.cfg.get("container", "mp4"))
+    out_path = _remux_live_output(ctx, temp_file)
+    if not out_path:
+        return False
     if out_path and os.path.exists(out_path):
         size = os.path.getsize(out_path)
         raw_log.raw(
@@ -129,11 +168,12 @@ def handle_stream_finish(ctx, is_live, temp_file, proc_code=0):
     cleanup_temp_files(temp_file)
     return True
 
+
 _READ_CHUNK = 256 * 1024
-_TICK_INTERVAL = 0.5
+_TICK_INTERVAL = 1.0
 
 
-def record_live_stream(ctx, cmd, temp_ts_file, out_file, thumb_file, log_tag="Streamlink"):
+def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
     """ffmpeg/streamlink 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리."""
     from chzzktube.infra.platform import spawn_kwargs
 
@@ -229,4 +269,4 @@ def record_live_stream(ctx, cmd, temp_ts_file, out_file, thumb_file, log_tag="St
     finally:
         stderr_t.join(timeout=1.0)
 
-    return handle_stream_finish(ctx, True, temp_ts_file, returncode)
+    return handle_stream_finish(ctx, True, out_file, returncode)

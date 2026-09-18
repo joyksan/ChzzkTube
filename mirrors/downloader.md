@@ -101,17 +101,12 @@ class DownloadWorker(QThread):
         ctx = None
         failed_targets = []
         success_count = 0
-        finalized = False
-
-        def finalize_once():
-            nonlocal finalized
-            if finalized or ctx is None:
-                return
-            finalized = True
+        def report_error(message):
+            # 로그 장애가 제어용 종료 통지를 막아서는 안 된다.
             try:
-                _fin.finalize(ctx, self.total_count, failed_targets, success_count)
-            except Exception as ex:  # noqa: BLE001
-                raw_log.raw("dl", _pe.emit_err(f"finalization error: {ex}"), to_tui=True)
+                raw_log.raw("dl", _pe.emit_err(message), to_tui=True)
+            except Exception:
+                pass
 
         try:
             # [Watchdog] 다운로드 시작 시 게이트 워치독 리셋
@@ -121,6 +116,7 @@ class DownloadWorker(QThread):
             ctx.targets = _td.expand_targets(ctx)
             self.targets = ctx.targets
             self.total_count = len(self.targets)
+            ctx.total_count = self.total_count
 
             for idx, url in enumerate(self.targets, 1):
                 ctx.advance_target(idx, url)
@@ -146,9 +142,16 @@ class DownloadWorker(QThread):
                 self._download_watchdog.heartbeat()
         except Exception as ex:  # noqa: BLE001
             if "CANCELED_BY_USER" not in str(ex) and "중지되었습니다" not in str(ex) and not self.state["canceled"]:
-                raw_log.raw("dl", _pe.emit_err(str(ex)), to_tui=True)
+                failed_targets.append((self.current_url or "", str(ex)))
+                report_error(str(ex))
         finally:
-            finalize_once()
+            try:
+                if ctx is not None:
+                    _fin.finalize(ctx, self.total_count, failed_targets, success_count, notify=False)
+            except Exception as ex:  # noqa: BLE001
+                report_error(f"finalization error: {ex}")
+            finally:
+                self.finished_all.emit(success_count, len(failed_targets))
 
     def kill_live_process(self):
         """[A4] 라이브 녹화 프로세스 정리 — worker·ctx 양쪽 핸들을 모두 킬."""

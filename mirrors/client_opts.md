@@ -107,13 +107,27 @@ def _apply_cookie_opts(opts, cfg):
 
 
 def _apply_ejs_opts(opts):
-    """YouTube JS 챌린지(n-sig) 솔버 원격 수급 — ejs:github 허용.
+    """YouTube JS 챌린지(n-sig) 솔버 실행 환경 구성.
 
-    [배경] YouTube가 web 계열 클라이언트에 JS 챌린지를 요구할 때
-    기본 설정은 원격 솔버 다운로드를 skip해 'page needs to be reloaded'
-    오류로 귀결된다. ejs:github 허용치를 주면 GitHub에서 챌린지 솔버
-    스크립트를 자동 수급해 n-sig 해결을 돕는다.
+    1) js_runtimes: node 명시 주입 — [근본 수정] yt-dlp의 기본 JS 런타임은
+       'deno'뿐이고 PATH 탐색으로만 node를 찾는다. 이 앱은 node를
+       writable_base()/node(포터블)에 자체 수급하므로 PATH에 없고,
+       결과적으로 n-challenge solving이 실패해 web 계열 포맷이 증발했다
+       ("No video formats found" → 회전 실패로 이어짐). node_exe()로
+       탐색한 실행 파일을 js_runtimes={'node': {'path': ...}}로 명시 주입해
+       해결한다. node가 없으면 기본값(deno) 유지.
+    2) remote_components: ejs:github 허용 — GitHub에서 챌린지 솔버 스크립트
+       자동 수급(yt-dlp-ejs PyPI 패키지 미설치 환경에서 필수).
     """
+    try:
+        from chzzktube.infra.node_provider import node_exe
+        node = node_exe()
+        if node:
+            opts.setdefault("js_runtimes", {})
+            if "node" not in opts["js_runtimes"]:
+                opts["js_runtimes"]["node"] = {"path": node}
+    except Exception:  # noqa: BLE001 — 탐색 실패 시 기본(deno) 폴백
+        pass
     if "remote_components" not in opts:
         opts["remote_components"] = []
     if "ejs:github" not in opts["remote_components"]:
