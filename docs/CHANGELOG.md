@@ -1,3 +1,25 @@
+### 2026-09-19 — v3.7.1 : 5대 구조적 결함 수정 (patch)
+- **결함 1** — 유튜브 `tv` 클라이언트 폴백 시 화질 제한 및 포맷 무음 위험
+  - `_format_selector`: `"bv*+ba/b"` → `"bv*+ba"` (단일 포맷 `b` 폴백 제거 → 분리 포맷 없으면 예외로 폴백 유도)
+  - `_download_vod`: `client_chain`에서 `ios` 제거 (`["web", "web_safari", "tv"]` — analyze_worker `_RETRY_CLIENTS`와 일치); `tv` 진입 시 화질 제한 경고 + 분리 포맷 강제
+- **결함 2** — 라이브 녹화 블로킹 HANG
+  - `record_live_stream`: reader 스레드 + Queue로 논블로킹 읽기 구현 (Windows 파이프 `selectors` 미지원 문제 해결)
+  - 1초 타임아웃 폴링으로 취소/워치독 체크 보장; 네트워크 단절 시 무한 블로킹 방지
+- **결함 3** — 치지직 인증 세션(쿠키) 만료 시 리커버리 부재
+  - `ChzzkAuthError` 예외 클래스 + `_get_json_with_auth_check` (401/403 시 명시적 발생)
+  - `analyze_worker`: `ChzzkAuthError` 감지 시 `"chzzk cookie expired — please reconfigure cookies"` 반환
+  - `MainWindow.on_analyze_error`: 쿠키 만료 감지 시 `CookieSelectDialog` 자동 표시 → 재분석 트리거
+- **결함 4** — POT 서버 빌드 타임아웃 vs 게이트 워치독 충돌
+  - `GATE_TIMEOUT_SEC`: 120s → 900s 상향 (npm ci + tsc 최대 15분 커버)
+  - `pot_server._run_and_stream_log`: 빌드 진행 중 10초마다 하트비트 발행 (이미 구현)
+  - `MainWindow._start_gate_watchdog`: POT 빌드 하트비트 연결 (이미 구현)
+- **결함 5** — 네트워크 I/O 루프 내 워치독 하트비트 미연동
+  - `_WATCHDOG_HEARTBEAT_INTERVAL = 5.0` 상수 추가
+  - `_http_download`, `record_live_stream` 루프 내 5초마다 워치독 하트비트 호출
+  - `DownloadContext`에 `_download_watchdog`/`_gate_watchdog`/`_live_watchdog`/`_analysis_watchdog` 필드 추가
+  - `DownloadWorker.extract()`에서 워치독 4종 주입
+- **부가 수정** — `LivenessWatchdog`을 `QObject` 상속으로 변경 → Qt 시그널/슬롯 연결 문제 해결 (`test_window_opens_and_renders_log` 통과)
+
 ### 2026-09-18 — v3.7.0 : download pipeline contract overhaul (minor)
 - **배경**: 다운로드 파이프라인 계약 분산·불일치 누적 — 반환 타입 혼재(str/dict/ClassifiedTarget), VOD 폴백 `tv→web_safari→web`(360p 고착), PO 토큰 `web_embedded` vs `player_client` 불일치(0% stall), terminal failure까지 봇 차단으로 오판(4단계 헛돌기), `skip_targets` 연결 누락, 분석 워커 Mock 잔재, 쿠키 정책 판정 이중화
 - **핵심 변경**:

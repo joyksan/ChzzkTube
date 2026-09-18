@@ -1075,6 +1075,15 @@ class MainWindow(QMainWindow):
             True,
             True,
         )
+        # [결함 3 수리] 치지직 쿠키 만료 감지 시 CookieSelectDialog 자동 표시
+        if "chzzk cookie expired" in err_msg.lower():
+            from chzzktube.ui.dialogs import CookieSelectDialog
+            dlg = CookieSelectDialog(self)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                self.cfg["browser_cookie"] = dlg.selected_type
+                # 재분석 트리거
+                self.ctrl.spawn_analyzer(self.url_input.text().strip(), self.cfg)
+            return
         # [Followup-6] 봇 체크/PO 토큰 사유면 POT 기동 후 1회 재시도를 큐잉한다.
         if self._maybe_retry_analysis(err_msg):
             return

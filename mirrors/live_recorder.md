@@ -7,8 +7,10 @@
 - stderr 는 별도 스레드로 상세 로그 유지
 - 취소 시 kill + stdout 큐 drain (이후 'truncated' 오탐 방지)
 - **출력 소유권 단일화**: FFmpeg는 stdout 파이프로만 출력, Python이 파일 소유자로서 기록
+- **논블로킹 읽기**: reader 스레드 + Queue로 1초 타임아웃 폴링 → 취소/워치독 하트비트 체크 가능
 """
 import os
+import queue
 import subprocess
 import threading
 import time
@@ -33,6 +35,10 @@ from chzzktube.pipeline.progress_emitter import (
 _READ_CHUNK = 256 * 1024
 # 진행 로그 발행 간격 (초)
 _TICK_INTERVAL = 1.0
+# [결함 2 수리] 논블로킹 읽기 셀렉터 타임아웃 (초) — 취소/워치독 체크 주기
+_SELECTOR_TIMEOUT = 1.0
+# [결함 5 수리] 워치독 하트비트 발행 간격 (초)
+_WATCHDOG_HEARTBEAT_INTERVAL = 5.0
 
 
 def download_youtube_live(ctx, url):
@@ -174,7 +180,13 @@ _TICK_INTERVAL = 1.0
 
 
 def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
-    """ffmpeg/streamlink 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리."""
+    """ffmpeg/streamlink 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리.
+
+    [결함 2 수리] reader 스레드 + Queue로 논블로킹 릴레이
+    - Windows 파이프에서 selectors/select 미지원 문제 회피
+    - 네트워크 단절 시에도 메인 루프가 1초마다 취소/워치독 체크
+    [결함 5 수리] 5초마다 워치독 하트비트 호출
+    """
     from chzzktube.infra.platform import spawn_kwargs
 
     proc = subprocess.Popen(
@@ -188,10 +200,29 @@ def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
     # 컨텍스트에 프로세스 핸들 저장 (앱 종료 시 정리용)
     ctx._live_proc = proc
 
+    # [결함 2 수리] stdout 읽기를 별도 스레드로 분리
+    # - 메인 루프는 queue.get(timeout=1.0)으로 논블로킹
+    # - reader 스레드가 블로킹 read를 담당하므로 네트워크 멈춤도 메인 UI를 막지 않음
+    stdout_queue = queue.Queue()
+    def _read_stdout():
+        try:
+            while True:
+                chunk = proc.stdout.read(_READ_CHUNK)
+                stdout_queue.put(chunk)
+                if not chunk:
+                    break
+        except Exception:
+            # reader 스레드 예외도 메인 루프가 종료할 수 있도록 EOF sentinel 주입
+            stdout_queue.put(b"")
+
+    reader_t = threading.Thread(target=_read_stdout, daemon=True)
+    reader_t.start()
+
     ctx.speed_win.reset()
     total_bytes = 0
     start_t = time.monotonic()
     last_tick = 0.0
+    last_watchdog_heartbeat = 0.0
 
     def _drain_stderr():
         # stderr 는 별도 스레드로 실시간 상세 로그 유지 (버스 단일 경유)
@@ -203,8 +234,8 @@ def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
                                 LogEvent(stage="LIVE", status="RUN",
                                          scope="FFMP",
                                          msg=raw.decode("utf-8", "replace").strip(),
-                        ),
-                    )
+                                     ),
+                                )
 
     stderr_t = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_t.start()
@@ -213,7 +244,19 @@ def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
     try:
         with open(out_file, "wb") as out_f:
             while True:
-                chunk = proc.stdout.read(_READ_CHUNK)
+                try:
+                    chunk = stdout_queue.get(timeout=_SELECTOR_TIMEOUT)
+                except queue.Empty:
+                    # [결함 2 수리] 1초 타임아웃마다 취소/워치독/프로세스 상태 체크
+                    if ctx.state.get("canceled") and proc.poll() is None:
+                        with suppress(ProcessLookupError, OSError):
+                            proc.kill()
+                        break
+                    # [결함 5 연동] 워치독 하트비트 (ctx에 워치독 참조가 있다면)
+                    _try_watchdog_heartbeat(ctx, last_watchdog_heartbeat)
+                    last_watchdog_heartbeat = time.monotonic()
+                    continue
+
                 if not chunk:
                     break
                 out_f.write(chunk)
@@ -233,18 +276,16 @@ def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
                             speed=f"{format_bytes(rate)}/s" if rate else "-",
                             stage="LIVE",
                             msg=f"recording · {fname}",
-                            is_status=True,  # 진행률 틱은 한 줄 덮어쓰기(갱신형)
+                            is_status=True,
                         ),
                         to_tui=True,
                     )
 
-                # 취소 요청 — 자식 죽이고 stdout queue drain ('truncated' 오탐 방지)
+                # [결함 2 수리] 취소 요청 즉시 처리
                 if ctx.state.get("canceled") and proc.poll() is None:
                     with suppress(ProcessLookupError, OSError):
                         proc.kill()
-                    with suppress(ValueError, OSError):
-                        while proc.stdout.read(_READ_CHUNK):
-                            pass
+                    break
 
         ctx.speed_win.add(total_bytes)
         returncode = proc.wait()
@@ -267,6 +308,22 @@ def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
             to_tui=True,
         )
     finally:
+        reader_t.join(timeout=1.0)
         stderr_t.join(timeout=1.0)
 
     return handle_stream_finish(ctx, True, out_file, returncode)
+
+
+def _try_watchdog_heartbeat(ctx, last_heartbeat_time):
+    """컨텍스트에서 사용 가능한 워치독에 하트비트 시도 (5초 간격)."""
+    now = time.monotonic()
+    if now - last_heartbeat_time < _WATCHDOG_HEARTBEAT_INTERVAL:
+        return
+    for attr in ("_download_watchdog", "_gate_watchdog", "_live_watchdog", "_analysis_watchdog"):
+        wd = getattr(ctx, attr, None)
+        if wd and hasattr(wd, "heartbeat"):
+            try:
+                wd.heartbeat()
+            except Exception:
+                pass
+            break

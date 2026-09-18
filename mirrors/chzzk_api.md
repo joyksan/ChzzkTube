@@ -1,12 +1,22 @@
-﻿### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD/LIVE 메타데이터 + 스트림 목록)
+### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD/LIVE 메타데이터 + 스트림 목록)
 import datetime
 import json
 import re
+import urllib.error
 from urllib.parse import urljoin
 import urllib.request
 
 from chzzktube.core.cookies import get_browser_cookies
 from chzzktube.core.media import get_video_codec_rank
+
+
+class ChzzkAuthError(Exception):
+    """치지직 인증 실패(쿠키 만료/부재/권한 없음) — 상위에서 리커버리 유도용."""
+    def __init__(self, message, status_code=None, response_body=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_body = response_body
+
 
 def _chzzk_headers():
     """치지직/네이버 API 공통 헤더 — 쿠키는 naver/chzzk 도메인만 평탄화.
@@ -32,6 +42,23 @@ def _get_json(url, headers):
     with urllib.request.urlopen(req, timeout=15) as res:
         return json.loads(res.read().decode("utf-8"))
 
+def _get_json_with_auth_check(url, headers):
+    """JSON GET + 인증 실패 시 ChzzkAuthError 발생."""
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as res:
+            return json.loads(res.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace") if e.fp else ""
+        if e.code in (401, 403):
+            raise ChzzkAuthError(
+                f"chzzk auth failed (HTTP {e.code}): cookie expired or missing",
+                status_code=e.code,
+                response_body=body,
+            )
+        raise
+
+
 def analyze_chzzk_clip_api(target_url):
     """치지직 클립 — detail(제목/생성일/채널명) + play-info(rmcnmv MP4 목록)."""
     clean_url = target_url.split("?")[0].rstrip("/")
@@ -44,7 +71,7 @@ def analyze_chzzk_clip_api(target_url):
 
     detail_url = f"https://api.chzzk.naver.com/service/v1/clips/{clip_id}/detail"
     try:
-        d_data = _get_json(detail_url, headers).get("content", {})
+        d_data = _get_json_with_auth_check(detail_url, headers).get("content", {})
         if d_data.get("clipTitle"):
             clip_title = d_data.get("clipTitle")
         if d_data.get("createdDate"):
@@ -69,13 +96,13 @@ def analyze_chzzk_clip_api(target_url):
     play_info_url = f"https://api.chzzk.naver.com/service/v1/play-info/clip/{clip_id}"
     video_formats = []
     try:
-        data = _get_json(play_info_url, headers)
+        data = _get_json_with_auth_check(play_info_url, headers)
         cnt = data.get("content", {})
         in_key, video_id = cnt.get("inKey"), cnt.get("videoId")
 
         if in_key and video_id:
             rmc_url = f"https://apis.naver.com/rmcnmv/rmcnmv/vod/play/v2.0/{video_id}?key={in_key}"
-            rmc_data = _get_json(rmc_url, headers)
+            rmc_data = _get_json_with_auth_check(rmc_url, headers)
             videos = rmc_data.get("videos", {}).get("list", [])
             for idx, v in enumerate(videos):
                 enc = v.get("encodingOption", {}) or {}
@@ -146,7 +173,7 @@ def analyze_chzzk_vod_api(target_url):
     video_formats = []
     try:
         meta = (
-            _get_json(
+            _get_json_with_auth_check(
                 f"https://api.chzzk.naver.com/service/v2/videos/{video_no}",
                 headers,
             ).get("content")
@@ -163,7 +190,7 @@ def analyze_chzzk_vod_api(target_url):
         channel_name = channel.get("channelName") or meta.get("channelName")
 
         if vid and inkey:
-            pb = _get_json(
+            pb = _get_json_with_auth_check(
                 f"https://apis.naver.com/neonplayer/vodplay/v2/playback/{vid}"
                 f"?key={inkey}&env=real&country=KR&platform=web",
                 headers,

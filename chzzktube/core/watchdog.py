@@ -8,21 +8,28 @@
 - 스레드 안전: Lock으로 _last_heartbeat / _grace_used 보호
 - 주입 가능한 clock 파라미터로 단위 테스트에서 시간 조작 가능
 - 워커는 heartbeat() 호출, 감시자는 check_timeout() 폴링
+- QObject 상속으로 Qt 시그널/슬롯 연결 지원 (MainWindow 워치독 연동)
 """
 import threading
 import time
 from typing import Callable
 
+from PySide6.QtCore import QObject, Slot
+
 
 # ── 상수 단일 출처 (HANDOVER §3 표와 동기화) ───────────────────────────
 FALLBACK_TIMEOUT_SEC = 15.0   # 기동 폴백 (READY 강제 개방)
 FALLBACK_GRACE_SEC = 3.0      # 폴백 유예 1회 (Followup-4)
-GATE_TIMEOUT_SEC = 120.0      # POT 게이트 2차 워치독 (Followup-3)
+GATE_TIMEOUT_SEC = 900.0      # [결함 4 수리] POT 빌드 최대 15분(900초) 고려 상향
 ANALYSIS_TIMEOUT_SEC = 45.0   # AnalyzeWorker 타임아웃
 
 
-class LivenessWatchdog:
-    """단일 진실 시간 기반 워치독 — 워커 하트비트로 수명 연장, Grace 1회 지원."""
+class LivenessWatchdog(QObject):
+    """단일 진실 시간 기반 워치독 — 워커 하트비트로 수명 연장, Grace 1회 지원.
+
+    QObject 상속으로 Qt 시그널/슬롯 직접 연결 가능.
+    스레드 안전: Lock으로 _last_heartbeat / _grace_used 보호.
+    """
 
     __slots__ = ("timeout_sec", "grace_sec", "_clock", "_lock", "_last_heartbeat", "_grace_used")
 
@@ -31,7 +38,9 @@ class LivenessWatchdog:
         timeout_sec: float,
         grace_sec: float = 0.0,
         clock: Callable[[], float] | None = None,
+        parent: QObject | None = None,
     ):
+        super().__init__(parent)
         self.timeout_sec = float(timeout_sec)
         self.grace_sec = float(grace_sec)
         self._clock = clock or time.monotonic
@@ -39,8 +48,12 @@ class LivenessWatchdog:
         self._last_heartbeat = self._clock()
         self._grace_used = False
 
+    @Slot()
     def heartbeat(self) -> None:
-        """워커 진행 틱(yt-dlp 콜백, download 진행 등)에서 호출해 수명을 연장한다."""
+        """워커 진행 틱(yt-dlp 콜백, download 진행 등)에서 호출해 수명을 연장한다.
+
+        Qt 슬롯으로 호출 가능 — 워커 스레드에서 시그널로 안전하게 연결됨.
+        """
         with self._lock:
             self._last_heartbeat = self._clock()
             self._grace_used = False

@@ -39,7 +39,7 @@ except AttributeError:
 from PySide6.QtCore import QThread, Signal
 
 from chzzktube.core.watchdog import ANALYSIS_TIMEOUT_SEC
-from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api
+from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api, ChzzkAuthError
 from chzzktube.core.log_emitter import format_kv_line, format_tree_item
 from chzzktube.core.media import (
     audio_spec,
@@ -373,6 +373,11 @@ class AnalyzeWorker(QThread):
             ):
                 self.error_occurred.emit(
                     "age/membership restricted"
+                )
+            # [결함 3 수리] 치지직 인증 에러(쿠키 만료/부재) 명시적 처리
+            elif isinstance(ex, ChzzkAuthError):
+                self.error_occurred.emit(
+                    "chzzk cookie expired — please reconfigure cookies"
                 )
             elif "the page needs to be reloaded" in ex_str or "challenge solving failed" in ex_str:
                 # [봇 체크] EJS 솔버 + 클라이언트 회전까지 실패하면 남은 수단은

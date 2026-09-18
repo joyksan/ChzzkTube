@@ -66,6 +66,12 @@ class DownloadContext:
     # 포맷 선택 (분석 단계에서 결정된 클라이언트)
     yt_client: str = "auto"
 
+    # [결함 5 수리] 워치독 참조 — 파이프라인 함수들이 하트비트 호출 가능
+    _download_watchdog: Any = None
+    _gate_watchdog: Any = None
+    _live_watchdog: Any = None
+    _analysis_watchdog: Any = None
+
     # 대상 목록 (expand_targets에서 참조)
     targets: list = field(default_factory=list)
 

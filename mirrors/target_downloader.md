@@ -9,6 +9,7 @@
 import functools
 import os
 import re
+import time
 import urllib.request
 import yt_dlp
 
@@ -67,6 +68,9 @@ _TERMINAL_FAIL_MARKERS = frozenset({
     "copyright",
     "members-only",
 })
+
+# [결함 5 수리] 워치독 하트비트 발행 간격 (초)
+_WATCHDOG_HEARTBEAT_INTERVAL = 5.0
 
 
 def _is_retryable_bot_error(err: Exception) -> bool:
@@ -128,7 +132,11 @@ def _extract_yt_id(url):
 
 
 def _format_selector(ctx):
-    """yt-dlp format 선택 문자열 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 대응."""
+    """yt-dlp format 선택 문자열 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 대응.
+    
+    [결함 1 수리] tv 클라이언트 대비: 비디오+오디오 분리 포맷이 없을 때
+    단일 포맷(b)으로 폴백하지 않고 명시적 에러 유도 → 상위에서 폴백 체인 계속.
+    """
     if ctx.cfg.get("audio_only"):
         return "bestaudio/best"
 
@@ -141,8 +149,9 @@ def _format_selector(ctx):
 
     res = str(ctx.cfg.get("max_video_res") or "none").strip()
     if res.isdigit():
-        return f"bv*[height<={res}]+ba/b"
-    return "bv*+ba/b"
+        return f"bv*[height<={res}]+ba"
+    # [결함 1 수리] "bv*+ba/b" → "bv*+ba" (단일 포맷 폴백 제거)
+    return "bv*+ba"
 
 
 def _chzzk_filename(ch_info, fmt, cfg):
@@ -181,11 +190,15 @@ def _chzzk_filename(ch_info, fmt, cfg):
 
 
 def _http_download(ctx, url, out_path):
-    """치지직 progressive MP4 직접 스트림 다운로드 + 진행률 틱."""
+    """치지직 progressive MP4 직접 스트림 다운로드 + 진행률 틱.
+    
+    [결함 5 수리] 5초마다 워치독 하트비트 호출.
+    """
     ctx.speed_win.reset()
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with urllib.request.urlopen(req) as resp, open(out_path, "wb") as f:
         done = 0
+        last_heartbeat = time.monotonic()
         while True:
             chunk = resp.read(262144)
             if not chunk:
@@ -193,6 +206,19 @@ def _http_download(ctx, url, out_path):
             f.write(chunk)
             done += len(chunk)
             ctx.speed_win.add(done)
+
+            # [결함 5 수리] 5초마다 워치독 하트비트
+            now = time.monotonic()
+            if now - last_heartbeat >= _WATCHDOG_HEARTBEAT_INTERVAL:
+                last_heartbeat = now
+                for attr in ("_download_watchdog", "_gate_watchdog", "_live_watchdog", "_analysis_watchdog"):
+                    wd = getattr(ctx, attr, None)
+                    if wd and hasattr(wd, "heartbeat"):
+                        try:
+                            wd.heartbeat()
+                        except Exception:
+                            pass
+                        break
     return out_path
 
 
@@ -268,12 +294,15 @@ def _download_streamlink(ctx, url):
 
 
 def _download_vod(ctx, url):
-    """유튜브 VOD 다운로드 — 화질 우선 하향식 순차 폴백 (web -> web_safari -> ios -> tv)."""
+    """유튜브 VOD 다운로드 — 화질 우선 하향식 순차 폴백 (web -> web_safari -> tv)."""
     cfg_client = str(ctx.cfg.get("yt_player_client", "auto") or "auto")
 
     # auto 모드일 때만 지능형 하향식 체인 가동 (명시적 수동 선택 시 단일 시도)
     if cfg_client == "auto":
-        client_chain = ["web", "web_safari", "ios", "tv"]
+        # [결함 1 수리] ios는 SUPPORTS_COOKIES=False로 쿠키 사용 시 yt-dlp가 스킵
+        # (analyze_worker.py _RETRY_CLIENTS = ["tv", "web_safari"]와 일치)
+        # tv는 화질 제한(720p max) + 분리 포맷 부재 위험 → 마지막 수단으로만 사용
+        client_chain = ["web", "web_safari", "tv"]
     else:
         client_chain = [cfg_client]
 
@@ -284,9 +313,12 @@ def _download_vod(ctx, url):
         try:
             # tv 클라이언트 진입 시: 사용자에게 화질 저하 리스크 TUI 경고 발행
             if client == "tv":
+                # [결함 1 수리] 분리 포맷(bv*+ba) 강제 → 없으면 예외로 폴백 유도
+                # yt-dlp가 포맷을 못 찾으면 "Requested format is not available" 발생
+                # 이는 _is_retryable_bot_error에서 True로 판별되어 다음 클라이언트 시도
                 raw_log.raw(
                     "dl",
-                    _pe.emit_event("DL", "WARN", "YTDL", "bot fallback: tv client (quality limited to 360p/720p)"),
+                    _pe.emit_event("DL", "WARN", "YTDL", "bot fallback: tv client (quality limited to 720p, no split formats)"),
                     to_tui=True,
                 )
 

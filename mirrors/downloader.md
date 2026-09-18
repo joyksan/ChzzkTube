@@ -116,6 +116,10 @@ class DownloadWorker(QThread):
             yt_client=self.yt_client,
             targets=self.targets,
             finished_all=self.finished_all,
+            _download_watchdog=self._download_watchdog,
+            _gate_watchdog=self._download_watchdog,
+            _live_watchdog=self._download_watchdog,
+            _analysis_watchdog=self._download_watchdog,
         )
 
     def _reset_loop_state(self):
