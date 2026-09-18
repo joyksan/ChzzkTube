@@ -1,3 +1,17 @@
+### 2026-09-18 — v3.7.0 : download pipeline contract overhaul (minor)
+- **배경**: 다운로드 파이프라인 계약 분산·불일치 누적 — 반환 타입 혼재(str/dict/ClassifiedTarget), VOD 폴백 `tv→web_safari→web`(360p 고착), PO 토큰 `web_embedded` vs `player_client` 불일치(0% stall), terminal failure까지 봇 차단으로 오판(4단계 헛돌기), `skip_targets` 연결 누락, 분석 워커 Mock 잔재, 쿠키 정책 판정 이중화
+- **핵심 변경**:
+  - `pipeline/classifier.py` 신규: `ContentKind`(LIVE_YOUTUBE/LIVE_CHZZK 분리), `StreamCapability`(TriState None + `could_have_*` 방어 메서드), `CookiePolicyContext`, `ClassifiedTarget`, `ItemClassifier` 순수 분류 엔진
+  - `target_downloader.py`: 품질 우선 폴백 `web→web_safari→ios→tv`, terminal fail-fast, PO 토큰 1:1 바인딩(web/web_safari만, ios/tv 미주입), `download_target` 반환값 `True/"skip"/False` 명시, `_flatten`/`_normalize_single_item`/`expand_targets` 모두 `List[ClassifiedTarget]` 반환
+  - `finalizer.py`: `skip_targets` 파라미터, `DONE/WARN/FAIL/ABORT` 상태 세분화, `batch finished (success: N, fail: M, skip: K)` 포맷
+  - `downloader.py`: `item.url` 접근 통일, `skip_targets` 전달
+  - `analyze_worker.py`: 빈 `YoutubeDL` Mock 제거
+  - `tests/conftest.py`: `pytest_configure` `.pylib` bootstrap, `yt_dlp.__path__` 동기화, `raw_log` flush fixture
+- **설계 원칙**: 단일 계약(SSOT) — `has_video/has_audio=None` 보존, `could_have_*()` 안전 질의 / 품질 우선 폴백 / PO 토큰 정합성 / terminal fail-fast / Skip 집계 / 쿠키 정책 SSOT(`_apply_cookie_opts` ≡ `_has_configured_cookies`)
+- **검증**: pytest **239 passed**, compileall OK, 실측: 멤버십/연령제한/삭제 → `DL │ SKIP │ YT │ [age/member gated]`, 최종 요약 `skip` 카운트
+
+---
+
 ### 2026-09-18 — v3.6.4 : analysis dead-end fix — EJS JS runtime + cookie-aware rotation + TUI notice dialog
 - **근본 원인**: yt-dlp의 기본 JS 런타임은 `deno`(PATH 탐색)뿐이고 앱이 PATH 밖(`~/.chzzktube/node`)에 자체 수급한 포터블 Node.js를 탐색하지 못해 n-challenge(EJS) 해결이 불가능 → "No video formats found" 회전 실패로 이어졌다.
 - `client_opts._apply_ejs_opts` — `node_provider.node_exe()`로 탐색한 포터블 node를 `js_runtimes={'node': {'path': ...}}`로 명시 주입(분석/라이브/다운로드 4 경로 커버). node 없으면 기본(deno) 유지.

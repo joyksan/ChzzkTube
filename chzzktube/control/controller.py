@@ -1,27 +1,33 @@
 ### controller.py - 다운로드 세션의 상태 머신 및 DownloadWorker 생명주기 관리
 import os
 import re
+from dataclasses import dataclass, replace
+from typing import Optional
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QThread
 
 from chzzktube.workers.analyze_worker import AnalyzeWorker
 from chzzktube.workers.downloader import DownloadWorker
+
+
+@dataclass(frozen=True)
+class SessionState:
+    """불변 세션 상태 — 스레드 간 안전한 전달을 위해 불변 객체로 관리."""
+    running: bool = False
+    canceled: bool = False
+    skip: bool = False
+    analyzing: bool = False
+    picking: bool = False  # 포맷 직접 고르기 대기 (UI pick 입력 수신 중)
 
 
 class MediaController(QObject):
     """다운로드 + 분석 세션의 상태 머신과 생명주기를 통치하는 완벽한 컨트롤러.
 
     계약:
-    *  state 딕셔너리는 DownloadWorker에 참조 그대로 전달된다. 즉, 워커 스레드와 UI 스레드가 동일 객체를 공유한다.
-    *  스레드 경계 — state 플래그는 단방향 쓰기: canceled/skip 는
-       UI 스레드만 쓰고 워커 스레드는 읽기만 한다. CPython GIL 하에서 dict 단일 키 읽기/쓰기는 원자적이고
-       각 키의 쓰기 주체가 하나뿐이므로 lock 없이도 경쟁상태(lost update)가 발생하지 않는다.
-    *  워커 → UI 통보는 절대 state가 아니라 Qt 시그널(log_concise/log_full/
-       finished_all/result_ready/error_occurred)로만 — 시그널 emit은 스레드 안전(QueuedConnection으로
-       수신 스레드 큐에 적재)이므로 UI 위젯은 워커에서 직접 조작 금지.
-    *  UI 조작(버튼/로그/진행바)은 view(MainWindow)의 메서드를 통해서만 수행한다.
-    *  좀비 워커(분석 중 새 분석 요청으로 폐기된 워커)는 View가 아닌 Controller가 소유하며,
-       자연 종료 시 _reap_zombie()로 메모리에서 소거한다. """
+    *  SessionState 불변 객체로 상태 관리 — 스레드 간 공유 시 replace()로 새 인스턴스 생성
+    *  상태 변경은 시그널(canceled_changed, skip_changed, analyzing_changed)로만 전달
+    *  워커 → UI 통보는 Qt 시그널(finished_all/result_ready/error_occurred)로만
+    *  분석 워커 종료 시 quit() + wait()로 정상 종료 보장 (좀비 패턴 제거) """
 
     # ── 분석 워커 시그널 포워딩 (View 바인딩용) ──
     # [v3.3.0] 로그는 raw 버스 단일 경유 — analyze_log_full 포워딩 폐기.
@@ -29,76 +35,107 @@ class MediaController(QObject):
     analyze_error_occurred = Signal(str)
     # [Watchdog] 분석 진행 하트비트 포워딩. 뷰가 소유한 분석 워치독 수명을 연장한다.
     analyze_activity = Signal()
+    # ── 상태 변경 시그널 (UI 스레드에서만 emit, 워커는 읽기 전용) ──
+    canceled_changed = Signal(bool)
+    skip_changed = Signal(bool)
+    analyzing_changed = Signal(bool)
 
     def __init__(self, view):
         super().__init__()
         self.view = view
-        self.state = {
-            "running": False,
-            "canceled": False,
-            "skip": False,
-            "analyzing": False,
-            "picking": False,  # 포맷 직접 고르기 대기 (UI pick 입력 수신 중)
-        }
-        self.worker_dl = None
-        self.worker_analyze = None
-        self._zombie_workers = []  # View가 아닌 Controller가 무덤을 관리한다
+        self._state = SessionState()
+        self.worker_dl: Optional[DownloadWorker] = None
+        self.worker_analyze: Optional[AnalyzeWorker] = None
+
+    # ── 상태 읽기 전용 프로퍼티 ──
+    @property
+    def state(self) -> SessionState:
+        return self._state
 
     @property
-    def running(self):
-        return self.state["running"]
+    def running(self) -> bool:
+        return self._state.running
 
     @property
-    def analyzing(self):
-        return self.state["analyzing"]
+    def analyzing(self) -> bool:
+        return self._state.analyzing
 
     @property
-    def picking(self):
-        return self.state["picking"]
+    def picking(self) -> bool:
+        return self._state.picking
 
-    # ── 분석 워커 생명주기 (main.py에서 구출 완료) ──
+    # ── 상태 변경 메서드 (불변 객체 교체 + 시그널 emit) ──
+    def _set_running(self, val: bool):
+        if self._state.running != val:
+            self._state = replace(self._state, running=val)
+
+    def _set_canceled(self, val: bool):
+        if self._state.canceled != val:
+            self._state = replace(self._state, canceled=val)
+            self.canceled_changed.emit(val)
+
+    def _set_skip(self, val: bool):
+        if self._state.skip != val:
+            self._state = replace(self._state, skip=val)
+            self.skip_changed.emit(val)
+
+    def _set_analyzing(self, val: bool):
+        if self._state.analyzing != val:
+            self._state = replace(self._state, analyzing=val)
+            self.analyzing_changed.emit(val)
+
+    def _set_picking(self, val: bool):
+        if self._state.picking != val:
+            self._state = replace(self._state, picking=val)
+
+    # ── 분석 워커 생명주기 ──
     def spawn_analyzer(self, url, cfg, deep=False):
-        """URL 분석 워커 생성 및 관리 (기존 분석 강제 유기 포함)
+        """URL 분석 워커 생성 및 관리 (기존 분석 정상 종료 후 교체)."""
+        self._terminate_analyzer()
 
-        deep=True: 매니페스트(스클) 포함 포맷 목록 확보 — 포맷 직접 고르기 전용.
-        """
-        self._abandon_analyzer()
-
-        self.state["analyzing"] = True
+        self._set_analyzing(True)
         self.worker_analyze = AnalyzeWorker(url, cfg, deep=deep)
         # View 시그널로 포워딩 (Controller가 중개)
         self.worker_analyze.result_ready.connect(self.analyze_result_ready)
         self.worker_analyze.error_occurred.connect(self.analyze_error_occurred)
         self.worker_analyze.activity.connect(self.analyze_activity)
+        self.worker_analyze.finished.connect(self._on_analyzer_finished)
         self.worker_analyze.start()
 
-    def _abandon_analyzer(self):
-        """GIL 데드락을 회피하기 위한 우아한 워커 유기 (Zombie Pattern)"""
+    def _terminate_analyzer(self):
+        """분석 워커 정상 종료 (quit + wait). QThread 및 mock 모두 대응."""
         w = self.worker_analyze
         if not w:
             return
         if w.isRunning():
-            # 시그널을 끊어 UI 오염 차단
-            for sig in (w.result_ready, w.error_occurred, w.activity):
+            # 시그널 연결 해제
+            for sig in (w.result_ready, w.error_occurred, w.activity, w.finished):
                 try:
                     sig.disconnect()
                 except TypeError:
                     pass
-            w.finished.connect(self._reap_zombie)
-            self._zombie_workers.append(w)
+            # 이벤트 루프 종료 요청 후 대기 (QThread 및 mock 대응)
+            quit_method = getattr(w, "quit", None)
+            if callable(quit_method):
+                quit_method()
+            wait_method = getattr(w, "wait", None)
+            if callable(wait_method):
+                if not wait_method(2000):  # 2초 대기
+                    terminate_method = getattr(w, "terminate", None)
+                    if callable(terminate_method):
+                        terminate_method()
+                    wait_method(500)
         self.worker_analyze = None
-        self.state["analyzing"] = False
+        self._set_analyzing(False)
 
     def abandon_analysis(self):
-        """분석 중단 — 워커 유기(좀비 패턴). 취소와 타임아웃의 공용 진입점."""
-        self._abandon_analyzer()
+        """분석 중단 — 워커 정상 종료."""
+        self._terminate_analyzer()
 
-    def _reap_zombie(self):
-        """자연 종료된 유기 워커를 메모리에서 우아하게 소거한다."""
-        try:
-            self._zombie_workers.remove(self.sender())
-        except (ValueError, AttributeError):
-            pass
+    def _on_analyzer_finished(self):
+        """워커 정상 종료 시 호출."""
+        self.worker_analyze = None
+        self._set_analyzing(False)
 
     ### ── 순수 로직: 타겟 파싱 ──────────────────────────────────
     @staticmethod
@@ -195,27 +232,53 @@ class MediaController(QObject):
         w = DownloadWorker(
             targets,
             cfg,
-            self.state,
-            video_id,
-            audio_id,
+            state_dict=None,  # 새 신호 기반 상태 사용
+            v_sel=video_id,
+            a_sel=audio_id,
             is_live_hint=is_live_hint,
             v_spec=v_spec,
             audio_desc=audio_desc,
             yt_client=yt_client,
+            canceled_signal=self.canceled_changed,
+            skip_signal=self.skip_changed,
         )
         w.finished_all.connect(v.on_download_finished)
         self.worker_dl = w
         w.start()
 
-    def shutdown(self, wait_ms=1000):
-        """앱 종료 시 활성 스레드 및 좀비 스레드 안전 중단 (closeEvent용)."""
-        if self.worker_dl and self.worker_dl.isRunning():
-            self.state["canceled"] = True
-            self.worker_dl.wait(wait_ms)
+    def begin_download(self):
+        self._set_running(True)
+        self._set_canceled(False)
+        self._set_skip(False)
 
-        for w in list(self._zombie_workers):
-            if w.isRunning():
-                w.wait(1500)
+    def end_download(self):
+        self._set_running(False)
+        self._set_canceled(False)
+        self._set_skip(False)
+
+    def on_download_finished(self, success_count, fail_count):
+        """다운로드 완료 후 상태 정리 (View → Controller 이관)."""
+        self.end_download()
+
+        if success_count > 0:
+            # 분석 데이터 초기화 — 다음 URL 입력 시 깨끗한 상태로 시작
+            self.view.extracted_data = {"info": None, "v_list": [], "a_list": []}
+
+    def request_cancel(self):
+        if self.running:
+            self._set_canceled(True)
+        elif self.analyzing:
+            self._terminate_analyzer()
+
+    def request_skip(self):
+        if self.running:
+            self._set_skip(True)
+
+    def shutdown(self, wait_ms=1000):
+        """앱 종료 시 활성 스레드 안전 중단 (closeEvent용)."""
+        if self.worker_dl and self.worker_dl.isRunning():
+            self._set_canceled(True)
+            self.worker_dl.wait(wait_ms)
 
         # POT 서버 워커 정리는 POTManager.cancel()이 담당 (MainWindow.closeEvent에서 호출)
 

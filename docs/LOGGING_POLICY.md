@@ -1,4 +1,4 @@
-# ChzzkTube 로그 정책 (v3.6.4)
+# ChzzkTube 로그 정책 (v3.7.0)
 
 > 단일 진실: **발행점 라벨링 → LogEvent 운반 → 말단 렌더러에서 1회 조판/스탬프**.
 > 이 문서는 `HANDOVER §1.3`과 `§5 불변식`의 해설서다. 충돌 시 코드와 HANDOVER 불변식이 우선한다.
@@ -20,14 +20,14 @@ history = 전량 ⊇ F12(full) = 전량 ⊇ TUI(concise) = to_tui=True만
 - `stage/status/scope`는 **태어난 곳(발행점)**에서 동봉한다. 렌더 레이어에서 뒤늦게 추론하지 않는다.
 - 신규 발행점은 `log_console.emit_event`, `emit_dl`, `emit_err`, `emit_progress`, `emit_component`를 사용한다.
 - `log_history.log` 직접 호출은 금지한다. history 적재는 dispatcher 내부 1회가 유일하다.
-- 발행점은 의미 단위 라벨(`msg ≤ 60자`)로 정규화한다. 원문은 `tool_log`→raw_log→F12(history/full)로 보존되며, TUI MSG 컬럼은 발행점 정규화 값만 조판한다(v3.6.4 — analyze_worker의 analysis error 정규화 참조).
+- 발행점은 의미 단위 라벨(`msg ≤ 60자`)로 정규화한다. 원문은 `tool_log`→raw_log→F12(history/full)로 보존되며, TUI MSG 컬럼은 발행점 정규화 값만 조판한다(v3.7.0 — analyze_worker의 analysis error 정규화 참조).
 
 ## 3. 운반 계약 (표준 봉투 + 날것 내용물)
 
 - `LogEvent(timestamp, stage, status, scope, msg, speed, pct, bar_frac, ...)`가 표준 봉투다.
 - `platform`과 `spec`은 v3.4.0에서 deprecated 호환 필드다. 신규 발행점에서 사용하지 않는다.
 - `spec`은 렌더러가 MSG 전두부 `[tag]`로 흡수한다.
-- `msg` 페이로드의 "무가공 원문" 적용 범위는 `tool_log` raw tool 출력 → F12(history/full) 사이다. 발행점이 §2(v3.6.4) 의미 단위 라벨로 정규화한 `msg`는 발행 시점에 이미 정규화된 값이므로, 렌더러는 절취 없이(max_width 초과 시 대사절 생략) 조판한다. raw tool 출력은 발행점이 재포맷하지 않는다.
+- `msg` 페이로드의 "무가공 원문" 적용 범위는 `tool_log` raw tool 출력 → F12(history/full) 사이다. 발행점이 §2(v3.7.0) 의미 단위 라벨로 정규화한 `msg`는 발행 시점에 이미 정규화된 값이므로, 렌더러는 절취 없이(max_width 초과 시 대사절 생략) 조판한다. raw tool 출력은 발행점이 재포맷하지 않는다.
 - 문자열 스탬핑(`[HH:MM:SS]` 손조립)은 금지한다. timestamp는 말단 렌더러에서 1회만 생성한다.
 
 ## 4. 말단 계약 (조판·스탬프·절취는 뷰에서 1회)

@@ -50,10 +50,12 @@ class TestFetchPoToken:
     @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_fetch_success(self, mock_urlopen):
         resp = MagicMock()
-        resp.read.return_value = json.dumps({"poToken": "test_token_123"}).encode()
+        resp.read.return_value = json.dumps({"poToken": "test_token_123", "visitorData": "visitor_456"}).encode()
         mock_urlopen.return_value.__enter__ = MagicMock(return_value=resp)
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
-        assert fetch_po_token("imTeMjjlHUs") == "test_token_123"
+        token, visitor = fetch_po_token("imTeMjjlHUs")
+        assert token == "test_token_123"
+        assert visitor == "visitor_456"
 
     @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_fetch_no_token(self, mock_urlopen):
@@ -61,12 +63,12 @@ class TestFetchPoToken:
         resp.read.return_value = json.dumps({"poToken": ""}).encode()
         mock_urlopen.return_value.__enter__ = MagicMock(return_value=resp)
         mock_urlopen.return_value.__exit__ = MagicMock(return_value=False)
-        assert fetch_po_token("imTeMjjlHUs") is None
+        assert fetch_po_token("imTeMjjlHUs") == (None, None)
 
     @patch("chzzktube.infra.po_client.urllib.request.urlopen")
     def test_fetch_error(self, mock_urlopen):
         mock_urlopen.side_effect = Exception("server down")
-        assert fetch_po_token("imTeMjjlHUs") is None
+        assert fetch_po_token("imTeMjjlHUs") == (None, None)
 
 
 class TestDefaults:

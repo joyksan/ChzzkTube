@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-18 - v3.6.4 — analysis dead-end fix (patch up)
+> 마지막 갱신: 2026-09-18 - v3.7.0 — download pipeline contract overhaul (minor up)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.6.4` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.6.4"` (최신: 2026-09-18 analysis dead-end fix — EJS JS runtime 주입, 쿠키 호환 회전, TUI notice dialog)
+- **버전**: `v3.7.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.7.0"` (최신: 2026-09-18 download pipeline contract overhaul — ClassifiedTarget 단일 계약, VOD 품질 우선 폴백, PO 토큰 1:1 바인딩, skip 집계)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.6.4`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.7.0`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -616,6 +616,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 > v3.6.1(2026-09-16) — 아키텍처 다이어그램(mermaid 3종) 추가: 전체 계층도·기동 시퀀스·상태·워치독 관계(문서 패치, 소스 변경 없음).
 > v3.6.3(2026-09-17) — 기동 초기화 단일화 + 분석 워치독 계약 복구: 폴링 내 UI 재초기화 제거(위젯·타이머 매초 교체, 업데이트 확인 반복 예약, URL당 1회 재시도 이력 소거 수리) · 분석 워치독 뷰 단독 소유(무페이로드 activity, 강제 terminate 제거) · Infra→UI 역참조와 죽은 타이머 참조 정리 · 테스트 세션 QApplication 단일화(tests/conftest.py).
 > v3.6.4(2026-09-18) — analysis dead-end fix: EJS JS 런타임(앱 포터블 Node 주입)·쿠키 호환 회전(tv/web_safari, ios 배제)·analysis error 60자 절약·TuiNoticeDialog + 쿠키 흐름 영어 문자열.
+> v3.7.0(2026-09-18) — download pipeline contract overhaul: ClassifiedTarget 단일 계약, VOD 품질 우선 폴백(web→web_safari→ios→tv), PO 토큰 1:1 바인딩, skip 집계, conftest .pylib bootstrap, analyze_worker Mock 제거, 쿠키 정책 SSOT 정렬.
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
@@ -642,6 +643,50 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 #### 검증
 - 전체 pytest 137 passed / smoke_test PASS / `sync_mirrors.py --check` 0건 / py_compile OK
+
+---
+
+### 2026-09-18 — v3.7.0 : download pipeline contract overhaul (minor)
+
+#### 배경 (v3.6.4 → v3.7.0)
+다운로드 파이프라인의 핵심 계약들이 분산·불일치 상태로 누적되어 있었다:
+- `_flatten`/`expand_targets` 반환 타입이 `List[str]` / `List[dict]` / `List[ClassifiedTarget]`로 섞임
+- `_download_vod` 클라이언트 폴백이 `tv→web_safari→web`(저화질 우선)으로 동작 → 360p 고착
+- PO 토큰 `web_embedded`와 실제 `player_client`(`web`/`tv` 등) 불일치 → 0% stall
+- terminal failure(비공개/삭제)까지 봇 차단으로 오판해 4단계 전량 헛돌기
+- `skip_targets`가 워커→파이프라인→finalizer 연결 누락으로 미집계
+- 분석 워커에 `YoutubeDL` Mock 클래스 잔재 → 테스트 환경과 실 배포 환경 괴리
+- 쿠키 정책 판정(`_apply_cookie_opts` vs `_has_configured_cookies`) 불일치
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `pipeline/classifier.py` | **신규** — `ContentKind(VOD/CLIP/LIVE_YOUTUBE/LIVE_CHZZK/PLAYLIST/UNKNOWN)`, `StreamCapability(has_video\|audio: bool\|None + could_have_* 방어 메서드)`, `CookiePolicyContext`, `ClassifiedTarget`, `ItemClassifier` 순수 분류 엔진 |
+| `pipeline/target_downloader.py` | `_make_ytdl_opts(forced_client=)`, `_download_vod` 품질 우선 체인 `web→web_safari→ios→tv`, terminal fail-fast, PO 토큰 1:1 바인딩(web/web_safari만, ios/tv 미주입), `_classify_item(dict/str/ClassifiedTarget)` 정규화, `_flatten`·`_normalize_single_item`·`expand_targets` 모두 `List[ClassifiedTarget]` 반환, `download_target` 반환값 `True/"skip"/False` 명시 |
+| `pipeline/finalizer.py` | `skip_targets` 파라미터 추가, `DONE/WARN/FAIL/ABORT` 상태 세분화, `batch finished (success: N, fail: M, skip: K)` 포맷 |
+| `workers/downloader.py` | `item.url` 속성 접근 통일, `skip_targets` 전달, 시스템 skip `"skip"` 반환 시 집계 |
+| `workers/analyze_worker.py` | 빈 `YoutubeDL` Mock 클래스 제거, 실 `yt_dlp` import 경로 단순화 |
+| `tests/conftest.py` | `pytest_configure` 훅으로 `.pylib` bootstrap 강제, `yt_dlp.__path__` 동기화, `raw_log` flush fixture, `live` fixture 복원 |
+| `tests/test_window_initialization.py` | 서브프로세스 `PYTHONPATH=.pylib` 주입 |
+
+#### 설계 원칙
+1. **단일 계약(SSOT)**: 파이프라인 전체가 `ClassifiedTarget` 하나만 공유 — `has_video/has_audio=None`(미정) 상태를 거짓말 없이 보존, 하류에서 `could_have_video()` 등으로 안전 질의
+2. **품질 우선 폴백**: `auto` 모드일 때 `web(최고화질) → web_safari → ios → tv(최후 안전망)` 순으로만 회전, 명시적 client 설정은 단일 시도
+3. **PO 토큰 정합성**: `player_client`와 `po_token=<client>.gvs+TOKEN`을 매 시도에서 동일하게 바인딩, `auto`면 `web_embedded`로 토큰 요청
+4. **에러 분류**: terminal failure(`private`/`unavailable`/`terminated`/`copyright`/`members-only`) 즉시 중단, 봇 차단/챌린지/403만 다음 client로
+3. **Skip 집계**: 이미지 전용(`image-only`), 인증 필요하지만 쿠키 없음(`age/member gated`), 사용자 skip을 `skip_targets`에 수집 → 최종 요약에 `skip: K` 표시
+4. **쿠키 정책 SSOT**: `_apply_cookie_opts`(실제 주입)와 `_has_configured_cookies`(사전 판정)가 **동일한 조건 분기** 공유 — `cookie_file` 모드에서 파일 없으면 양쪽 다 False
+
+#### 검증
+- 전체 pytest **239 passed**
+- `python -m compileall -q chzzktube` 통과
+- `git diff --check` clean
+- 실측: 멤버십 전용/연령 제한/삭제 영상 → `DL │ SKIP │ YT │ [age/member gated]` 출력, 최종 요약 `skip` 카운트 포함
+
+---
+
+### 2026-09-18 — v3.6.4 : analysis dead-end fix: EJS JS 런타임(앱 포터블 Node 주입)·쿠키 호환 회전(tv/web_safari, ios 배제)·analysis error 60자 절약·TuiNoticeDialog + 쿠키 흐름 영어 문자열.
 
 ### 2026-09-13 — v3.4.0 패치 : 분석 상태 머신 회귀 수리 — ENTER 잠금·URL 클리어 크래시
 

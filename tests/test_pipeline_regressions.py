@@ -61,7 +61,8 @@ def test_finalizer_finalize_cancel_emits_abort(monkeypatch):
     assert ctx.finished_all.calls == [(0, 1)]
     statuses = [getattr(e, "status", "") for e in events if e is not None]
     assert "ABORT" in statuses
-    assert "WARN" in statuses  # 실패 1건 결론 라인
+    # 취소 상태에서 실패가 있으면 배치 완료 라인은 FAIL로 출력됨
+    assert "FAIL" in statuses
 
 
 def test_dl_and_finalizer_share_dl_platform():

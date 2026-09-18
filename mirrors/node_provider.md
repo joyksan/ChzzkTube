@@ -5,6 +5,7 @@
 - bundled_npm_ok : 포터블 npm 무결성 검사
 
 서버 기동/빌드/소스 수급은 pot_server.py가 담당.
+공통 경로 헬퍼는 infra.paths에서 import.
 """
 import os
 import re
@@ -19,6 +20,7 @@ import urllib.request
 
 import chzzktube.core.config as config
 from chzzktube.core.log_emitter import emit_component
+from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
 
 
 # ── 상수 (node_provider 전용) ──────────────────────────────────────
@@ -30,27 +32,6 @@ _NO_WINDOW = 0
 _node_ver_cache: dict = {}
 
 
-# ── 공유 헬퍼 ──────────────────────────────────────────────────────
-def get_writable_base():
-    """사용자 환경에서 쓰기 권한이 100% 보장되는 로컬 앱 데이터 디렉터리 반환."""
-    path = config.writable_base()
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def _is_portable():
-    """PyInstaller(frozen) 패키징 여부."""
-    return bool(getattr(sys, "frozen", False))
-
-
-def _bundle_root():
-    """포터블에서 번들 데이터가 풀린 디렉터리 (onedir) _MEIPASS."""
-    if _is_portable():
-        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(sys.executable)))
-    return None
-
-
-# ── Node.js 버전 탐색 ───────────────────────────────────────────────
 def node_major_version(node_path, timeout=10):
     """node --version 출력에서 major 버전 추출 (판별 실패 시 None, 결과 캐시)."""
     if not node_path:

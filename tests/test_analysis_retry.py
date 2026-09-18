@@ -88,7 +88,7 @@ def test_rotation_runs_to_last_candidate_on_derived_error(monkeypatch):
     _FailThenYDL.failures = ["ERROR: [youtube] x: No video formats found!"]
     _FailThenYDL.fail_times = 99
     _FailThenYDL.seen_clients = []
-    monkeypatch.setattr(aw.yt_dlp, "YoutubeDL", _FailThenYDL)
+    monkeypatch.setattr(aw, "YoutubeDL", _FailThenYDL)
     w = _worker()
     with pytest.raises(RuntimeError):
         w._extract_youtube("u", flat=False)
@@ -99,7 +99,7 @@ def test_rotation_succeeds_on_candidate(monkeypatch):
     _FailThenYDL.failures = ["ERROR: [youtube] x: The page needs to be reloaded."]
     _FailThenYDL.fail_times = 1
     _FailThenYDL.seen_clients = []
-    monkeypatch.setattr(aw.yt_dlp, "YoutubeDL", _FailThenYDL)
+    monkeypatch.setattr(aw, "YoutubeDL", _FailThenYDL)
     w = _worker()
     info = w._extract_youtube("u", flat=False)
     assert info["formats"] == [{"id": "f1"}]

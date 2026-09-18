@@ -39,7 +39,7 @@ def test_chzzk_live_real_hls_pipeline(monkeypatch, tmp_path):
     )
     failures = []
 
-    assert td.download_target(ctx, ctx.current_url, failures) is True
+    assert td.download_target(ctx, {"url": ctx.current_url, "title": "", "age_limit": 0, "availability": "public", "is_live": True, "has_video": True, "has_audio": True, "downloadable": True, "needs_pot": False}, failures) is True
 
     analysis.assert_called_once_with(ctx.current_url)
     cmd = spawn.call_args_list[0].args[0]

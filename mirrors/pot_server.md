@@ -7,9 +7,7 @@
 - _wait_port / _kill : 프로세스 생명주기 헬퍼
 - _download_with_progress : 친절한 진행률 다운로드
 
-Node.js 런타임 수급은 node_provider.py가 담당. 공유 헬퍼(get_writable_base,
-server_home, assign_to_job_object 등)는 여기 정의 후 node_provider/pot_provider
-가서 re-import.
+Node.js 런타임 수급은 node_provider.py가 담당. 공유 경로 헬퍼는 infra.paths에서 import.
 """
 import os
 import sys
@@ -26,6 +24,7 @@ import chzzktube.core.config as config
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
 from chzzktube.infra.node_provider import NODE_MIN_MAJOR
+from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
 from chzzktube.infra.platform import (
     attach_to_parent_lifecycle,
     daemon_spawn_kwargs,
@@ -45,39 +44,14 @@ _NPM_CI_TIMEOUT = 600
 _TSC_TIMEOUT = 300
 
 
-# ── 공유 헬퍼 (node_provider에서도 사용) ──────────────────────────────
-def get_writable_base():
-    """사용자 환경에서 쓰기 권한이 100% 보장되는 로컬 앱 데이터 디렉터리 반환.
-
-    경로 계산은 config.writable_base(단일 출처)에 위임하고 생성만 담당.
-    ※ node_provider.get_writable_base와 동일 구현 — 중복을 허용하되
-    pot_server가 독립 import 체인을 유지하도록 여기에 정의.
-    """
-    path = config.writable_base()
-    os.makedirs(path, exist_ok=True)
-    return path
-
-
-def _is_portable():
-    """PyInstaller(frozen) 패키징 여부."""
-    return bool(getattr(sys, "frozen", False))
-
-
-def _bundle_root():
-    """포터블에서 번들 데이터가 풀린 디렉터리 (onedir) _MEIPASS."""
-    if _is_portable():
-        return getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(sys.executable)))
-    return None
-
-
-def server_home():
+def server_home() -> str:
     """PO Token 서버 소스/빌드를 둘 위치."""
     writable_path = os.path.join(get_writable_base(), "bgutil-ytdlp-pot-provider")
     if os.path.isdir(writable_path):
         return writable_path
 
-    if _is_portable():
-        bundle_path = os.path.join(_bundle_root() or "", "bgutil-ytdlp-pot-provider")
+    if is_portable():
+        bundle_path = os.path.join(bundle_root() or "", "bgutil-ytdlp-pot-provider")
         if os.path.isdir(bundle_path):
             return bundle_path
 

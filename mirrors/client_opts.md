@@ -165,16 +165,20 @@ def _apply_pot_opts(opts, video_id, client="web_embedded"):
     - 플러그인 제거 → 토큰 생성이 블랙박스가 아니라 앱이 완전히 제어
     - 서버 미기동/오류 시 None → PO 없이 진행 (플러그인 실패와 달리 조용)
     - player_client가 이미 설정돼 있으면 병합 (덮어쓰지 않음)
+    - [결함 2 수리] visitorData 함께 주입 → 세션 바인딩 유지
     """
     if not video_id:
         return opts
     from chzzktube.infra.po_client import fetch_po_token
-    token = fetch_po_token(video_id)
+    token, visitor_data = fetch_po_token(video_id)
     if not token:
         return opts
     ea = opts.setdefault("extractor_args", {}).setdefault("youtube", {})
     # po_token은 list[str] — 기존 값 유지하며 gvs 컨텍스트만 추가
     ea.setdefault("po_token", []).append(f"{client}.gvs+{token}")
+    # [결함 2 수리] visitor_data 주입 — 세션 바인딩으로 403 방지
+    if visitor_data:
+        ea.setdefault("visitor_data", []).append(visitor_data)
     return opts
 
 

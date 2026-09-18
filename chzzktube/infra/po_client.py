@@ -64,8 +64,11 @@ def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
 def fetch_po_token(video_id, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5):
     """bgutil 독립 서버에서 PO 토큰 직접 패칭 (플러그인 우회).
 
-    POST /get_pot {"content_binding": video_id} → {"poToken": "..."}
+    POST /get_pot {"content_binding": video_id} → {"poToken": "...", "visitorData": "..."}
     서버 미기동/오류 시 None 반환 — 호출부는 PO 없이 진행.
+    
+    Returns:
+        tuple: (po_token, visitor_data) 또는 (None, None)
     """
     url = f"http://{host}:{port}/get_pot"
     try:
@@ -77,11 +80,12 @@ def fetch_po_token(video_id, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5):
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         token = data.get("poToken") or ""
+        visitor_data = data.get("visitorData") or ""
         if token:
-            return token
+            return token, visitor_data
     except Exception:
         pass
-    return None
+    return None, None
 
 
 def extract_video_id(url):

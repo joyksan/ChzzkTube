@@ -40,14 +40,17 @@ def test_expanded_count_reaches_each_target(monkeypatch, tmp_path):
         {"canceled": False, "skip": False}, "auto", "auto",
     )
     urls = ["https://example.com/one", "https://example.com/two"]
+    # Create ClassifiedTarget objects for the mock
+    from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
+    classified_urls = [ItemClassifier.classify(u) for u in urls]
     observed = []
     finished = []
     worker.finished_all.connect(lambda ok, bad: finished.append((ok, bad)))
     monkeypatch.setattr(downloader.raw_log, "raw", Mock())
-    monkeypatch.setattr(downloader._td, "expand_targets", lambda ctx: urls)
+    monkeypatch.setattr(downloader._td, "expand_targets", lambda ctx: classified_urls)
 
-    def download(ctx, url, failures):
-        observed.append((ctx.total_count, ctx.current_idx, url))
+    def download(ctx, item, failures, skip_targets=None):
+        observed.append((ctx.total_count, ctx.current_idx, item.url))
         return True
 
     monkeypatch.setattr(downloader._td, "download_target", download)

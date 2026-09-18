@@ -2,7 +2,7 @@
 """yt-dlp URL 분석 전용 워커 (AnalyzeWorker).
 
 - 경량(매니페스트 미열거)/딥(매니페스트 열거) 분석 모드 지원.
-- ios→tv 플레이어 클라이언트 순차 폴백 등 추출 우회 로직 보유.
+- tv → web_safari 플레이어 클라이언트 순차 폴백 등 추출 우회 로직 보유.
 - [계층] L1 Worker Thread — controller에서 직접 생성, log_full 시그널은
   log_console 경유로 View에 전달.
 """
@@ -14,13 +14,27 @@ import time
 import urllib.request
 import yt_dlp
 
+# 네임스페이스 패키지 대응: yt_dlp.YoutubeDL 또는 yt_dlp.main.YoutubeDL에서 import
+# conftest.py의 .pylib 부트스트랩으로 실제 yt_dlp가 sys.path[0]에 있음
+try:
+    from yt_dlp import YoutubeDL
+except ImportError:
+    try:
+        YoutubeDL = yt_dlp.YoutubeDL
+    except AttributeError:
+        from yt_dlp.main import YoutubeDL
+
 # [플러그인 기생 차단] 구 getpot bgutil 플러그인(venv pip + %APPDATA% 잔재)이
 # 모든 yt-dlp 추출에 자동 로딩되어 자체 deno PO 생성(generate_once.ts — 첫 실행
 # 시 TS 컴파일+FFI로 수십 초, 15~20초 타임아웃 반복)을 돌려 분석 스톨과
 # "page needs to be reloaded" 실패를 유발했다. 앱의 PO 공급은 자체 Node 서버
 # (pot_provider)로 완전 이전했으므로 외부 플러그인을 전면 차단한다.
 # 반드시 첫 YoutubeDL 생성 전에 설정 (plugins 로딩은 1회성 lazy init).
-yt_dlp.plugins.plugin_dirs.value = []
+try:
+    yt_dlp.plugins.plugin_dirs.value = []
+except AttributeError:
+    # 구버전 yt-dlp나 네임스페이스 패키지 형태에서는 plugins 모듈이 없을 수 있음
+    pass
 
 from PySide6.QtCore import QThread, Signal
 
@@ -46,8 +60,10 @@ from chzzktube.core.client_opts import (
     _apply_ejs_opts,
     _apply_ffmpeg_opts,
     _apply_light_analysis_opts,
+    _apply_pot_opts,
     _dedupe_by_label,
 )
+from chzzktube.infra.po_client import extract_video_id
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 
 class AnalyzeWorker(QThread):
@@ -141,8 +157,17 @@ class AnalyzeWorker(QThread):
                 _apply_light_analysis_opts(ydl_opts)
             _apply_ffmpeg_opts(ydl_opts)
             _apply_ejs_opts(ydl_opts)
+            # [결함 1 수리] PO 토큰 주입 — 분석 단계에서도 봇 가드 우회 필요
+            video_id = extract_video_id(url)
+            if video_id and client in ("web", "web_safari"):
+                _apply_pot_opts(ydl_opts, video_id, client=client)
+            elif video_id and client == "auto":
+                # 다운로드 단계와 동일한 쿠키 판정 로직으로 실제 client와 일치
+                from chzzktube.pipeline.target_downloader import _has_configured_cookies
+                pot_client = "web" if _has_configured_cookies(self.cfg) else "web_embedded"
+                _apply_pot_opts(ydl_opts, video_id, client=pot_client)
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                with YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=False)
                 self.client_used = client
                 return info

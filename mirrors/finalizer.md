@@ -14,13 +14,17 @@ from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.pipeline.progress_emitter import emit_dl, emit_err
 
 
-def finalize(ctx, total, failed_targets, success_count, *, notify=True):
+def finalize(ctx, total, failed_targets, success_count, skip_targets=None, *, notify=True):
     """완료 요약을 기록한다.
 
     워커는 notify=False로 호출하고 자체 finally에서 종료 신호를 발행한다.
     notify=True는 기존 직접 호출자의 정상 마감 통지 호환용이다.
+    
+    Args:
+        skip_targets: List[Tuple[url, skip_reason]] - 스킵된 항목들 (선택적)
     """
     fail_count = len(failed_targets)
+    skip_count = len(skip_targets) if skip_targets else 0
 
     if ctx.state["canceled"]:
         if ctx.live_partially_saved:
@@ -45,15 +49,35 @@ def finalize(ctx, total, failed_targets, success_count, *, notify=True):
         for u, reason in failed_targets:
             raw_log.raw("dl", emit_err(f"{u} — {reason}"), to_tui=True)
 
-    # [결론 라인] — 성공/실패 카운트는 MSG 전용 (SPEC/SPEED 침범 금지)
+    # [결론 라인] — 상태 세분화: DONE/WARN/FAIL/SKIP
+    if ctx.state["canceled"]:
+        status = "ABORT"
+    elif fail_count == 0 and skip_count == 0:
+        status = "DONE"
+    elif fail_count == 0 and skip_count > 0:
+        status = "DONE"  # 모두 스킵이거나 일부 스킵+성공
+    elif success_count > 0 and fail_count > 0:
+        status = "WARN"  # 일부 성공 + 일부 실패
+    elif success_count == 0 and fail_count > 0:
+        status = "FAIL"  # 모두 실패
+    else:
+        status = "WARN"
+
+    msg_parts = [f"success: {success_count}"]
+    if fail_count:
+        msg_parts.append(f"fail: {fail_count}")
+    if skip_count:
+        msg_parts.append(f"skip: {skip_count}")
+    msg = "batch finished (" + ", ".join(msg_parts) + ")"
+
     raw_log.raw(
         "dl",
         emit_dl(
-            status="DONE" if fail_count == 0 else "WARN",
+            status=status,
             scope=_dl_platform(ctx.current_url or ""),
             pct=100,
             bar_frac=1.0,
-            msg=f"batch finished (success: {success_count}, fail: {fail_count})",
+            msg=msg,
             is_error=fail_count > 0,
         ),
         to_tui=True,

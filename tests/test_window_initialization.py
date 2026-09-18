@@ -90,10 +90,12 @@ print("initialization and polling contract verified")
 
 def test_polling_preserves_initialized_window():
     root = Path(__file__).resolve().parents[1]
+    pylib_path = str(root / ".pylib")
+    env = {**os.environ, "QT_QPA_PLATFORM": "offscreen", "PYTHONPATH": pylib_path + os.pathsep + os.environ.get("PYTHONPATH", "")}
     result = subprocess.run(
         [sys.executable, "-c", _PROBE],
         cwd=root,
-        env={**os.environ, "QT_QPA_PLATFORM": "offscreen"},
+        env=env,
         capture_output=True,
         text=True,
         timeout=30,

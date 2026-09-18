@@ -28,9 +28,6 @@ from chzzktube.infra.node_provider import (  # SRP: Node.js 런타임만 담당
     NODE_MIN_MAJOR,
     _NO_WINDOW,
     _node_ver_cache,
-    get_writable_base,
-    _is_portable,
-    _bundle_root,
     node_major_version,
     latest_lts_node_url,
     _platform_node_url,
@@ -39,6 +36,11 @@ from chzzktube.infra.node_provider import (  # SRP: Node.js 런타임만 담당
     node_exe,
     bundled_npm_ok,
     ensure_node_runtime,
+)
+from chzzktube.infra.paths import (  # 공통 경로 헬퍼
+    get_writable_base,
+    is_portable,
+    bundle_root,
 )
 from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당
     _SERVER_FALLBACK_VER,

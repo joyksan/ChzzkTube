@@ -143,11 +143,11 @@ def _public_data():
 def test_analyzing_cleared_on_success_unlocks_enter():
     """분석 성공 → analyzing 해제 → IDLE 복귀 → ENTER로 다운로드 재개."""
     m = _FakeMain()
-    m.ctrl.state["analyzing"] = True  # spawn_analyzer 직후 상태
+    m.ctrl._set_analyzing(True)  # spawn_analyzer 직후 상태
 
     m.on_analyze_success(_public_data())
 
-    assert m.ctrl.state["analyzing"] is False
+    assert m.ctrl.state.analyzing is False
     assert m.get_current_app_state() == "IDLE"
     # ENTER (toggle_download) — ANALYZING에 갇히면 started가 비어 있다.
     m.toggle_download()
@@ -157,11 +157,11 @@ def test_analyzing_cleared_on_success_unlocks_enter():
 def test_analyzing_cleared_on_error():
     """분석 실패도 상태 종료 — analyzing 해제되어 IDLE 복귀."""
     m = _FakeMain()
-    m.ctrl.state["analyzing"] = True
+    m.ctrl._set_analyzing(True)
 
     m.on_analyze_error("chzzktube.core.media info fail")
 
-    assert m.ctrl.state["analyzing"] is False
+    assert m.ctrl.state.analyzing is False
     assert m.get_current_app_state() == "IDLE"
 
 
@@ -184,19 +184,19 @@ def test_pick_flow_not_shadowed_by_analyzing():
     m = _FakeMain()
     m._pick_pending = True
     m._pick_targets = ["https://youtu.be/abcDEFghijk"]
-    m.ctrl.state["analyzing"] = True
+    m.ctrl._set_analyzing(True)
 
     m.on_analyze_success(_pick_data())
 
-    assert m.ctrl.state["analyzing"] is False
-    assert m.ctrl.state["picking"] is True
+    assert m.ctrl.state.analyzing is False
+    assert m.ctrl.state.picking is True
     assert m.get_current_app_state() == "PICKING"
 
 
 def test_duplicate_result_after_completion_is_dropped():
     """완료 후 큐잉된 중복 시그널은 stale 판정으로 폐기 — extracted_data 불변."""
     m = _FakeMain()
-    m.ctrl.state["analyzing"] = True
+    m.ctrl._set_analyzing(True)
     m.on_analyze_success(_public_data())
     snapshot = m.extracted_data
 
@@ -215,7 +215,7 @@ def test_on_url_changed_clear_uses_controller_abandon():
     m = _FakeMain()
     # 진행 중이던 분석 워커 흉내 (비실행 상태) — _abandon_analyzer가 참조를 끊어야 한다.
     m.ctrl.worker_analyze = SimpleNamespace(isRunning=lambda: False)
-    m.ctrl.state["analyzing"] = True
+    m.ctrl._set_analyzing(True)
     m.url_input.setText("")
 
     # 예외 없이 실행되어야 한다.
@@ -223,7 +223,7 @@ def test_on_url_changed_clear_uses_controller_abandon():
 
     assert m.console.cleared == 1
     assert m.ctrl.worker_analyze is None
-    assert m.ctrl.state["analyzing"] is False
+    assert m.ctrl.state.analyzing is False
     assert m.extracted_data["info"] is None
     assert m._analysis_watchdog_active is False
 
@@ -231,7 +231,7 @@ def test_on_url_changed_clear_uses_controller_abandon():
 def test_escape_disarms_analysis_watchdog():
     m = _FakeMain()
     m.ctrl.worker_analyze = SimpleNamespace(isRunning=lambda: False)
-    m.ctrl.state["analyzing"] = True
+    m.ctrl._set_analyzing(True)
     m._analysis_watchdog_active = True
 
     main_module.MainWindow._esc_action(m)

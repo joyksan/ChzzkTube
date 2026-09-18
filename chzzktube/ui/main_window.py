@@ -626,7 +626,7 @@ class MainWindow(QMainWindow):
             self._last_input_len = 0
             self.extracted_data = {"info": None, "v_list": [], "a_list": []}
             self._disarm_analysis_watchdog()
-            self.ctrl._abandon_analyzer()
+            self.ctrl.abandon_analysis()
             self.console.clear_status_line()
             self._discard_analysis_result()
             return
@@ -966,7 +966,7 @@ class MainWindow(QMainWindow):
         self.ctrl.abandon_analysis()
         self._pick_pending = False
         self._pick_targets = []
-        self.ctrl.state["picking"] = False
+        self.ctrl._set_picking(False)
         self.update_ui_state()
         self.append_concise_log(
             log_emitter.emit_event(
@@ -1036,7 +1036,7 @@ class MainWindow(QMainWindow):
 
     def _is_stale_analyze_signal(self) -> bool:
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단."""
-        if not self.ctrl.state.get("analyzing"):
+        if not self.ctrl.state.analyzing:
             return True
         return not bool(self.url_input.text().strip())
 
@@ -1044,7 +1044,7 @@ class MainWindow(QMainWindow):
         if self._is_stale_analyze_signal():
             return
         self._disarm_analysis_watchdog()
-        self.ctrl.state["analyzing"] = False
+        self.ctrl._set_analyzing(False)
         self.extracted_data = data
         self._ensure_pot_for_info(data.get("info"))
         if data.get("is_playlist"):
@@ -1063,11 +1063,11 @@ class MainWindow(QMainWindow):
         if self._is_stale_analyze_signal():
             return
         self._disarm_analysis_watchdog()
-        self.ctrl.state["analyzing"] = False
+        self.ctrl._set_analyzing(False)
         pick_pending = getattr(self, "_pick_pending", False)
         self._pick_pending = False
         if pick_pending:
-            self.ctrl.state["picking"] = False
+            self.ctrl._set_picking(False)
         self.stop_analysis_anim(ok=False)
         self.update_ui_state()
         self.append_concise_log(
@@ -1349,14 +1349,14 @@ class MainWindow(QMainWindow):
         lines = format_pick_menu(v_list, a_list)
         lines.append("enter: 'N' video  /  'N.M' v+a  /  empty=best")
         self.append_concise_log("\n".join(lines), False, False)
-        self.ctrl.state["picking"] = True
+        self.ctrl._set_picking(True)
         self.url_input.setFocus()
         self.update_ui_state()
 
     def _submit_pick(self):
         targets = getattr(self, "_pick_targets", None)
         if not targets:
-            self.ctrl.state["picking"] = False
+            self.ctrl._set_picking(False)
             return
         text = self.url_input.text().strip()
         v_list = self.extracted_data.get("v_list", [])
@@ -1382,7 +1382,7 @@ class MainWindow(QMainWindow):
                     True,
                 )
                 return
-        self.ctrl.state["picking"] = False
+        self.ctrl._set_picking(False)
         self.append_concise_log(
             log_emitter.emit_event("DL", "OK", "YT", f"picked {v_id} · {a_id}"),
             False,
@@ -1391,7 +1391,7 @@ class MainWindow(QMainWindow):
         self._start_download(list(targets), v_id, a_id)
 
     def _cancel_pick(self):
-        self.ctrl.state["picking"] = False
+        self.ctrl._set_picking(False)
         self._pick_pending = False
         self._pick_targets = []
         self.append_concise_log(

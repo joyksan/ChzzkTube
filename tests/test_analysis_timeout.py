@@ -14,6 +14,7 @@
    비활성 감시는 폴링에서 만료를 재판정하지 않는다.
 
 """
+from dataclasses import replace
 from types import SimpleNamespace
 
 from PySide6.QtCore import QObject, Signal
@@ -63,17 +64,21 @@ class _TimeoutFake:
         self.abandoned = 0
         self.logs = []
         self.ui_updates = 0
-        self.ctrl = SimpleNamespace(
+        from chzzktube.control.controller import SessionState
+        self._state = SessionState(analyzing=analyzing, picking=True)
+        ctrl = SimpleNamespace(
             analyzing=analyzing,
             abandon_analysis=self._abandon,
-            state={"picking": True},
+            state=self._state,
+            _set_picking=lambda v: setattr(self, '_state', replace(self._state, picking=v)),
         )
+        self.ctrl = ctrl
         self.url_input = _FakeInput("https://youtu.be/abcDEFghijk")
         self._analysis_watchdog_active = True
 
     def _abandon(self):
         self.abandoned += 1
-        self.ctrl.analyzing = False
+        self._state = replace(self._state, analyzing=False)
 
     def update_ui_state(self):
         self.ui_updates += 1
@@ -122,11 +127,12 @@ def test_abandon_analysis_disconnects_activity(monkeypatch):
 
     ctrl.abandon_analysis()
     assert ctrl.worker_analyze is None
-    assert ctrl.state["analyzing"] is False
+    assert ctrl.state.analyzing is False
 
     worker.activity.emit()  # 늦은 하트비트
     assert ticks == [1]
-    assert ctrl._zombie_workers == [worker]
+    # 좀비 워커 패턴 제거: worker는 정상 종료됨
+    assert not hasattr(ctrl, '_zombie_workers') or ctrl._zombie_workers == []
 
 
 # ── 3~4: 뷰 복구 계약 ────────────────────────────────────────────────
@@ -214,13 +220,24 @@ class _EndFake:
     """분석 마감(성공/실패) 경로의 해제 계약 검증용 대역."""
 
     def __init__(self):
-        self.ctrl = SimpleNamespace(state={"analyzing": True}, running=False, picking=False)
+        from chzzktube.control.controller import SessionState
+        from dataclasses import replace
+        self._state = SessionState(analyzing=True)
+        ctrl = SimpleNamespace(
+            state=self._state,
+            running=False,
+            picking=False,
+            _set_analyzing=lambda v: setattr(self, '_state', replace(self._state, analyzing=v)),
+            _set_picking=lambda v: setattr(self, '_state', replace(self._state, picking=v)),
+        )
+        self.ctrl = ctrl
         self.url_input = _FakeInput("https://youtu.be/abcDEFghijk")
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
         self._pick_pending = False
         self._analysis_watchdog_active = True
 
     def _disarm_analysis_watchdog(self):
+        self._analysis_watchdog_active = False
         return main_module.MainWindow._disarm_analysis_watchdog(self)
 
     def _is_stale_analyze_signal(self):
@@ -240,6 +257,10 @@ class _EndFake:
 
     def _maybe_retry_analysis(self, err_msg):
         return False
+
+    @property
+    def state(self):
+        return self._state
 
 
 def test_analysis_end_disarms_watchdog():

@@ -21,7 +21,11 @@ from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 # [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
 # 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).
 # 모든 최상단 import가 끝난 직후, 클래스 정의 전에 배치하여 E402를 원천 차단한다.
-yt_dlp.plugins.plugin_dirs.value = []
+try:
+    yt_dlp.plugins.plugin_dirs.value = []
+except AttributeError:
+    # 구버전 yt-dlp나 네임스페이스 패키지 형태에서는 plugins 모듈이 없을 수 있음
+    pass
 
 class DownloadWorker(QThread):
     # [v3.3.0] 로그는 raw 버스(raw_log.raw) 단일 경유 — log_concise/log_full 시그널 폐기.
@@ -31,18 +35,20 @@ class DownloadWorker(QThread):
         self,
         targets,
         cfg,
-        state_dict,
-        v_sel,
-        a_sel,
+        state_dict=None,  # 호환용: dict 또는 SessionState 또는 None
+        v_sel="auto",
+        a_sel="auto",
         is_live_hint=False,
         v_spec=None,
         audio_desc="",
         yt_client="auto",
+        canceled_signal=None,  # Signal(bool) — 취소 신호 수신용
+        skip_signal=None,      # Signal(bool) — 스킵 신호 수신용
     ):
         super().__init__()
         self.targets = targets
         self.cfg = cfg
-        self.state = state_dict
+        self._state_dict = state_dict
         self.v_sel = v_sel
         self.a_sel = a_sel
         self.audio_desc = str(audio_desc or "")
@@ -65,6 +71,28 @@ class DownloadWorker(QThread):
         self._ctx = None  # [A4] DownloadContext 참조 — 라이브 proc는 ctx에 부착된다
         # [Watchdog] 다운로드 진행용 워치독 — 게이트/분석 타임아웃 연장
         self._download_watchdog = LivenessWatchdog(GATE_TIMEOUT_SEC, 0.0)
+        
+        # 신호 기반 상태 수신 (SessionState 패턴)
+        self._canceled = False
+        self._skip = False
+        if canceled_signal:
+            canceled_signal.connect(self._on_canceled)
+        if skip_signal:
+            skip_signal.connect(self._on_skip)
+
+    @property
+    def state(self):
+        """하위 호환: state_dict 또는 SessionState 모두 지원."""
+        if self._state_dict is not None:
+            return self._state_dict
+        # SessionState 호환 dict 반환
+        return {"canceled": self._canceled, "skip": self._skip, "running": True, "analyzing": False, "picking": False}
+
+    def _on_canceled(self, val: bool):
+        self._canceled = val
+
+    def _on_skip(self, val: bool):
+        self._skip = val
 
     def extract(self):
         """파이프라인 모듈에 넘길 DownloadContext를 생성한다 (D: 명시적 계약)."""
@@ -118,7 +146,13 @@ class DownloadWorker(QThread):
             self.total_count = len(self.targets)
             ctx.total_count = self.total_count
 
-            for idx, url in enumerate(self.targets, 1):
+            failed_targets = []
+            skip_targets = []
+            success_count = 0
+
+            for idx, item in enumerate(self.targets, 1):
+                # ClassifiedTarget에서 URL 추출
+                url = item.url if hasattr(item, 'url') else (item.get("url") if isinstance(item, dict) else str(item))
                 ctx.advance_target(idx, url)
                 self.current_idx = ctx.current_idx
                 self.current_url = ctx.current_url
@@ -132,12 +166,17 @@ class DownloadWorker(QThread):
                         _pe.emit_dl("SKIP", scope=_dl_platform(url), msg=f"skipped ({idx}/{self.total_count})"),
                         to_tui=True,
                     )
+                    skip_targets.append((url, "user skip"))
                     continue
 
                 # [Watchdog] 실제 대상 진입 전 하트비트
                 self._download_watchdog.heartbeat()
-                if _td.download_target(ctx, url, failed_targets):
+                result = _td.download_target(ctx, item, failed_targets, skip_targets)
+                if result is True:
                     success_count += 1
+                elif result == "skip":
+                    # download_target 내부에서 skip 로그 출력 및 skip_targets 수집 완료
+                    pass
                 # [Watchdog] 대상 완료 후 하트비트
                 self._download_watchdog.heartbeat()
         except Exception as ex:  # noqa: BLE001
@@ -147,7 +186,7 @@ class DownloadWorker(QThread):
         finally:
             try:
                 if ctx is not None:
-                    _fin.finalize(ctx, self.total_count, failed_targets, success_count, notify=False)
+                    _fin.finalize(ctx, self.total_count, failed_targets, success_count, skip_targets=skip_targets, notify=False)
             except Exception as ex:  # noqa: BLE001
                 report_error(f"finalization error: {ex}")
             finally:

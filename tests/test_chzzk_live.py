@@ -7,27 +7,22 @@ import pytest
 
 import chzzktube.core.chzzk_api as api
 import chzzktube.pipeline.target_downloader as td
+from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
 from chzzktube.pipeline.dl_context import DownloadContext
 
 
 @pytest.fixture
-def live(monkeypatch, tmp_path):
-    formats = [
-        {"id": "1080", "height": 1080, "url": "https://media.example/1080.m3u8"},
-        {"id": "720", "height": 720, "url": "https://media.example/720.m3u8"},
-    ]
-    info = {"title": "방송", "live_id": "abc", "live_status": "PROGRESS", "formats": formats}
-    analysis = Mock(return_value=info)
-    monkeypatch.setattr(api, "analyze_chzzk_live_api", analysis)
-    youtube = Mock(return_value=False)
-    monkeypatch.setattr(td, "_download_youtube_live", youtube)
-    monkeypatch.setattr(td, "_is_youtube_live_url", Mock(side_effect=AssertionError("YouTube probe")))
-    record = create_autospec(td._lr.record_live_stream, return_value=True)
-    monkeypatch.setattr(td._lr, "record_live_stream", record)
-    monkeypatch.setattr(td.raw_log, "raw", Mock())
-    ctx = DownloadContext(cfg={"download_path": str(tmp_path)},
-                          current_url="https://chzzk.naver.com/live/abc", is_live_hint=True)
-    return ctx, info, analysis, youtube, record
+def live_item(ctx):
+    """치지직 라이브용 ClassifiedTarget 생성 헬퍼."""
+    return ClassifiedTarget(
+        url=ctx.current_url,
+        title="방송",
+        kind=ContentKind.LIVE_CHZZK,
+        capability=ItemClassifier.classify(ctx.current_url, raw_info={"is_live": True}).capability,
+        platform_tag="CHZ",
+        downloadable=True,
+        needs_pot=False,
+    )
 
 
 @pytest.mark.parametrize("selection,limit,expected", [
@@ -39,7 +34,8 @@ def test_live_uses_api_and_pipe(live, selection, limit, expected):
     ctx.v_sel = selection
     ctx.cfg["max_video_res"] = limit
     failures = []
-    assert td.download_target(ctx, ctx.current_url, failures) is True
+    item = {"url": ctx.current_url, "title": "", "age_limit": 0, "availability": "public", "is_live": True, "has_video": True, "has_audio": True, "downloadable": True, "needs_pot": False}
+    assert td.download_target(ctx, item, failures) is True
     analysis.assert_called_once_with(ctx.current_url)
     youtube.assert_not_called()
     record.assert_called_once()
@@ -71,7 +67,8 @@ def test_live_unavailable_does_not_start_recording(live, problem):
     else:
         ctx.cfg["max_video_res"] = "360"
     failures = []
-    assert td.download_target(ctx, ctx.current_url, failures) is False
+    item = {"url": ctx.current_url, "title": "", "age_limit": 0, "availability": "public", "is_live": True, "has_video": True, "has_audio": True, "downloadable": True, "needs_pot": False}
+    assert td.download_target(ctx, item, failures) is False
     record.assert_not_called()
     youtube.assert_not_called()
     assert len(failures) == 1
@@ -82,7 +79,8 @@ def test_live_recording_failure_is_counted(live):
     ctx, info, analysis, youtube, record = live
     record.return_value = False
     failures = []
-    assert td.download_target(ctx, ctx.current_url, failures) is False
+    item = {"url": ctx.current_url, "title": "", "age_limit": 0, "availability": "public", "is_live": True, "has_video": True, "has_audio": True, "downloadable": True, "needs_pot": False}
+    assert td.download_target(ctx, item, failures) is False
     assert len(failures) == 1
 
 
@@ -94,7 +92,8 @@ def test_live_cancel_not_counted_as_failure(live):
         return False
     record.side_effect = cancel
     failures = []
-    assert td.download_target(ctx, ctx.current_url, failures) is False
+    item = {"url": ctx.current_url, "title": "", "age_limit": 0, "availability": "public", "is_live": True, "has_video": True, "has_audio": True, "downloadable": True, "needs_pot": False}
+    assert td.download_target(ctx, item, failures) is False
     record.assert_called_once()
     assert failures == []
 
