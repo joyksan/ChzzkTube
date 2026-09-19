@@ -56,6 +56,9 @@ _RETRYABLE_BOT_MARKERS = frozenset({
     "po token",
     "failed to extract any player response",
     "http error 403",
+    "requested format is not available",
+    "only images are available",
+    "no video formats found",
 })
 
 _TERMINAL_FAIL_MARKERS = frozenset({
@@ -81,12 +84,12 @@ def _is_retryable_bot_error(err: Exception) -> bool:
     return any(bot in msg for bot in _RETRYABLE_BOT_MARKERS)
 
 
-def _make_ytdl_opts(ctx, fmt, url, forced_client=None):
+def _make_ytdl_opts(ctx, fmt, url, forced_client=None, inject_pot=False):
     """yt-dlp 다운로드 옵션 — outtmpl/훅/병합/쿠키/player_client/PO 토큰 주입.
     
     Args:
-        forced_client: 강제 사용할 player_client (None이면 ctx.yt_client 사용).
-                       다운로드 클라이언트와 PO 토큰 클라이언트가 1:1 일치해야 함.
+        forced_client: 강제 사용할 player_client (None이면 "auto"로 순정 위임).
+        inject_pot: True면 PO token 강제 주입 (POT 서버 기동 후 재시도용).
     """
     opts = {
         "logger": ctx.logger,
@@ -107,20 +110,20 @@ def _make_ytdl_opts(ctx, fmt, url, forced_client=None):
         opts["concurrent_fragment_downloads"] = frags
     _apply_cookie_opts(opts, ctx.cfg)
     
-    # forced_client가 주어지면 강제 사용, 없으면 ctx.yt_client 사용
-    effective_client = forced_client if forced_client is not None else ctx.yt_client
+    # client 지정: forced_client가 있으면 사용, 없으면 "auto"로 순정 위임
+    effective_client = forced_client if forced_client is not None else "auto"
     _apply_client_opts(opts, ctx.cfg, forced=effective_client)
     _apply_ejs_opts(opts)
     
-    # PO 토큰은 web 계열 클라이언트(web, web_safari) 전용 — ios/tv는 토큰 미주입
-    # effective_client와 PO 토큰 client를 1:1 일치시킴 (쿠키 유무에 따라 auto → web/web_embedded 분기)
-    vid = _extract_yt_id(url)
-    if vid and effective_client in ("web", "web_safari"):
-        _apply_pot_opts(opts, vid, client=effective_client)
-    elif vid and effective_client == "auto":
-        # _apply_client_opts와 동일한 쿠키 판정 로직 재사용하여 실제 사용될 client와 일치
-        pot_client = "web" if _has_configured_cookies(ctx.cfg) else "web_embedded"
-        _apply_pot_opts(opts, vid, client=pot_client)
+    # PO token 주입: inject_pot=True일 때만 (POT 서버 기동 후 재시도)
+    # client="auto" 시 순정이 선택할 클라와 일치하도록 web_embedded 기준 주입
+    if inject_pot:
+        vid = _extract_yt_id(url)
+        if vid:
+            from chzzktube.pipeline.target_downloader import _has_configured_cookies
+            pot_client = "web" if _has_configured_cookies(ctx.cfg) else "web_embedded"
+            _apply_pot_opts(opts, vid, client=pot_client)
+    
     _apply_ffmpeg_opts(opts)
     _apply_post_opts(opts, ctx.cfg)
     return opts
@@ -294,67 +297,94 @@ def _download_streamlink(ctx, url):
 
 
 def _download_vod(ctx, url):
-    """유튜브 VOD 다운로드 — 화질 우선 하향식 순차 폴백 (web -> web_safari -> tv)."""
+    """유튜브 VOD 다운로드 — yt-dlp 순정 위임 + POT 서버 1회 재시도.
+    
+    1차: yt-dlp 순정 단일 호출 (player_client="auto") → 
+         내부 로테이션: web_embedded → tv_downgraded → web_safari → mweb → tv...
+         EJS 솔버(deno/node) 자동 작동 + 쿠키 있으면 인증 클라 우선
+    
+    2차: 1차 실패가 봇 차단/포맷 상실 계열이면 POT 서버 기동 → 
+         PO token + visitorData 주입하여 동일 순정 호출 재시도 (1회만)
+    
+    수동 클라 체인 완전 제거 — 순정이 알아서 최적 경로 찾음
+    """
     cfg_client = str(ctx.cfg.get("yt_player_client", "auto") or "auto")
-
-    # auto 모드일 때만 지능형 하향식 체인 가동 (명시적 수동 선택 시 단일 시도)
-    if cfg_client == "auto":
-        # [결함 1 수리] ios는 SUPPORTS_COOKIES=False로 쿠키 사용 시 yt-dlp가 스킵
-        # (analyze_worker.py _RETRY_CLIENTS = ["tv", "web_safari"]와 일치)
-        # tv는 화질 제한(720p max) + 분리 포맷 부재 위험 → 마지막 수단으로만 사용
-        client_chain = ["web", "web_safari", "tv"]
-    else:
-        client_chain = [cfg_client]
-
+    
+    # 명시적 클라 지정 시에만 forced_client 사용 (테스트/디버깅용)
+    forced = None if cfg_client == "auto" else cfg_client
+    
     fmt = _format_selector(ctx)
-    last_err: Exception | None = None
-
-    for idx, client in enumerate(client_chain):
+    
+    # 1차: 순정 위임 (PO token 미주입)
+    try:
+        opts = _make_ytdl_opts(ctx, fmt, url, forced_client=forced, inject_pot=False)
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+        if not info:
+            raise RuntimeError("info extract fail")
+        
+        if not ctx._meta_logged:
+            _pe.emit_download_header(ctx, info)
+        
+        for dl in info.get("requested_downloads") or []:
+            _pe.log_success_info(
+                ctx, dl.get("filepath") or dl.get("_filename") or ""
+            )
+        
+        ctx.speed_win.reset()
+        return True
+        
+    except Exception as ex:
+        # 봇 차단/포맷 상실 계열이 아니면 즉시 전파
+        if not _is_retryable_bot_error(ex):
+            raise ex
+        
+        # 봇 차단 감지 → POT 서버 기동 후 1회 재시도 (Layer 3)
+        raw_log.raw(
+            "dl",
+            _pe.emit_event("DL", "WARN", "YTDL", "bot-check/format-loss detected — starting POT server for retry"),
+            to_tui=True,
+        )
+        
+        # POT 서버 준비 대기 (블로킹, 최대 60초)
+        from chzzktube.control.pot_manager import POTManager
+        pot = POTManager.instance()
+        if not pot.is_ready():
+            pot.ensure_ready("gate")
+            # 동기 대기: POT 서버 기동 완료까지 폴링
+            import time
+            deadline = time.time() + 60.0
+            while not pot.is_ready():
+                if time.time() > deadline:
+                    raise RuntimeError("POT server startup timeout")
+                if ctx.state.get("canceled"):
+                    raise RuntimeError("CANCELED_BY_USER")
+                time.sleep(0.5)
+                # 워치독 하트비트로 타임아웃 연장
+                if hasattr(ctx, "_download_watchdog") and ctx._download_watchdog:
+                    ctx._download_watchdog.heartbeat()
+        
+        # 2차: PO token 주입하여 순정 재호출
         try:
-            # tv 클라이언트 진입 시: 사용자에게 화질 저하 리스크 TUI 경고 발행
-            if client == "tv":
-                # [결함 1 수리] 분리 포맷(bv*+ba) 강제 → 없으면 예외로 폴백 유도
-                # yt-dlp가 포맷을 못 찾으면 "Requested format is not available" 발생
-                # 이는 _is_retryable_bot_error에서 True로 판별되어 다음 클라이언트 시도
-                raw_log.raw(
-                    "dl",
-                    _pe.emit_event("DL", "WARN", "YTDL", "bot fallback: tv client (quality limited to 720p, no split formats)"),
-                    to_tui=True,
-                )
-
-            opts = _make_ytdl_opts(ctx, fmt, url, forced_client=client)
+            opts = _make_ytdl_opts(ctx, fmt, url, forced_client=forced, inject_pot=True)
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
             if not info:
-                raise RuntimeError("info extract fail")
-
+                raise RuntimeError("info extract fail (with PO token)")
+            
             if not ctx._meta_logged:
                 _pe.emit_download_header(ctx, info)
-
+            
             for dl in info.get("requested_downloads") or []:
                 _pe.log_success_info(
                     ctx, dl.get("filepath") or dl.get("_filename") or ""
                 )
-
+            
             ctx.speed_win.reset()
             return True
-
-        except Exception as ex:
-            last_err = ex
-            # 봇 차단 계열이 아니거나 마지막 체인이면 즉시 중단 및 전파
-            if not _is_retryable_bot_error(ex):
-                raise ex
-
-            nxt = client_chain[idx + 1] if idx + 1 < len(client_chain) else "exhausted"
-            raw_log.raw(
-                "dl",
-                _pe.emit_event("DL", "WARN", "YTDL", f"client fallback: {client} -> {nxt}"),
-                to_tui=False,  # F12 상세 로그에만 기록
-            )
-
-    if last_err:
-        raise last_err
-    return False
+            
+        except Exception as ex2:
+            raise ex2
 
 
 def _emit_error_log(ctx, url, reason, failed_targets):
@@ -374,7 +404,7 @@ def _is_youtube_live_url(ctx, url):
             "extract_flat": False,
         }
         _apply_cookie_opts(opts, ctx.cfg)
-        _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
+        _apply_client_opts(opts, ctx.cfg, forced=None)  # 순정 위임
         _apply_light_analysis_opts(opts)
         _apply_ejs_opts(opts)
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -529,7 +559,7 @@ def _flatten(ctx, url: str) -> list[ClassifiedTarget]:
         "socket_timeout": 30,
     }
     _apply_cookie_opts(opts, ctx.cfg)
-    _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
+    _apply_client_opts(opts, ctx.cfg, forced=None)  # 순정 위임
     _apply_light_analysis_opts(opts)
     _apply_ejs_opts(opts)
 

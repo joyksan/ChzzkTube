@@ -62,7 +62,7 @@ def download_youtube_live(ctx, url):
     )
 
     _apply_cookie_opts(opts, ctx.cfg)
-    _apply_client_opts(opts, ctx.cfg, forced=ctx.yt_client)
+    _apply_client_opts(opts, ctx.cfg, forced=None)  # 순정 위임
     _apply_ejs_opts(opts)
     _apply_ffmpeg_opts(opts)
 

@@ -94,11 +94,17 @@ def _needs_pot_retry(err_msg: str) -> bool:
 
 # [E1 단일화] POT 게이트 판정 — 3곳에 복사되던 판정식을 단일 진실로 통합한다.
 # HANDOVER §3 '다운로드 게이트' 상수 목록의 유일한 코드 출처이다.
-_POT_AVAIL_GATED = ("needs_auth", "premium_only", "subscriber_only", "private")
+# [핵심 변경] subscriber_only(멤버십) 제거 — Layer 1/2에서 쿠키+JS솔버로 1080p+ 수급 가능
+_POT_AVAIL_GATED = ("needs_auth", "premium_only", "private")
 
 
 def _needs_pot(info):
-    """PO 토큰 필요 여부 — age_limit>0 ∨ availability∈게이트 집합."""
+    """PO 토큰 필요 여부 — age_limit>0(성인인증)만 필수 게이트.
+    
+    subscriber_only(멤버십)은 쿠키+EJS 솔버로 Layer 1/2에서 해결하므로
+    POT 서버 기동 트리거에서 제외. 봇 체크 감지 시 _needs_pot_retry()가
+    별도 처리하여 Layer 3로 라우팅한다.
+    """
     if not info:
         return False
     age_limit = info.get("age_limit") or 0

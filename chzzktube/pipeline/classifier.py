@@ -84,7 +84,7 @@ class ItemClassifier:
     """UI cfg 및 부수 효과로부터 완벽히 격리된 순수 분류 엔진."""
 
     _POT_AVAIL_GATED = frozenset({
-        "needs_auth", "premium_only", "subscriber_only", "private"
+        "needs_auth", "premium_only", "private"
     })
 
     @classmethod
@@ -119,9 +119,8 @@ class ItemClassifier:
         title = str(info.get("title") or info.get("videoTitle") or "untitled")
         is_live = bool(info.get("is_live"))
         cookie_policy = cls.evaluate_cookie_policy(info)
-        needs_pot = is_yt and (
-            cookie_policy.needs_cookie or info.get("age_limit", 0) > 0
-        )
+        # [핵심 변경] needs_pot는 age_limit>0(성인인증)만 — 멤버십은 Layer 1/2에서 해결
+        needs_pot = is_yt and (info.get("age_limit", 0) > 0)
 
         # 2. 치지직 분기
         if is_chzzk:

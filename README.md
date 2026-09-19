@@ -4,6 +4,8 @@ Hyper-Minimalist Modern TUI 미디어 추출기 — YouTube / 치지직(Chzzk) �
 
 "fzf · lazygit" 감성의 모노스페이스 Flat TUI로, OS 순정 GUI 위젯 없이 콘솔만으로 모든 작업을 처리한다.
 
+**버전**: `v3.7.2` — yt-dlp 순정 클라이언트 로테이션 완전 위임, 3계층 우회 파이프라인 재설계
+
 ### 스택
 
 - Python 3.12.14 (pyenv / `.python-version` 고정) + PySide6
@@ -42,13 +44,15 @@ mirrors/                     # sync_mirrors.py 생성 산출물 (.py → .md)
 - PyInstaller `ChzzkTube.spec` 기반 onedir/onefile 빌드가 구성되어 있다.
 - 환경은 `.python-version` 및 프로젝트 의존 패키지를 기준으로 맞춘다.
 
-### PO Token 서버 (PO 우회)
+### PO Token 서버 (PO 우회) — 3계층 파이프라인
 
-- 앱은 백그라운드에서 PO Token 서버를 준비하되, 일반 공개 영상은 PO 없이도 진행된다.
-- 기동 직후 prewarm으로 **디스크 스테이징만** 수행(RAM 0MB·포트 미점유), 연령 제한·멤버십·게이트 영상에서 필요한 시점에만 gate로 서버를 기동한다(lazy-on-demand).
-- READY 게이트는 DEPS + 업데이트 + POT 사전 스테이징이 모두 완료된 실완료 토큰(`staged`/`ready`)으로만 개방되며, 기존 서버가 이미 응답 중이면 스폰 없이 즉시 재사용한다.
-- 서버 프로토콜/빌드는 bgutil 계열 서버 소스를 사용하며, 로컬 포트(127.0.0.1)만 사용한다.
-- `po_client`는 표준 라이브러리만 쓰는 L0 리프 — 서버 생존은 순수 HTTP /ping만으로 판정하고 상위 계층의 내부(락 파일 등)를 참조하지 않는다.
+- **Layer 1 (순정 네이티브)**: `player_client="auto"` 단일 호출 → yt-dlp 순정 클라이언트 체인(`web_embedded` → `tv_downgraded` → `web_safari` → `mweb`...) + EJS 솔버(deno/node) 자동 작동
+  - 공개 영상 & 멤버십(쿠키有): 여기서 1080p+Opus 즉시 해결 ✅ **POT 서버 미기동**
+- **Layer 2 (POT 서버)**: `age_limit > 0` (연령제한) **또는** 봇 체크/포맷 상실 감지 시에만 기동
+  - **`subscriber_only`(멤버십) 제외** — Layer 1에서 쿠키+EJS로 해결
+  - bgutil 서버에서 PO token + visitorData 획득
+- **Layer 3 (재시도)**: 토큰 주입하여 동일 순정 호출 1회 재시도 → 1080p+ 분리 포맷(`bv*+ba`) 확보
+- 앱 수동 클라이언트 로테이션(`_RETRY_CLIENTS`, `client_chain`) **완전 제거** — CLI와 100% 동일 동작
 
 ### 주의사항
 

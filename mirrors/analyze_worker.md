@@ -84,11 +84,10 @@ class AnalyzeWorker(QThread):
         # 봇 게이트/PO 토큰 경로를 재진입해 0%에 머무는 것을 방지.
         self.client_used = "auto"
 
-    # [bot-check 회피] auto 클라이언트 실패 시 순차 폴백 — tv는 쿠키 호환
-    # PO Token 계열, web_safari는 쿠키 호환 web 변체. [주의] ios는 쿠키
-    # 미지원(SUPPORTS_COOKIES=False)이라 쿠키 사용 중이면 yt-dlp가 클라이언트
-    # 자체를 스킵 → "No video formats found" 즉사하므로 회전 후보에서 제외.
-    _RETRY_CLIENTS = ["tv", "web_safari"]
+    # [순정 위임] yt-dlp 순정 클라이언트 로테이션 완전 위임 (web_embedded → tv_downgraded → web_safari → mweb → tv...)
+    # 앱 레벨 수동 로테이션 제거 — 단일 auto 호출로 순정이 알아서 최적 클라 선택 + EJS 솔버 작동
+    # PO token 필요 시(age-gate/봇체크) 동일 호출에 token만 주입
+    _RETRY_CLIENTS = []  # 사용 안 함 — 순정 위임
 
     @staticmethod
     def _is_bot_block(ex):
@@ -135,50 +134,36 @@ class AnalyzeWorker(QThread):
             base["noplaylist"] = True
             base["extract_flat"] = False
 
-        attempts = [configured]
-        if configured == "auto":
-            attempts += list(self._RETRY_CLIENTS)
+        # [순정 위임] 단일 auto 호출 — yt-dlp 순정 클라 로테이션 + EJS 솔버 완전 위임
+        # client="auto" 전달 시 _apply_client_opts가 강제 지정 없이 순정 기본값 사용
+        self.activity.emit()
+        ydl_opts = dict(base)
+        ydl_opts["progress_hooks"] = [_progress_hook]
+        _apply_cookie_opts(ydl_opts, self.cfg)
+        _apply_client_opts(ydl_opts, self.cfg, forced=None)  # auto → 순정 위임
+        if not self.deep:
+            _apply_light_analysis_opts(ydl_opts)
+        _apply_ffmpeg_opts(ydl_opts)
+        _apply_ejs_opts(ydl_opts)
 
-        last_err = None
-        for idx, client in enumerate(attempts):
-            # 클라이언트 회전도 진행이다. 뷰 분석 워치독 수명을 연장한다.
-            self.activity.emit()
-            ydl_opts = dict(base)
-            ydl_opts["progress_hooks"] = [_progress_hook]
-            _apply_cookie_opts(ydl_opts, self.cfg)
-            if client != "auto":
-                ydl_opts["extractor_args"] = {
-                    "youtube": {"player_client": [client]}
-                }
-            # [경량 분석] 매니페스트(hls/dash) 열거 생략 — m3u8 다운로드 스톨
-            # 원천 차단. 포맷 직접 고르기(deep=True)일 때만 매니페스트를
-            # 열거해 최대 해상도/코덱/비트레이트 정보를 확보한다.
-            if not self.deep:
-                _apply_light_analysis_opts(ydl_opts)
-            _apply_ffmpeg_opts(ydl_opts)
-            _apply_ejs_opts(ydl_opts)
-            # [결함 1 수리] PO 토큰 주입 — 분석 단계에서도 봇 가드 우회 필요
-            video_id = extract_video_id(url)
-            if video_id and client in ("web", "web_safari"):
-                _apply_pot_opts(ydl_opts, video_id, client=client)
-            elif video_id and client == "auto":
-                # 다운로드 단계와 동일한 쿠키 판정 로직으로 실제 client와 일치
-                from chzzktube.pipeline.target_downloader import _has_configured_cookies
-                pot_client = "web" if _has_configured_cookies(self.cfg) else "web_embedded"
-                _apply_pot_opts(ydl_opts, video_id, client=pot_client)
-            try:
-                with YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                self.client_used = client
-                return info
-            except Exception as e:
-                last_err = e
-                if not self._is_bot_block(e):
-                    break
-                nxt = attempts[idx + 1] if idx + 1 < len(attempts) else "give up"
-                import chzzktube.core.raw_log as raw_log
-                raw_log.raw("analyze", f"[client retry] bot check — {client} → {nxt}")
-        raise last_err
+        # PO token 주입 (age-gate/봇체크용) — 순정 호출에 token만 추가
+        video_id = extract_video_id(url)
+        if video_id:
+            # client="auto" 시 순정이 최종 선택할 클라와 일치하도록 web_embedded 기준 주입
+            # (순정은 쿠키 있으면 web/web_embedded 우선, 없으면 visionos→web_embedded)
+            from chzzktube.pipeline.target_downloader import _has_configured_cookies
+            pot_client = "web" if _has_configured_cookies(self.cfg) else "web_embedded"
+            _apply_pot_opts(ydl_opts, video_id, client=pot_client)
+
+        try:
+            with YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            # 순정이 실제 사용한 클라는 extractor_args에 기록되지 않으므로
+            # client_used는 "auto"로 남김 — 다운로드 단계도 auto로 위임
+            self.client_used = "auto"
+            return info
+        except Exception as e:
+            raise e
 
     def run(self):
         import chzzktube.core.raw_log as raw_log

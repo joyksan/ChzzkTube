@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-19 - v3.7.1 — 5대 구조적 결함 수정 (patch up)
+> 마지막 갱신: 2026-09-19 - v3.7.2 — yt-dlp 순정 클라이언트 로테이션 완전 위임 (minor)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.7.1` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.7.1"` (최신: 2026-09-19 5대 구조적 결함 수정 — tv 폴백 품질/무음 위험, 라이브 HANG, 치지직 쿠키 리커버리, POT 빌드 타임아웃, 워치독 하트비트 연동)
+- **버전**: `v3.7.2` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.7.2"` (최신: 2026-09-19 yt-dlp 순정 클라이언트 로테이션 완전 위임 — 앱 수동 폴백 체인 제거, 3계층 파이프라인 재설계, POT 게이트 정단화)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.7.1`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.7.2`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -218,19 +218,39 @@
 - 채널명/영상 제목 같은 사용자 데이터는 번역하지 않는다.
 - TUI와 F12 모두 발행된 원문을 동일하게 보존한다.
 
-### 6. 단계적 우회 계층화 (Tiered Bypass Architecture)
-YouTube 차단 회피는 "항상 공격"이 아니라 "방어적 폴백"으로 설계한다. 기본 레이어만 항상 가동하고, 상위 레이어는 차단 신호가 명확할 때만 순차적으로 활성화한다.
+### 6. 3계층 우회 파이프라인 (Three-Layer Bypass Pipeline)
+YouTube 차단 회피는 yt-dlp 순정 로직을 최우선 존중하고, 앱 레벨 수동 로테이션을 완전히 제거한다. 3계층으로 구성되며 상위 계층은 하위가 **실제로 차단되었을 때만** 가동된다.
 
-- **Tier 1 (기본, 항상 가동)**: 경량 추출(매니페스트 미열거). 이 앱의 주 통로.
-- **PO Token 서버 (선택적 가동)**: `pot_provider`는 실행 초기 DEPS 체크 때 가동여부만 판단 후 **필요 시에만** 가동한다.
-  - 가동 조건: `age_limit > 0` (연령 제한) 또는 `availability` in ('needs_auth', 'premium_only', 'subscriber_only', 'private')
-  - 일반 공개 영상은 PO 서버 없이 다운로드 → 리소스 절약
-  - 분석(`AnalyzeWorker`) 완료 후 판단, 필요 시 `[POT] RUN — starting...` 로그 출력
-- **Tier 2 (명시적 폴백, 차단 시에만)**: 클라이언트 회전(`tv`/`web_safari`, 쿠키 미지원 `ios` 배제), JS 런타임 Solver(`ejs:github` 원격 수급 + 앱 포터블 Node.js `js_runtimes` 명시 주입), 브라우저 쿠키 주입. `_RETRY_CLIENTS` 폴백 루프가 이에 해당하며, 성공 즉시 상위 레이어 중단.
-- **운용 경계**: `cfg["yt_player_client"]`가 `"auto"`일 때만 Tier 2 폴백이 활성화된다. 사용자가 특정 클라이언트를 지정하면 Tier 1 해당 클라이언트 1회 시도 후 즉시 실패 처리(폴백 무한 방지).
-- **측정**: 어떤 Tier로 다운로드가 성공했는지 상세 로그(F12)에 기록(`[client retry] bot check — X → Y`). 이는 "왜 폴백이 발동했는지" 추적하는 유일한 증거이며, 로컬 전용(간결 로그 미노출).
+- **Layer 1: 순정 네이티브 모드 (기본, 항상 가동)**
+  - `player_client="auto"` 단일 호출 → yt-dlp 순정 클라이언트 체인 완전 위임
+  - 내부 로테이션: `web_embedded` → `tv_downgraded` → `web_safari` → `mweb` → `tv` → `ios`...
+  - EJS JS 솔버(deno/node) 자동 실행 + 쿠키 있으면 인증 클라 우선
+  - **공개 영상 & 멤버십(쿠키有)**: 여기서 1080p+Opus 즉시 해결 ✅ (POT 서버 미기동)
 
-> 원칙: **기본은 Tier 1, PO 서버는 필요 시에만, Tier 2는 명시적 폴백**. 핵심 코어(`media`/`downloader` 추출 파이프라인)와 우회 로직(`client_opts`)의 결합도를 헬퍼 모듈로 분리해, 우회 로직 변경이 코어에 영향을 주지 않도록 한다.
+- **Layer 2: POT 서버 기동 (조건부 가동)**
+  - 가동 조건: `age_limit > 0` (연령제한) **또는** 분석/다운로드 중 실제 봇 체크/포맷 상실 마커 감지 시
+  - **`subscriber_only`(멤버십) 제외** — Layer 1에서 쿠키+EJS로 해결되므로 POT 게이트에서 제거
+  - bgutil 서버(`pot_provider`)에서 PO token + visitorData 획득
+
+- **Layer 3: PO Token 주입 재시도 (최종 보루, 1회만)**
+  - Layer 1 실패 + Layer 2 토큰 확보 시 → 동일 순정 호출(`player_client="auto"`)에 PO token 주입하여 1회 재시도
+  - 연령제한/봇체크 뚫고 1080p+ 분리 포맷(`bv*+ba`) 확보 ✅
+
+> **핵심 원칙**:
+> - **yt-dlp 순정 로직 최우선 존중** — 앱 수동 클라 로테이션(`_RETRY_CLIENTS`, `client_chain`) 완전 제거
+> - **EJS 솔버 + 내장 클라 체인**이 1차 방어선, POT 서버는 2차 방어선(연령제한/봇체크 전용)
+> - **멤버십은 Layer 1에서 해결** — `subscriber_only` POT 게이트에서 제거
+> - **tv 클라이언트(720p) 시도 없음** — 순정이 `tv_downgraded`까지만 사용, 1080p+ 보장
+
+### 6.1 분석/다운로드 단계별 동작 상세
+
+| 단계 | Layer 1 (순정) | Layer 2 (POT) | Layer 3 (재시도) |
+|------|----------------|---------------|------------------|
+| **분석** (`AnalyzeWorker`) | `auto` 단일 호출 → 순정 로테이션 + EJS | `age_limit>0` 시 POT 기동 | 토큰 주입 후 재분석 (1회) |
+| **다운로드** (`_download_vod`) | `auto` 단일 호출 → 순정 로테이션 | 봇체크/포맷상실 시 POT 기동 | 토큰 주입 후 재다운로드 (1회) |
+| **라이브 프리체크** | `auto` 단일 호출 | — | — |
+
+> **수동 클라이언트 지정 시**: `cfg["yt_player_client"] != "auto"`면 해당 클라 1회만 시도 (폴백 없음) — 기존 동작 유지
 
 ### 7. 렌더링 엔진 정책 (Rendering Engine Policy)
 **PySide6 (Qt 엔진) 유지.** 렌더링 주권(폰트 강제, 픽셀 단위 정렬)과 크로스플랫폼 마우스/클립보드를 동시에 확보하기 위해 TTY 계열(curses/Textual)은 배제한다.
@@ -350,12 +370,12 @@ raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책�
 | Control | startup_state | READY 단일 진실 (69) — `can_emit_ready()` 멱등 가드 + pot_ready |
 | Control | pot_manager | POT 수명주기 (247) — `ensure_ready(prewarm/gate)` + `use_existing` + Signal 2종 |
 | Worker | downloader | DownloadWorker — `finished_all`만 잔존, 로그 시그널 0 (164) |
-| Worker | analyze_worker | AnalyzeWorker (354) — result_ready/error_occurred + pot-gate 판정 |
+| Worker | analyze_worker | AnalyzeWorker (354) — result_ready/error_occurred + pot-gate 판정, **순정 단일 호출** |
 | Worker | update_worker | UpdateWorker (201) — check_done/upgrade_done + deps raw 발행 |
 | Infra | pot_provider | PO Token 3개 모듈 재수출 facade (75) — 워커 없음(스폰은 POTManager 단독), POTProviderWorker는 v3.3.1 제거 |
 | Pipeline | progress_emitter | LogEvent 빌더 단일 출처 (182) — emit_event/emit_dl/emit_err/… |
-| Pipeline | target_downloader | 다운로드 실행부 (318) — `raw("dl"/"ytdlp"/"live")` |
-| Pipeline | live_recorder | ffmpeg 라이브 녹화 (229) — `prepare_live_paths`/`handle_stream_finish` 모듈 함수 계약 |
+| Pipeline | target_downloader | 다운로드 실행부 (318) — `raw("dl"/"ytdlp"/"live")`, **순정 단일 호출 + POT 1회 재시도** |
+| Pipeline | live_recorder | ffmpeg 라이브 녹화 (229) — `prepare_live_paths`/`handle_stream_finish` 모듈 함수 계약, **순정 위임** |
 | Pipeline | finalizer | `_finalize` 분할 — TUI 컬럼 마무리 |
 | Pipeline | dl_context | DownloadContext dataclass (86) — 파이프라인 명시적 계약 |
 | Pipeline | speed_window | 속도 측정 슬라이딩 윈도우 |
@@ -370,7 +390,7 @@ raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책�
 | Domain | cookies | 브라우저 쿠키 추출 (85) |
 | Domain | config | `default_config()` 23키 + `_APP_VERSION` + 병합 |
 | Domain | playlist | YT 채널 URL 정규화 |
-| Domain | client_opts | player_client/쿠키/PO Token 옵션 주입 (125) |
+| Domain | client_opts | player_client/쿠키/PO Token 옵션 주입 (125) — **`auto` 시 강제 지정 없이 순정 위임** |
 | Domain | dl_platform | URL 판정 + `_short_platform`/`_dl_platform` (111) |
 | Infra | components | ffmpeg 자동 수급/관리 (522) |
 | Infra | log_history | 파일 로그 단일 소유자 (95) — 직접 호출 금지, raw 경유만 |
