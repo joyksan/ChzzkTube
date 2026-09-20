@@ -26,7 +26,7 @@ from chzzktube.infra.po_client import (  # L0 leaf — 계층 역전 방지
 )
 from chzzktube.infra.node_provider import (  # SRP: Node.js 런타임만 담당
     NODE_MIN_MAJOR,
-    _NO_WINDOW,
+    _NO_WINDOW,  # 하위 호환 별칭 — 실체는 platform.spawn_kwargs()
     _node_ver_cache,
     node_major_version,
     latest_lts_node_url,

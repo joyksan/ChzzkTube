@@ -38,3 +38,16 @@ class LogEvent:
     # msg가 이미 표시 완성형(컬럼 포맷·원문)일 때 True — 뷰는 재포맷하지 않는다
     rendered: bool = False
     timestamp: str = field(default_factory=lambda: time.strftime("[%H:%M:%S]"))
+
+
+def safe_log_msg(obj) -> str:
+    """LogEvent 또는 임의 객체에서 안전하게 문자열 메시지 추출.
+
+    중첩된 LogEvent(msg 필드가 또 다른 LogEvent인 경우) 방어를 포함한다.
+    """
+    if isinstance(obj, LogEvent):
+        msg = obj.msg
+        if isinstance(msg, LogEvent):
+            return str(msg)
+        return str(msg) if msg is not None else ""
+    return str(obj)

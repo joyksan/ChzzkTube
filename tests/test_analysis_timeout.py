@@ -184,6 +184,10 @@ class _ArmFake:
         self.ctrl = SimpleNamespace(spawn_analyzer=lambda *a, **k: self.spawns.append(a))
         self.base_anim_url = ""
 
+    def _preflight_deps_check(self) -> bool:
+        """테스트용 — 항상 True 반환하여 deps 체크 통과."""
+        return True
+
     def _arm_analysis_watchdog(self):
         return main_module.MainWindow._arm_analysis_watchdog(self)
 

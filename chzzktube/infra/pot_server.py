@@ -45,16 +45,13 @@ _TSC_TIMEOUT = 300
 
 
 def server_home() -> str:
-    """PO Token 서버 소스/빌드를 둘 위치."""
+    """PO Token 서버 소스/빌드를 둘 위치 — SSOT 단일 경로 (v3.8.2).
+
+    [SSOT 원칙] 오직 writable_base()/bgutil-ytdlp-pot-provider/ 하위만 사용.
+    - frozen 번들(bundle_root), _MEIPASS 경로 탐색 완전 제거
+    - 소스/빌드/런타임 모두 이 디렉토리에서 관리
+    """
     writable_path = os.path.join(get_writable_base(), "bgutil-ytdlp-pot-provider")
-    if os.path.isdir(writable_path):
-        return writable_path
-
-    if is_portable():
-        bundle_path = os.path.join(bundle_root() or "", "bgutil-ytdlp-pot-provider")
-        if os.path.isdir(bundle_path):
-            return bundle_path
-
     os.makedirs(writable_path, exist_ok=True)
     return writable_path
 

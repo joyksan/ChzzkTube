@@ -151,6 +151,10 @@ class _DlFake:
     def toggle_download(self):
         main_module.MainWindow.toggle_download(self)
 
+    def _preflight_deps_check(self) -> bool:
+        """테스트용 — 항상 True 반환하여 deps 체크 통과."""
+        return True
+
     def append_concise_log(self, *a, **k):
         ev = a[0] if a else None
         self.logs.append(getattr(ev, "msg", str(ev)))

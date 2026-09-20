@@ -31,13 +31,16 @@ _UA = "ChzzkTube-Components/1.0"
 
 
 def components_root():
-    """구성요소 전개 루트. frozen: <exe>/components, source: <repo>/components."""
+    """구성요소 전개 루트 — SSOT: writable_base()/components 단일 경로 (v3.8.2).
+
+    [SSOT 원칙] frozen과 source 모두 writable_base() 하위를 사용.
+    - frozen 시 <exe>/components 경로 참조 완전 제거
+    - 환경변수 CHZZKTUBE_COMPONENTS_DIR로만 오버라이드
+    """
     env = os.environ.get("CHZZKTUBE_COMPONENTS_DIR")
     if env:
         return env
-    if getattr(sys, "frozen", False):
-        return os.path.join(os.path.dirname(os.path.abspath(sys.executable)), "components")
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "components")
+    return os.path.join(config.writable_base(), "components")
 
 
 
@@ -401,6 +404,19 @@ def _ensure_ffmpeg_macos(log, force):
                     if ffmpeg_src and ffmpeg_bin_dir:
                         # 원래 디렉토리 구조를 유지하고 PATH에 추가
                         _wire_ffmpeg_path(ffmpeg_bin_dir)
+                        # [macOS] Gatekeeper quarantine 해제 + 실행 비트 보장
+                        if platform.system() == "Darwin":
+                            for _bin in ("ffmpeg", "ffprobe"):
+                                _bp = os.path.join(ffmpeg_bin_dir, _bin)
+                                if os.path.isfile(_bp):
+                                    try:
+                                        subprocess.run(["chmod", "+x", _bp],
+                                                       check=False, capture_output=True)
+                                        subprocess.run(
+                                            ["xattr", "-dr", "com.apple.quarantine", _bp],
+                                            check=False, capture_output=True)
+                                    except Exception:
+                                        pass
                         # 설치 확인 — 실패하면 다음 후보 키로 폴백
                         if _verify_ffmpeg(ffmpeg_src):
                             log(emit_component("DEPS", "OK", "FFMP", "ok"))
@@ -421,7 +437,8 @@ def _ensure_ffmpeg_macos(log, force):
         ever_err = _ensure_ffmpeg_macos_static(log, dest)
         if ever_err is None:
             return None
-        return emit_error_standard("DEPS", "FFMP", "all mirrors exhausted", "check network (F12)", status="FAIL", is_error=True)
+        # [계약] ensure_ffmpeg는 실패 시 문자열 반환 (LogEvent 아님)
+        return "all mirrors exhausted"
     except Exception as e:
         return f"{type(e).__name__}: {e}"
 

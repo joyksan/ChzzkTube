@@ -82,6 +82,10 @@ class _FakeMain:
     def _start_gate_watchdog(self):
         self.watchdog_started += 1
 
+    def _preflight_deps_check(self) -> bool:
+        """테스트용 — 항상 True 반환하여 deps 체크 통과."""
+        return True
+
     def _disarm_analysis_watchdog(self):
         return main_module.MainWindow._disarm_analysis_watchdog(self)
 
