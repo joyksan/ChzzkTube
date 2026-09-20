@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-19 - v3.7.2 — yt-dlp 순정 클라이언트 로테이션 완전 위임 (minor)
+> 마지막 갱신: 2026-09-22 - v3.8.1 — 폴백 완전 제거·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정 (patch)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.7.2` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.7.2"` (최신: 2026-09-19 yt-dlp 순정 클라이언트 로테이션 완전 위임 — 앱 수동 폴백 체인 제거, 3계층 파이프라인 재설계, POT 게이트 정단화)
+- **버전**: `v3.8.1` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.8.1"` (최신: 2026-09-22 단독 환경 격리·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정 (patch))
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.7.2`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.8.0`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -514,6 +514,27 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 19. **POT 서버 단일 스폰 (v3.3.1)**: 서버 기동 진실의 근원은 `POTManager._POTWorker` 단독. `_spawn_existing` 등 스폰 함수는 1회만 호출(조건 평가+핸들 할당 원자화) — 이중 호출로 서버 2회 기동 방지. `pot_provider.POTProviderWorker` 재생성 금지.
 20. **기동 폴백 계약 (v3.5.2)**: 15초 폴백(`force_unlock`)은 **READY 발산만** 한다 — POT 프리웜 취소 금지(`POTManager.cancel()`은 closeEvent 종료 정리 전용). 입력 잠금 판정(`get_current_app_state`)에 `_pot_manager.is_busy()`를 넣지 말 것(POT 대기 다운로드는 `toggle_download`의 `_pending_download` 큐가 담당). POT 빌드 서브프로세스(npm ci/tsc)는 반드시 timeout 상한(`_NPM_CI_TIMEOUT`/`_TSC_TIMEOUT`)을 가진다 — 무제한 대기는 `is_busy()`를 고정해 큐를 영구히 잠근다. 15초 폴백 타이머는 **동적**이다 — 실제 수급 하트비트(`UpdateWorker.work_tick` / POT `prewarm`·`starting` 전이)가 오면 `defer_fallback_timer()`가 카운트다운을 되감는다(`QTimer.singleShot` 단발로의 회귀 금지).
 21. **하트비트·워치독·재시도 계약 (v3.6.0)**: (가) 하트비트(`work_tick`/`heartbeat`/`pot_work_tick`)는 **무페이로드**만 허용 — 문자열을 실으면 로그 시그널(§5-11)이 되므로 하드 금지. (나) 15초 폴백 발화 전 체인이 실제 동작 중이면 **유예 1회**(`_FALLBACK_GRACE_MS`) 후 재판정한다 — 재판정 없이 직접 발화 금지. (다) gate 대기(`_pending_download`)에는 **120초 2차 워치독**을 반드시 건다 — 만료 시 `cancel()`(트리 킬) + 큐 해제. (라) 봇 체크 재시도는 **URL당 1회**(`_pot_retry_done`) — 재실패 시 FAIL로 마무리, 루프 금지.
+22. **단독 환경 격리 (v3.8.0)**: 실행체 해석에 시스템 PATH 탐색(`shutil.which`)·OS 패키지 매니저 서브프로세스(`brew install`/`apt-get`/`dnf`/`pacman`) 도입 회귀 금지. 단일 경로는 앱 전용 저장소뿐이다 — FFmpeg·Node.js/npm은 `writable_base()`(`ffmpeg/`·`node/`), Python 패키지(yt-dlp/streamlink)는 `.pylib` 오버레이 + 앱 인터프리터(`-m`). 리졸버 단일 출처는 `components.ffmpeg_exe()` / `pot_provider.node_exe()`·`npm_exe()` / `updater._cli_base()`이며, 이들이 `None`을 반환하면 "시스템에 있으니 대충 진행"이 아니라 **명시적 FAIL**로 보고한다.
+23. **입력 검증 게이트 (v3.8.0)**: `MediaController.parse_targets`를 우회해 URL 문자열을 워커에 직접 전달하는 경로 신설 금지. 비URL/미분석 입력은 `_is_valid_url`(스킴 + `dl_platform._DOMAIN_EXTRACTORS` SSOT suffix 매치)로 **배치 단위 차단**하고 `ANAL │ FAIL │ Invalid URL format` 1줄만 남긴다. 분석 실패(`on_analyze_error`) 시 `extracted_data`는 반드시 즉시 초기화한다.
+24. **워커에서 POTManager 접근 금지 (v3.8.0)**: `POTManager`는 뷰 소유 QObject다 — 워커 스레드에서 싱글톤 같은 존재하지 않는 API로 인스턴스에 접근하는 회귀 금지(`AttributeError` + 스레드 경계 위반). Layer 3 준비는 L0(`po_client.server_ping`)·L1(`pot_server` 스폰/빌드 헬퍼 + 프리웜 락)만 사용하는 `target_downloader._ensure_pot_server_ready()` 단일 경로로만 수행한다.
+25. **FAIL·완료 로그 단일 발행 (v3.8.0)**: 개별 실패 라인의 발행점은 `finalizer.finalize()` **단 1곳**이다 — `target_downloader` 등에서 즉시 `to_tui=True`로 중복 발행하는 회귀 금지. DL 중간 임시 스트림(`.fNNN`)은 `to_tui=False`로 은닉하고, 최종 결과물 1줄은 `progress_emitter.pp_hook`(postprocessor 훅)만 발행한다.
+
+26. **오류 로그 출력 규격 (v3.8.0)**: 모든 DEPS/UPGRADE/POT 오류는 4컬럼 단일 규격(`STAGE │ STATUS │ SCOPE │ MSG`)을 준수하며, `emit_component`/`LogEvent` 경유만 허용한다 (`raw_log.raw` 직접 호출 금지).
+    * **TUI 포맷**: `[HH:MM:SS] STAGE │ STATUS │ SCOPE │ <간결 원인> → <시도 중인 해결책 또는 사용자 액션>`
+      - TUI 폭 예산(Budget) 보호를 위해 `MSG`는 최대 55자 내외로 제한하며, 불필요한 라벨(`원인:`, `해결:`) 및 비표준 구분자(`::`) 사용을 금지한다.
+      - 저수준 C/Python 예외 원문(dyld, URLError, 스택 트레이스)은 TUI에 노출하지 않고 F12(상세 로그)/히스토리 버퍼로만 전량 격리 수용한다.
+    * **예시**:
+      - 복구 시도: `[03:07:29] DEPS │ WARN │ FFMP │ binary incompatible → retry mirror (2/3)`
+      - 최종 실패: `[03:07:49] SYS  │ FAIL │ MAIN │ all mirrors exhausted → check network (F12)`
+      - 권한 오류: `[03:07:50] SYS  │ FAIL │ DIRS │ permission denied → check folder permissions`
+    * **구성 요소**:
+      - `<간결 원인>`: 기술적 원인 요약 (binary incompatible, all mirrors exhausted, checksum mismatch, permission denied 등)
+      - `<진행/액션>`: 현재 자동 복구 시도 상태(`retry mirror (N/M)`) 또는 사용자 유도 조치(`check network (F12)`, `check folder permissions` 등)
+    * **금지 사항**:
+      - `raw_log.raw` 직접 호출 금지 (반드시 `emit_component` / `LogEvent` 단일 출처 사용)
+      - TUI에 플랫폼/라이브러리 원시 예외(`dyld: Symbol not found`, `URLError` 등) 직접 덤프 금지
+      - `fallback`, `timeout` 등 내부 엔진 구현 용어 노출 금지
+      - 원인만 명시하고 후속 진행/액션을 누락하는 단발성 실패 로그 금지
 
 ## 6. 하지 말 것 (회귀 방지)
 
@@ -637,6 +658,8 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 > v3.6.3(2026-09-17) — 기동 초기화 단일화 + 분석 워치독 계약 복구: 폴링 내 UI 재초기화 제거(위젯·타이머 매초 교체, 업데이트 확인 반복 예약, URL당 1회 재시도 이력 소거 수리) · 분석 워치독 뷰 단독 소유(무페이로드 activity, 강제 terminate 제거) · Infra→UI 역참조와 죽은 타이머 참조 정리 · 테스트 세션 QApplication 단일화(tests/conftest.py).
 > v3.6.4(2026-09-18) — analysis dead-end fix: EJS JS 런타임(앱 포터블 Node 주입)·쿠키 호환 회전(tv/web_safari, ios 배제)·analysis error 60자 절약·TuiNoticeDialog + 쿠키 흐름 영어 문자열.
 > v3.7.0(2026-09-18) — download pipeline contract overhaul: ClassifiedTarget 단일 계약, VOD 품질 우선 폴백(web→web_safari→ios→tv), PO 토큰 1:1 바인딩, skip 집계, conftest .pylib bootstrap, analyze_worker Mock 제거, 쿠키 정책 SSOT 정렬.
+> v3.7.2(2026-09-19) — yt-dlp 순정 클라이언트 로테이션 완전 위임: 앱 레벨 수동 백 체인 제거, 3계층 파이프라인 재설계, POT 게이트 정단화(subscriber_only 제외).
+> v3.8.0(2026-09-20) — 단독 환경 격리·입력 게이트·Layer 3 POT 수리·TUI 정제: 시스템 PATH(`shutil.which`)·OS 패키지 매니저(brew/apt) 참조 전면 철폐(전용 `writable_base()`·`.pylib` 단일 경로), URL 검증 게이트 2중 방어(비URL 배치 차단), `POTManager.instance()` 부재 결함을 워커 안전 L0/L1 인프라 호출로 근본 수리 + 1080p 미달 승격 판정 신설, FAIL 단일 발행(finalizer)·중간 `.fNNN` 스트림 TUI 은닉·ANAL 마감 정갈 명세.
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)

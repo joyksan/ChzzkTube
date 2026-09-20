@@ -79,7 +79,7 @@ def test_main():
         print("[Smoke Test] MainWindow 생성 성공!")
         assert win is not None
         assert win.ctrl is not None
-        assert hasattr(win, "_force_unlock_input")
+        # [v3.8.1] 폴백 제거 — _force_unlock_input 속성 없음
         print("[Smoke Test] ctrl.state 확인:", win.ctrl.state)
 
         dlg = SettingsDialog(win, is_running=False)

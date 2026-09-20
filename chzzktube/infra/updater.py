@@ -129,31 +129,26 @@ def check_deps(log_func=None):
                 ver = f"{nver} (nightly)"
         results.append((label, "OK" if ver else "FAIL", ver or "not installed"))
 
-    # 2. 외부 실행 파일 (ffmpeg, node) — msg에는 버전/경로 같은 실질 정보만
+    # 2. 외부 실행 파일 (ffmpeg, node) — [v3.8.0 격리] 앱 전용 캐시 단일 참조.
+    #    시스템 PATH(shutil.which) 탐색 철폐 — 격리 캐시 수급본만 DEPS 대상.
     for label in ("ffmpeg", "node"):
-        path = shutil.which(label)
-        if not path and label == "node":
-            # [포터블 폴백] 시스템 PATH 밖의 로컬 포터블 node (writable_base/node)도
-            # DEPS 후보 — 없을 때만 'not found'.
+        path = None
+        if label == "node":
             try:
                 import chzzktube.infra.pot_provider as pot_provider
                 path = pot_provider.node_exe()
+                maj = pot_provider.node_major_version(path)
+            except Exception:
+                path, maj = None, None
+            msg = f"v{maj}" if maj else (os.path.basename(path) if path else "not found")
+        else:
+            try:
+                from chzzktube.infra.components import ffmpeg_exe
+                path = ffmpeg_exe()
             except Exception:
                 path = None
-        if path:
-            if label == "node":
-                try:
-                    import chzzktube.infra.pot_provider as pot_provider
-                    maj = pot_provider.node_major_version(path)
-                except Exception:
-                    maj = None
-                msg = f"v{maj}" if maj else os.path.basename(path)
-            elif label == "ffmpeg":
-                msg = _ffmpeg_version(path) or os.path.basename(path)
-            results.append((label, "OK", msg))
-        else:
-            # [v3.1.0 정책] 표준 status 사용. msg는 명시적 문자열.
-            results.append((label, "FAIL", "not found"))
+            msg = _ffmpeg_version(path) or "not found" if path else "not found"
+        results.append((label, "OK" if path else "FAIL", msg))
 
     # 3. PO token 서버 — [Lazy 2층 분리] liveness가 아니라 readiness.
     # 바이너리+빌드 산출물의 디스크 준비만 판정 (RAM 0MB·포트 미점유).
@@ -183,29 +178,24 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 def _cli_base(label):
     """라벨 → 실제 CLI 명령 배열 (없으면 None). F12 상세 로그용 원문 실행.
 
-    importlib.metadata/shutil.which 로 대체하지 않는 이유: '터미널에서 직접
-    쳤을 때 보이는 원문 출력'을 있는 그대로 남기는 것이 목적이므로, 판별이
-    아닌 실제 실행이 필요하다.
+    [v3.8.0 격리] 실행체 해석은 앱 전용 저장소 단일 경로로 일원화:
+    - ytdlp: dev/frozen 공통 — 앱이 실제로 사용하는 인터프리터 + .pylib
+      오버레이(항상 sys.path 선두)를 타는 `python -m yt_dlp`. 시스템 PATH의
+      yt-dlp는 절대 참조하지 않는다.
+    - ffmpeg/node/npm: components.ffmpeg_exe / pot_provider.node_exe·npm_exe
+      (writable_base 격리 캐시) 단일 참조 — shutil.which 폴백 철폐.
     """
     if label == "ytdlp":
-        if getattr(sys, "frozen", False):
-            p = shutil.which("yt-dlp") or shutil.which("yt-dlp.exe")
-            return [p] if p else None
-        # dev: 앱이 실제로 쓰는 venv 파이썬으로 실행 (PATH 무관)
+        # dev/frozen 공통: 앱 런타임 인터프리터로 오버레이 모듈 실행 (PATH 무관)
         return [sys.executable, "-m", "yt_dlp"]
     if label == "streamlink":
-        if getattr(sys, "frozen", False):
-            p = shutil.which("streamlink")
-            return [p] if p else None
         return [sys.executable, "-m", "streamlink"]
     if label == "ffmpeg":
-        p = shutil.which("ffmpeg")
-        if not p:
-            try:
-                from chzzktube.infra.components import ffmpeg_exe
-                p = ffmpeg_exe()
-            except Exception:
-                p = None
+        try:
+            from chzzktube.infra.components import ffmpeg_exe
+            p = ffmpeg_exe()
+        except Exception:
+            p = None
         return [p] if p else None
     if label == "node":
         try:
@@ -213,7 +203,6 @@ def _cli_base(label):
             p = pot_provider.node_exe()
         except Exception:
             p = None
-        p = p or shutil.which("node")
         return [p] if p else None
     if label == "npm":
         try:
@@ -221,7 +210,6 @@ def _cli_base(label):
             p = pot_provider.npm_exe()
         except Exception:
             p = None
-        p = p or shutil.which("npm")
         return [p] if p else None
     return None
 

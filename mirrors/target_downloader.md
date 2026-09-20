@@ -76,6 +76,14 @@ _TERMINAL_FAIL_MARKERS = frozenset({
 _WATCHDOG_HEARTBEAT_INTERVAL = 5.0
 
 
+class _FormatQualityLoss(Exception):
+    """1차 다운로드가 성공했지만 1080p+ 분리 포맷 수급에 실패한 내부 신호.
+
+    봇 차단과 동일하게 Layer 3(POT 서버) 승격 트리거로 취급하되,
+    720p tv 클라이언트로의 타협은 없다 (v3.8.0).
+    """
+
+
 def _is_retryable_bot_error(err: Exception) -> bool:
     """봇 차단/JS 챌린지 계열인지 판별 — 터미널 에러는 즉시 상위로 탈출."""
     msg = str(err).lower()
@@ -95,6 +103,7 @@ def _make_ytdl_opts(ctx, fmt, url, forced_client=None, inject_pot=False):
         "logger": ctx.logger,
         "noplaylist": True,
         "progress_hooks": [functools.partial(_pe.hook, ctx)],
+        "postprocessor_hooks": [functools.partial(_pe.pp_hook, ctx)],
         "outtmpl": os.path.join(
             ctx.cfg.get("download_path") or ".",
             get_filename_template(ctx.cfg),
@@ -120,7 +129,6 @@ def _make_ytdl_opts(ctx, fmt, url, forced_client=None, inject_pot=False):
     if inject_pot:
         vid = _extract_yt_id(url)
         if vid:
-            from chzzktube.pipeline.target_downloader import _has_configured_cookies
             pot_client = "web" if _has_configured_cookies(ctx.cfg) else "web_embedded"
             _apply_pot_opts(opts, vid, client=pot_client)
     
@@ -296,25 +304,122 @@ def _download_streamlink(ctx, url):
     return _lr.record_live_stream(ctx, cmd, temp_ts)
 
 
+def _ensure_pot_server_ready(ctx, timeout=60.0):
+    """[Layer 3] POT 서버 준비 — 워커 스레드 안전 (v3.8.0).
+
+    [근본 수리] v3.7.2는 `POTManager.instance()`를 호출했지만 그런 API는
+    존재하지 않았다(잠재 AttributeError — POT 경로 전체가 즉사). 게다가
+    POTManager는 뷰가 소유한 QObject라 워커 스레드에서 접근하는 것 자체가
+    스레드 경계 위반이다. 여기서는 L0(po_client.server_ping)과 L1
+    (pot_server의 순수 스폰/빌드 헬퍼)만 호출해 동일 목적을 달성한다 —
+    모두 Qt 무의존 순수 인프라라 백그라운드 스레드에서 안전하다.
+
+    절차: /ping 생존 확인 → 빌드 존재 시 스폰 → (없으면) 프리웜 락 하에
+    스테이징 빌드 → 스폰 → 포트 준비까지 폴링.
+
+    Returns:
+        True  : 서버가 /ping에 응답 (PO 토큰 패칭 가능)
+        False : 미준비/타임아웃 — 호출부는 PO 없이 진행 여부를 판단한다
+    """
+    import time
+
+    from chzzktube.infra.po_client import server_ping
+
+    def _alive():
+        return bool(server_ping())
+
+    if _alive():
+        return True
+
+    def _log(msg):
+        raw_log.raw(
+            "dl",
+            _pe.emit_event("DL", "RUN", "POT", str(msg)[:80]),
+            to_tui=True,
+        )
+
+    def _heartbeat():
+        wd = getattr(ctx, "_download_watchdog", None)
+        if wd is not None:
+            try:
+                wd.heartbeat()
+            except Exception:
+                pass
+
+    try:
+        from chzzktube.infra.pot_server import (
+            _spawn_existing, acquire_prewarm_lock, built_server_js,
+            ensure_node_server, release_prewarm_lock, server_home,
+            _SERVER_FALLBACK_VER,
+        )
+    except Exception as ex:  # noqa: BLE001 — 인프라 import 실패 시 PO 없이 진행
+        _log(f"pot infra unavailable ({type(ex).__name__})")
+        return False
+
+    _log("starting POT server...")
+
+    if not built_server_js():
+        # 빌드 부재 — 프리웜 락 하에 1회 스테이징 후 스폰 재시도.
+        fd = acquire_prewarm_lock(timeout=0, log_func=_log)
+        if fd is None:
+            _log("pot build busy — skipped")
+            return False
+        try:
+            _, err = ensure_node_server(
+                _log, _log, _SERVER_FALLBACK_VER, rebuild=False,
+                tick_func=_heartbeat,
+            )
+            if err is not None:
+                _log(f"pot build failed: {err}")
+        finally:
+            try:
+                release_prewarm_lock(fd, log_func=_log)
+            except Exception:
+                pass
+
+    if built_server_js():
+        try:
+            _spawn_existing(_log)
+        except Exception as ex:  # noqa: BLE001
+            _log(f"pot spawn fail: {type(ex).__name__}")
+    else:
+        _log("pot build unavailable")
+        return False
+
+    deadline = time.time() + max(1.0, float(timeout))
+    while time.time() < deadline:
+        if ctx.state.get("canceled"):
+            return False
+        if _alive():
+            return True
+        _heartbeat()
+        time.sleep(0.5)
+    _log("pot server startup timeout")
+    return False
+
+
 def _download_vod(ctx, url):
     """유튜브 VOD 다운로드 — yt-dlp 순정 위임 + POT 서버 1회 재시도.
-    
-    1차: yt-dlp 순정 단일 호출 (player_client="auto") → 
+
+    1차: yt-dlp 순정 단일 호출 (player_client="auto") →
          내부 로테이션: web_embedded → tv_downgraded → web_safari → mweb → tv...
          EJS 솔버(deno/node) 자동 작동 + 쿠키 있으면 인증 클라 우선
-    
-    2차: 1차 실패가 봇 차단/포맷 상실 계열이면 POT 서버 기동 → 
-         PO token + visitorData 주입하여 동일 순정 호출 재시도 (1회만)
-    
+
+    2차: 1차 실패(봇 차단/포맷 상실) 또는 1차 성공이 1080p 미달이면
+         POT 서버 기동 → PO token + visitorData 주입하여 동일 순정 호출
+         재시도 (1회만). 720p tv 타협 없이 최고 화질을 강제 개방.
+
     수동 클라 체인 완전 제거 — 순정이 알아서 최적 경로 찾음
     """
     cfg_client = str(ctx.cfg.get("yt_player_client", "auto") or "auto")
-    
+
     # 명시적 클라 지정 시에만 forced_client 사용 (테스트/디버깅용)
     forced = None if cfg_client == "auto" else cfg_client
-    
+
     fmt = _format_selector(ctx)
-    
+
+    first_info = None
+
     # 1차: 순정 위임 (PO token 미주입)
     try:
         opts = _make_ytdl_opts(ctx, fmt, url, forced_client=forced, inject_pot=False)
@@ -322,75 +427,110 @@ def _download_vod(ctx, url):
             info = ydl.extract_info(url, download=True)
         if not info:
             raise RuntimeError("info extract fail")
-        
-        if not ctx._meta_logged:
-            _pe.emit_download_header(ctx, info)
-        
-        for dl in info.get("requested_downloads") or []:
-            _pe.log_success_info(
-                ctx, dl.get("filepath") or dl.get("_filename") or ""
-            )
-        
+
+        # [Layer 3 승격 판정] 분리 포맷 시도에도 1080p 미달로 수급되면
+        # 720p 타협하지 않고 POT 서버로 강제 승격한다 (1회).
+        if _needs_pot_promotion(ctx, info) and not ctx.state.get("canceled"):
+            first_info = info
+            raise _FormatQualityLoss()
+
+        _emit_vod_success(ctx, info)
         ctx.speed_win.reset()
         return True
-        
+
+    except _FormatQualityLoss:
+        # 화질 상실 — 아래 2차(POT 재시도)로 낙하
+        ex = RuntimeError("1080p+ format loss (promoting to POT)")
     except Exception as ex:
         # 봇 차단/포맷 상실 계열이 아니면 즉시 전파
         if not _is_retryable_bot_error(ex):
             raise ex
-        
-        # 봇 차단 감지 → POT 서버 기동 후 1회 재시도 (Layer 3)
-        raw_log.raw(
-            "dl",
-            _pe.emit_event("DL", "WARN", "YTDL", "bot-check/format-loss detected — starting POT server for retry"),
-            to_tui=True,
-        )
-        
-        # POT 서버 준비 대기 (블로킹, 최대 60초)
-        from chzzktube.control.pot_manager import POTManager
-        pot = POTManager.instance()
-        if not pot.is_ready():
-            pot.ensure_ready("gate")
-            # 동기 대기: POT 서버 기동 완료까지 폴링
-            import time
-            deadline = time.time() + 60.0
-            while not pot.is_ready():
-                if time.time() > deadline:
-                    raise RuntimeError("POT server startup timeout")
-                if ctx.state.get("canceled"):
-                    raise RuntimeError("CANCELED_BY_USER")
-                time.sleep(0.5)
-                # 워치독 하트비트로 타임아웃 연장
-                if hasattr(ctx, "_download_watchdog") and ctx._download_watchdog:
-                    ctx._download_watchdog.heartbeat()
-        
-        # 2차: PO token 주입하여 순정 재호출
-        try:
-            opts = _make_ytdl_opts(ctx, fmt, url, forced_client=forced, inject_pot=True)
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-            if not info:
-                raise RuntimeError("info extract fail (with PO token)")
-            
-            if not ctx._meta_logged:
-                _pe.emit_download_header(ctx, info)
-            
-            for dl in info.get("requested_downloads") or []:
-                _pe.log_success_info(
-                    ctx, dl.get("filepath") or dl.get("_filename") or ""
-                )
-            
+
+    # 봇 차단/화질 상실 감지 → POT 서버 준비 후 1회 재시도 (Layer 3)
+    raw_log.raw(
+        "dl",
+        _pe.emit_event(
+            "DL", "WARN", "YTDL",
+            f"{str(ex)[:60]} — preparing POT for retry",
+        ),
+        to_tui=True,
+    )
+
+    if not _ensure_pot_server_ready(ctx):
+        if first_info is not None:
+            # POT 미가용 — 1차 수급본을 파기하지 않고 정직하게 보고한다.
+            h = _max_requested_height(first_info) or 0
+            raw_log.raw(
+                "dl",
+                _pe.emit_event(
+                    "DL", "WARN", "YTDL",
+                    f"hd unavailable — kept {h}p (POT offline)",
+                ),
+                to_tui=True,
+            )
+            _emit_vod_success(ctx, first_info)
             ctx.speed_win.reset()
             return True
-            
-        except Exception as ex2:
-            raise ex2
+        raise RuntimeError("POT server unavailable for retry")
+
+    # 2차: PO token 주입하여 순정 재호출
+    opts = _make_ytdl_opts(ctx, fmt, url, forced_client=forced, inject_pot=True)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+    if not info:
+        raise RuntimeError("info extract fail (with PO token)")
+
+    _emit_vod_success(ctx, info)
+    ctx.speed_win.reset()
+    return True
+
+
+def _emit_vod_success(ctx, info):
+    """수급 완료 포맷 라인 발행 (헤더 + 개별 스트림/최종 결과물)."""
+    if not ctx._meta_logged:
+        _pe.emit_download_header(ctx, info)
+    for dl in info.get("requested_downloads") or []:
+        _pe.log_success_info(
+            ctx, dl.get("filepath") or dl.get("_filename") or ""
+        )
+
+
+def _max_requested_height(info):
+    """수급 완료 포맷 중 최대 해상도 높이 (없으면 0)."""
+    heights = []
+    for dl in info.get("requested_downloads") or []:
+        h = dl.get("height") or (dl.get("format") or {}).get("height") if isinstance(dl, dict) else 0
+        if h:
+            heights.append(int(h))
+    return max(heights) if heights else 0
+
+
+def _needs_pot_promotion(ctx, info):
+    """1차 성공 결과가 최고 화질 목표(1080p+)를 상실했는지 판정 (v3.8.0).
+
+    - 분리 포맷(bv*+ba) 시도가 아닌 경우(오디오 추출·수동 포맷 선택)는 대상 아님.
+    - 사용자가 max_video_res로 1080p 미만을 명시 제한한 경우도 대상 아님
+      (사용자 의도가 우선).
+    - 수급된 최대 높이가 1080 미만이면 화질 상실로 판정 → Layer 3 승격.
+    """
+    if ctx.cfg.get("audio_only"):
+        return False
+    v_id = str(ctx.v_sel or "").strip()
+    if v_id and v_id != "auto":
+        return False  # 수동 포맷 선택 — 사용자 의도 존중
+    res = str(ctx.cfg.get("max_video_res") or "none").strip()
+    if res.isdigit():
+        return False  # 사용자 해상도 제한 — 타협 아닌 의도적 제한
+    return _max_requested_height(info) < 1080
 
 
 def _emit_error_log(ctx, url, reason, failed_targets):
-    """에러 로그 출력 및 실패 목록에 추가 (UI 모듈 역참조 배제)."""
-    url_short = url[:40] + ("..." if len(url) > 40 else "")
-    raw_log.raw("dl", _pe.emit_err(f"{url_short} — {reason}"), to_tui=True)
+    """실패 항목 기록 전용 (v3.8.0 — TUI 즉시 출력 철폐).
+
+    [FAIL 단일 출력] 개별 실패 라인은 finalizer.finalize()가 배치 마감 시
+    딱 1회 출력한다. 여기서 즉시 출력하면 yt-dlp 원문 에러(브리지) +
+    개별 라인 + 마감 요약이 3~4줄로 중복 발행되는 촌규가 된다.
+    """
     failed_targets.append((url, reason))
 
 
@@ -611,8 +751,8 @@ def expand_targets(ctx) -> list[ClassifiedTarget]:
                 expanded.append(_normalize_single_item(url))
         except Exception as ex:  # noqa: BLE001
             url_short = url[:40] + ("..." if len(url) > 40 else "")
-            raw_log.raw("dl", _pe.emit_err(f"{url_short} — {str(ex)}"), to_tui=True)
-            # 실패 시에도 다운로드 루프에서 개별 에러로 처리될 수 있도록 정규화 타깃으로 유지
+            # [v3.8.1] 즉시 TUI 발행 금지 — finalizer에서 단일 출력
+            _emit_error_log(ctx, url, str(ex), failed_targets=[])
             expanded.append(_normalize_single_item(url))
 
     return expanded

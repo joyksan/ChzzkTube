@@ -1,3 +1,90 @@
+### 2026-09-22 — v3.8.1 : 폴백 완전 제거·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정 (patch)
+
+#### 배경 (v3.8.0 → v3.8.1)
+- **폴백 타이머 완전 제거**: 15초 강제 언락(`force_unlock`) 제거 — deps 수급 실패 시 영구 잠금, 사용자 재시도(ENTER) 대기. 프리웜 중 `defer_fallback_timer()` 제거, `_on_pot_activity()` 연결 해제, `force_unlock()` 완전 삭제.
+- **URL 검증 게이트 2중 방어**: `MediaController._is_valid_url()` 순수 게이트 신설(스킴 + 도메인 + `_DOMAIN_EXTRACTORS` SSOT suffix 매치). `MediaController.parse_targets`가 비URL 항목 발견 시 `ValueError("Invalid URL format: …")`로 배치 전체 차단. `toggle_download` 1차 게이트 + `_start_download` 2차 방어선.
+- **표준 에러 헬퍼 전면 적용**: `emit_error_standard` / `emit_error_warn` 전면 도입 — 포맷 `원인: <기술적 원인> → 해결: <시도 중인 해결책>` 통일. `fallback`/`timeout` 등 내부 용어 노출 금지, dyld/URLError/traceback 등 저수준 예외 TUI 노출 금지.
+- **POT 상태 의미 명확화**: `staged`(prewarm 완료, gate 미시작) ≠ `ready`(gate 완료, 토큰 서빙 중). `staged`를 `ready`로 오해하던 버그 수정, `pot_ready`는 `ready`일 때만 True.
+- **폴백 타이머 완전 제거**: 15초 강제 언락(`force_unlock`) 제거 — deps 수급 실패 시 영구 잠금, 사용자 재시도(ENTER) 대기. 프리웜 중 `defer_fallback_timer()` 제거, `_on_pot_activity()` 연결 해제, `force_unlock()` 완전 삭제.
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `ui/main_window.py` | 폴백 타이머·유예·강제언락 완전 제거. `deps` 실패 시 `[ ENTER: Retry Setup ]` 버튼으로 재시도. `deps` 에러 시 `ENTER`로 재시도. |
+| `control/startup_coordinator.py` | `force_unlock()` 완전 삭제. `report_upgrade`/`report_pot` 실패 시 `emit_error_standard` 사용. `staged` ≠ `ready` 구분 적용. `deps_error_msg` 영구 보관으로 재시도 전까지 READY 차단. |
+| `control/startup_state.py` | `deps_error_msg` 필드 추가 — 폴백 제거로 에러 상태 영구 보관. `can_emit_ready()`에 `deps_error_msg` 체크 추가. |
+| `control/pot_manager.py` | `_note` 호출을 `emit_error_standard`/`emit_error_warn`로 통일. ffmpeg bind fail 시 표준 에러 헬퍼 사용. |
+| `pipeline/target_downloader.py` | 즉시 TUI 발행 금지 — `_emit_error_log`는 기록만, finalizer에서 단일 출력. 즉시 TUI 발행 코드 제거. |
+| `pipeline/progress_emitter.py` | `log_success_info` 중간 스트림(.fNNN) 은닉(`to_tui=False`). `pp_hook` 신설 — postprocessor 완료 시 최종 결과물 1줄만 발행. |
+| `control/startup_coordinator.py` | `report_upgrade`/`report_pot` 실패 시 `emit_error_standard` 사용. `force_unlock` 호출 제거. |
+| `control/pot_manager.py` | ffmpeg/binding 실패 시 표준 에러 헬퍼(`emit_error_standard`/`emit_error_warn`) 사용. bind fail 시 표준 에러 헬퍼. |
+| `pipeline/target_downloader.py` | 즉시 TUI 발행 금지 — `_emit_error_log`는 기록만, finalizer에서 단일 출력. 즉시 TUI 발행 코드 제거. |
+| `pipeline/progress_emitter.py` | `log_success_info` 중간 스트림(.fNNN) 은닉(`to_tui=False`). `pp_hook` 신설 — postprocessor 완료 시 최종 결과물 1줄만 발행. |
+| `control/startup_coordinator.py` | `report_upgrade`/`report_pot` 실패 시 `emit_error_standard` 사용. `force_unlock` 호출 제거. |
+| `control/pot_manager.py` | ffmpeg/binding 실패 시 표준 에러 헬퍼(`emit_error_standard`/`emit_error_warn`) 사용. bind fail 시 표준 에러 헬퍼. |
+| `pipeline/target_downloader.py` | 즉시 TUI 발행 금지 — `_emit_error_log`는 기록만, finalizer에서 단일 출력. 즉시 TUI 발행 코드 제거. |
+| `pipeline/progress_emitter.py` | `log_success_info` 중간 스트림(.fNNN) 은닉(`to_tui=False`). `pp_hook` 신설 — postprocessor 완료 시 최종 결과물 1줄만 발행. |
+| `control/startup_coordinator.py` | `report_upgrade`/`report_pot` 실패 시 `emit_error_standard` 사용. `force_unlock` 호출 제거. |
+| `control/pot_manager.py` | ffmpeg/binding 실패 시 표준 에러 헬퍼(`emit_error_standard`/`emit_error_warn`) 사용. bind fail 시 표준 에러 헬퍼. |
+| `pipeline/target_downloader.py` | 즉시 TUI 발행 금지 — `_emit_error_log`는 기록만, finalizer에서 단일 출력. 즉시 TUI 발행 코드 제거. |
+| `pipeline/progress_emitter.py` | `log_success_info` 중간 스트림(.fNNN) 은닉(`to_tui=False`). `pp_hook` 신설 — postprocessor 완료 시 최종 결과물 1줄만 발행. |
+| `control/startup_coordinator.py` | `report_upgrade`/`report_pot` 실패 시 `emit_error_standard` 사용. `force_unlock` 호출 제거. |
+| `control/pot_manager.py` | ffmpeg/binding 실패 시 표준 에러 헬퍼(`emit_error_standard`/`emit_error_warn`) 사용. bind fail 시 표준 에러 헬퍼. |
+
+#### 설계 원칙 보강
+1. **단일 격리(Single Isolated Runtime)**: 실행체 해석은 `writable_base()` 및 `.pylib` 오버레이만 — 시스템 PATH/패키지 매니저 참조 0건.
+2. **순정 우선, POT 승격**: Layer 1~2는 yt-dlp 순정 위임(EJS 솔버 포함), 실패·1080p 미달 시에만 Layer 3 POT 승격. 720p `tv` 타협 폐기.
+3. **워커 스레드 경계**: 워커는 뷰 소유 QObject(POTManager)에 접근하지 않고, L0/L1 순수 인프라만 호출.
+3. **입력 게이트 2중 방어**: 파싱 단계(배치 전체 차단) + 워커 구동 직전 재검증.
+4. **로그 단일 발행**: FAIL은 finalizer 1회, ANAL 마감은 명세 4행, DL 중간 스트림은 은닉.
+5. **폴백 완전 제거**: 15초 강제 언락(`force_unlock`) 제거 — deps 수급 실패 시 영구 잠금, 사용자 재시도(ENTER) 대기. 프리웜 중 `defer_fallback_timer` 제거, `_on_pot_activity` 연결 해제.
+
+#### 검증
+- 전체 pytest **304 passed**
+- `python -m compileall -q chzzktube` 통과
+- 실측: `afqweqasd` 게이트 차단(`Invalid URL format: afqweqasd`) / `https://youtu.be/...` 통과 / 앱 코드 `shutil.which(` 호출 0건 / 격리 캐시 부재 시 `ffmpeg_exe() → None`(시스템 ffmpeg 무시)
+- 회귀 계약 테스트 개정: `test_analysis_retry.py`(순정 단일 호출 계약), `test_gate_integration.py`·`test_pipeline_regressions.py`(TUI 포맷·`subscriber_only` 게이트)
+
+---
+
+### 2026-09-20 — v3.8.0 : 단독 환경 격리·입력 게이트·Layer 3 POT 수리·TUI 정제 (minor)
+
+#### 배경 (v3.7.2 → v3.8.0)
+- **CLI vs App 동작 불일치**: CLI는 `--cookies`만으로 멤버십·1080p+ 수급되지만 앱은 실패. 근본 원인은 쿠키 감지 시 `player_client`를 `web`으로 강제 고정하던 구 로직(→ PO 토큰 없는 `web` 요청은 이미지 포맷만 반환)이었다. v3.7.2에서 순정 위임은 완료됐으나 잔재가 남아 있었다.
+- **시스템 환경 간섭**: `shutil.which`·`brew install`·`apt-get`이 사용자 PC의 구버전 바이너리/오염 플러그인을 참조할 위험.
+- **무검증 억지 다운로드**: `afqweqasd` 같은 임의 문자열 입력 시 분석 검증 없이 DownloadWorker가 실행되어 `[generic] Extracting URL` → `DL FAIL` 3~4줄 중복 발행.
+- **Layer 3 POT 준비의 잠재 결함**: `target_downloader._download_vod`가 존재하지 않는 `POTManager.instance()`를 호출 — POT 재시도 경로 진입 시 `AttributeError`로 즉사(게다가 POTManager는 뷰 소유 QObject라 워커 스레드 접근은 스레드 경계 위반).
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `infra/node_provider.py` | `node_exe()`·`ensure_node_runtime()`에서 시스템 PATH/`shutil.which("node"\|"npm")` 전면 제거 — 오직 `writable_base()/node` 포터블 + frozen 번들만 판정·수급 |
+| `infra/components.py` | `ensure_ffmpeg`의 시스템 ffmpeg 최우선 로직 제거 → 격리 캐시 선검(파손 캐시 제거) 후 정적 바이너리 수급. `brew install`·`apt-get/dnf/pacman` 서브프로세스 철폐(Homebrew bottle은 HTTP 직접 다운로드 유지). `ffmpeg_exe()`의 `shutil.which` 폴백 제거. `_wire_ffmpeg_path` 디버그 로깅 정리 |
+| `infra/updater.py` | `_cli_base()`를 실행체 단일 격리로 재작성 — ytdlp/streamlink는 앱 인터프리터 `-m` 실행(오버레이 우선), ffmpeg/node/npm은 격리 캐시 리졸버 단일 참조. `check_deps`도 `components.ffmpeg_exe()`/`pot_provider.node_exe()` 경유로 판정 |
+| `infra/pot_server.py` | npm 해석의 `shutil.which("npm")` 폴백 제거 — npm-cli.js → `npm_exe()` 단일 경로, 없으면 명시적 오류 |
+| `core/client_opts.py` | `_apply_ffmpeg_opts`가 `components.ffmpeg_exe()`(격리 캐시)만 참조 |
+| `pipeline/target_downloader.py` | **[근본 수리]** `_ensure_pot_server_ready()` 신설 — L0 `po_client.server_ping` + L1 `pot_server`의 순수 스폰/빌드 헬퍼(프리웜 락)만 사용해 워커 스레드에서 안전하게 Layer 3 준비. `_FormatQualityLoss`/`_max_requested_height`/`_needs_pot_promotion` 신설 — 1080p 미달 수급 시 720p 타협 없이 POT 승격(사용자 해상도 제한·수동 포맷 선택은 제외). POT 미가용 시 1차 수급본을 파기하지 않고 `hd unavailable — kept Np`로 정직 보고. `_emit_vod_success`로 성공 라인 발행 단일화. `_emit_error_log`는 기록 전용(TUI 즉시 발행 철폐) |
+| `pipeline/progress_emitter.py` | `log_success_info`가 중간 임시 스트림(`.f399`/`.f251`)을 TUI에서 은닉(`to_tui=False`). `pp_hook` 신설 — postprocessor 완료 시 최종 결과물 1줄만 발행(중복 방지) |
+| `pipeline/finalizer.py` | 개별 실패 라인의 **유일 발행점**으로 확정 — 배치 마감 시 1회 정갈 출력(중복 FAIL 로그 3~4줄 원천 차단) |
+| `control/controller.py` | `_is_valid_url()` 순수 게이트 신설(스킴 + 도메인 + `_DOMAIN_EXTRACTORS` SSOT suffix 매치), `parse_targets`가 비URL 항목 발견 시 `ValueError("Invalid URL format: …")`로 배치 전체 차단 |
+| `ui/main_window.py` | 게이트 배선(1차 `toggle_download`, 2차 `_start_download` 방어선). `on_analyze_error`에서 `extracted_data` 즉시 초기화(잔여 데이터 억지 다운로드 차단) + 멤버십/연령제한 시 `CookieSelectDialog` 자동 팝업. `stop_analysis_anim`을 ANAL 마감 정갈 명세(complete → 제목·채널 → 가용성 → 대표 포맷)로 재작성. `_emit_format_logs`를 `[codec] · [codec]` 형식으로 정제. 종료 시 다운로드 워커 `wait(1000)` 추가 |
+| `core/log_emitter.py` | `analysis_done_msg()` 상수 신설 — ANAL 마감 문구 단일 출처 |
+
+#### 설계 원칙
+1. **단일 격리(Single Isolated Runtime)**: 실행체 해석은 `writable_base()` 및 `.pylib` 오버레이만 — 시스템 PATH/패키지 매니저 참조 0건.
+2. **순정 우선, POT 승격**: Layer 1~2는 yt-dlp 순정 위임(EJS 솔버 포함), 실패·1080p 미달 시에만 Layer 3 POT 승격. 720p `tv` 타협 폐기.
+3. **워커 스레드 경계**: 워커는 뷰 소유 QObject(POTManager)에 접근하지 않고, L0/L1 순수 인프라만 호출.
+4. **입력 게이트 2중 방어**: 파싱 단계(배치 전체 차단) + 워커 구동 직전 재검증.
+5. **로그 단일 발행**: FAIL은 finalizer 1회, ANAL 마감은 명세 4행, DL 중간 스트림은 은닉.
+
+#### 검증
+- 전체 pytest **297 passed** (신규 `test_url_gate.py` 19건 + `test_v38_contracts.py` 27건 포함)
+- `python -m compileall -q chzzktube` 통과
+- 실측: `afqweqasd` 게이트 차단(`Invalid URL format: afqweqasd`) / `https://youtu.be/...` 통과 / 앱 코드 `shutil.which(` 호출 0건 / 격리 캐시 부재 시 `ffmpeg_exe() → None`(시스템 ffmpeg 무시)
+- 회귀 계약 테스트 개정: `test_analysis_retry.py`(순정 단일 호출 계약), `test_gate_integration.py`·`test_pipeline_regressions.py`(TUI 포맷·`subscriber_only` 게이트)
+
 ### 2026-09-19 — v3.7.2 : yt-dlp 순정 클라이언트 로테이션 완전 위임 (minor)
 - **핵심 변경**: 앱 레벨 수동 클라이언트 로테이션(`_RETRY_CLIENTS`, `client_chain`) 완전 제거 → **yt-dlp 순정 단일 `auto` 호출로 위임**
   - yt-dlp 내부 `_DEFAULT_CLIENTS`(`web_embedded` → `tv_downgraded` → `web_safari` → `mweb` → `tv`...) + EJS 솔버(deno/node) 자동 작동

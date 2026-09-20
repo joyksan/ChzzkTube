@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject, Signal
 
 from chzzktube.control.startup_state import StartupState
 from chzzktube.control.pot_manager import POTManager
+from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
 
 
 class StartupCoordinator(QObject):
@@ -33,7 +34,6 @@ class StartupCoordinator(QObject):
         self._pot = pot_manager
         self._state = StartupState()
         self._lock = threading.RLock()
-        self._fallback_done = False
 
         # POTManager 시그널 연결
         self._pot.pot_status_changed.connect(self._on_pot_status)
@@ -54,27 +54,50 @@ class StartupCoordinator(QObject):
 
     # ── Worker → Coordinator 보고 ────────────────────────────
 
+    # ── Worker → Coordinator 보고 ────────────────────────────
+
     def report_deps(self, ok: bool, msg: str = ""):
         with self._lock:
-            self._state.set_deps(ok)
+            # [v3.8.1] deps 실패 시 영구 실패 고정 — 한 번 실패면 끝 (최소값 원칙)
+            if not ok and not self._state.deps_error_msg:
+                self._state.deps_error_msg = msg
+                self._state.deps_ok = False
+            elif ok and not self._state.deps_error_msg:
+                # 실패 기록이 없을 때만 성공으로 갱신
+                self._state.deps_ok = True
             self._try_emit_ready()
 
     def report_upgrade(self, ok: bool, summary: str):
         with self._lock:
             self._state.set_upgrade(True)
             if summary:
-                self._emit("SYS", "OK" if ok else "FAIL", f"update {summary}",
-                           is_error=not ok)
+                if ok:
+                    self._emit("SYS", "OK", f"update {summary}")
+                else:
+                    # [v3.8.1] 업그레이드 실패 시 표준 에러 헬퍼 사용
+                    from chzzktube.core.log_emitter import emit_error_standard
+                    raw_log.raw(
+                        "startup",
+                        emit_error_standard("SYS", "MAIN", "update failed", "check logs (F12)"),
+                        to_tui=True,
+                    )
             self._try_emit_ready()
 
     def report_pot(self, ok: bool, msg: str):
         with self._lock:
             status = msg if ok else "failed"
-            # 실제 POTManager 완료 신호는 ``staged``/``ready``만 사용한다.
-            # 기존 테스트/호출부의 ``standby`` 보고는 공개 영상용 준비 완료로만
-            # 호환 처리하며, 임의의 성공 메시지는 READY 게이트를 열지 않는다.
-            ready = ok and (status == "staged" or status == "ready" or status == "standby")
+            # [v3.8.1] staged ≠ ready — gate 완료(ready)만 pot_ready=True
+            # staged = prewarm 완료, gate 미시작 상태이므로 토큰 서빙 불가
+            ready = ok and status == "ready"
             self._state.set_pot(status, ready=ready)
+            if not ok:
+                # [v3.8.1] POT 실패 시 표준 에러 헬퍼 사용
+                from chzzktube.core.log_emitter import emit_error_standard
+                raw_log.raw(
+                    "startup",
+                    emit_error_standard("SYS", "POT", "server failed", "check logs (F12)"),
+                    to_tui=True,
+                )
             self._try_emit_ready()
 
     def report_ready(self, ok: bool = True, msg: str = "ready — input unlocked"):
@@ -111,20 +134,6 @@ class StartupCoordinator(QObject):
 
     def _on_pot_finished(self, ok: bool, msg: str):
         self.report_pot(ok, msg)
-
-    # ── 강제 READY (15초 폴백) ────────────────────────────────
-
-    def force_unlock(self):
-        with self._lock:
-            if self._fallback_done:
-                return
-            self._fallback_done = True
-        # [P3] POT 프리웜을 취소하지 않는다 — 백그라운드 수급/빌드(GitHub zip·npm ci·tsc)를
-        # 살려두어야 pot_ready가 세워지고 POT 게이트 다운로드가 큐에서 풀린다.
-        # 종전 cancel()은 자식 프로세스를 죽이지 못한 채(_POTWorker._child_procs는 항상
-        #  리스트 — append 0건) QThread만 terminate해 고아 npm을 남기고 prewarm-lock을
-        # 점유하는 역효과가 있었다. cancel()은 closeEvent 종료 정리 용도로만 존치한다.
-        self.report_ready(True, "ready — input unlocked (fallback timeout)")
 
     # ── READY 발산 게이트 ────────────────────────────────────
 

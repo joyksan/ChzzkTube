@@ -5,6 +5,7 @@ import subprocess
 import os
 from chzzktube.core.log_event import LogEvent
 import chzzktube.core.raw_log as raw_log
+from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
 
 
 class _POTWorker(QThread):
@@ -97,11 +98,27 @@ class _POTWorker(QThread):
                 self._dbg("entering ffmpeg ensure phase")
                 ff_err = components.ensure_ffmpeg(self._note)
                 if ff_err:
-                    self._note(f"ffmpeg failed: {ff_err}", False, True)
+                    # [v3.8.1] 표준 에러 헬퍼로 변환
+                    if "binary incompatible" in ff_err.lower() or "not runnable" in ff_err.lower():
+                        cause = "binary incompatible"
+                        action = "retry mirror (1/3)"
+                    elif "all mirrors exhausted" in ff_err.lower():
+                        cause = "all mirrors exhausted"
+                        action = "check network (F12)"
+                    elif "checksum mismatch" in ff_err.lower() or "hash mismatch" in ff_err.lower():
+                        cause = "checksum mismatch"
+                        action = "retry mirror (1/3)"
+                    elif "network" in ff_err.lower() or "timeout" in ff_err.lower() or "connection" in ff_err.lower():
+                        cause = "network error"
+                        action = "check network (F12)"
+                    else:
+                        cause = "setup failed"
+                        action = "check logs (F12)"
+                    self._note(emit_error_standard("DEPS", "FFMP", cause, action), False, True)
                 else:
                     self._dbg("ffmpeg fetch done")
             except Exception as ff_ex:
-                self._note(f"ffmpeg ex: {ff_ex}", False, True)
+                self._note(emit_error_standard("DEPS", "FFMP", "setup failed", "check logs (F12)", is_error=True), False, True)
         else:
             self._dbg("ffmpeg ensure skipped (prewarm)")
         try:
@@ -140,6 +157,23 @@ class _POTWorker(QThread):
                 if err is None and built_server_js():
                     self.outcome = (True, "prewarm staged")
                 else:
+                    # [v3.8.1] 표준 에러 헬퍼로 변환
+                    if "binary incompatible" in err.lower() or "not runnable" in err.lower():
+                        cause = "binary incompatible"
+                        action = "retry mirror (1/3)"
+                    elif "all mirrors exhausted" in err.lower():
+                        cause = "all mirrors exhausted"
+                        action = "check network (F12)"
+                    elif "checksum mismatch" in err.lower() or "hash mismatch" in err.lower():
+                        cause = "checksum mismatch"
+                        action = "retry mirror (1/3)"
+                    elif "network" in err.lower() or "timeout" in err.lower() or "connection" in err.lower():
+                        cause = "network error"
+                        action = "check network (F12)"
+                    else:
+                        cause = "setup failed"
+                        action = "check logs (F12)"
+                    self._note(emit_error_standard("DEPS", "FFMP", cause, action), is_status=False, is_error=True)
                     self.outcome = (False, f"prewarm fail: {err}")
             finally:
                 release_prewarm_lock(fd, log_func=self._dbg)
@@ -152,6 +186,8 @@ class _POTWorker(QThread):
                 self._server_proc = proc
                 self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
                 return
+        # [v3.8.1] 표준 에러 헬퍼로 변환
+        self._note(emit_error_standard("DEPS", "FFMP", "bind fail", "check logs (F12)"), is_status=False, is_error=True)
         self.outcome = (False, "bind fail — age-only")
     
     def terminate(self):

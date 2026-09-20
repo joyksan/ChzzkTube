@@ -54,6 +54,31 @@ TREE_TOTAL_WIDTH = 56  # 간결 로그 창의 실질 가로 예산 (폴백 — u
 ### 줄기 없는(' └─') 연속 줄의 선행 공백 폭 — cont_prefix는 prefix 폭(TREE_LABEL_WIDTH+6)만큼의 공백 나열
 STEMLESS_CONT_WIDTH = TREE_LABEL_WIDTH + 6
 
+
+### [v3.8.0 Hyper-Minimalist TUI] 분석 마감 정갈 명세
+###   [ANAL RUN  analyzing complete!]
+###   [ANAL OK   [제목] · [채널명]]
+###   [ANAL OK   [public]]
+###   [ANAL OK   [1080p60] [av01...] · [opus] ...]
+_ANALYSIS_DONE_MSG = "analyzing complete!"
+
+
+def analysis_done_msg():
+    """ANAL RUN 마감 고정 문구 (main_window.stop_analysis_anim 유일 소비)."""
+    return _ANALYSIS_DONE_MSG
+
+
+def format_analysis_counts(v_count, a_count):
+    """분석 완료 로그의 포맷 개수 요약 문자열."""
+    if v_count and a_count:
+        return f" (v:{v_count}, a:{a_count})"
+    if v_count:
+        return f" (v:{v_count})"
+    if a_count:
+        return f" (a:{a_count})"
+    return ""
+
+
 def _flow_lines(line, no_wrap=False):
     """라인 분할 규칙 — Single-Line TUI는 wrap하지 않는다.
 
@@ -105,16 +130,6 @@ def format_kv_line(symbol, label, value):
 def format_target_url(url, max_len=50):
     """URL을 트리 가지 형태로 출력. 길면 '│' 세로줄로 이어지는 정렬된 줄바꿈."""
     return format_tree_item("대상", url, branch="└─")
-
-def format_analysis_counts(v_count, a_count):
-    """분석 완료 로그의 포맷 개수 요약 문자열."""
-    if v_count and a_count:
-        return f" (v:{v_count}, a:{a_count})"
-    if v_count:
-        return f" (v:{v_count})"
-    if a_count:
-        return f" (a:{a_count})"
-    return ""
 
 
 def format_pick_menu(v_list, a_list, max_rows=40):
@@ -324,10 +339,12 @@ def emit_err(msg):
     return LogEvent(stage="DL", status="FAIL", msg=msg, is_error=True)
 
 
+from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
+
+
 def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
                   bar_frac=None, is_status=False, is_error=False):
     """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
-    from chzzktube.core.log_event import LogEvent  # lazy import
     return LogEvent(
         stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
@@ -337,8 +354,105 @@ def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
 
 def emit_component(stage, status, scope, msg="", is_status=False, is_error=False):
     """컴포넌트/워커 결과 — DEPS / POT / READY 등."""
-    from chzzktube.core.log_event import LogEvent  # lazy import
+    from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
         stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         is_status=is_status, is_error=is_error,
     )
+
+
+### [v3.8.0] 오류 로그 표준 헬퍼 — 규격 포맷 준수
+# 포맷: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ <간결 원인> → <진행/액션>
+# MSG 최대 55자 (TUI 폭 예산), 초과 시 '…' 절단
+
+# 허용된 원인 키워드 (TUI용 표준화)
+_ERROR_CAUSES = {
+    "binary incompatible": "binary incompatible",
+    "all mirrors exhausted": "all mirrors exhausted",
+    "checksum mismatch": "checksum mismatch",
+    "permission denied": "permission denied",
+    "network error": "network error",
+    "not found": "not found",
+    "setup failed": "setup failed",
+    "build failed": "build failed",
+    "port conflict": "port conflict",
+    "unknown": "unknown error",
+}
+
+# 허용된 액션 키워드 (TUI용 표준화)
+_ERROR_ACTIONS = {
+    "retry mirror (1/3)": "retry mirror (1/3)",
+    "retry mirror (2/3)": "retry mirror (2/3)",
+    "retry mirror (3/3)": "retry mirror (3/3)",
+    "check network (F12)": "check network (F12)",
+    "check folder permissions": "check folder permissions",
+    "check logs (F12)": "check logs (F12)",
+    "try again": "try again",
+    "none": "",
+}
+
+# 메시지 최대 길이 (TUI 컬럼 폭 보호)
+_MAX_ERR_MSG_LEN = 55
+
+def _normalize_cause(cause: str) -> str:
+    """원인 문자열을 표준 키워드로 정규화."""
+    cause_lower = cause.lower()
+    for std_cause in _ERROR_CAUSES:
+        if std_cause in cause_lower:
+            return _ERROR_CAUSES[std_cause]
+    return "unknown error"
+
+def _normalize_action(action: str) -> str:
+    """액션 문자열을 표준 키워드로 정규화."""
+    action_lower = action.lower()
+    for std_action, std_value in _ERROR_ACTIONS.items():
+        if std_action.lower() in action_lower:
+            return std_value
+    # 알려진 액션이 없으면 빈 문자열 반환 (무시)
+    return ""
+
+def _truncate_msg(msg: str, max_len: int = _MAX_ERR_MSG_LEN) -> str:
+    """메시지 길이 제한 (초과 시 '…' 절단)."""
+    if len(msg) <= max_len:
+        return msg
+    return msg[:max_len - 1] + "…"
+
+def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
+                        status: str = "FAIL", is_error: bool = True) -> LogEvent:
+    """
+    [v3.8.0] 오류 로그 표준 헬퍼 — 규격 포맷 준수.
+    
+    TUI 포맷: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ <간결 원인> → <진행/액션>
+    - cause: 기술적 원인 키워드 (binary incompatible, all mirrors exhausted 등)
+    - action: 진행 중 액션 또는 사용자 액션 (retry mirror (N/M), check network (F12) 등)
+    - 반환: LogEvent (rendered=False로 포맷터가 컬럼화 수행)
+    """
+    from chzzktube.core.log_event import LogEvent  # lazy import
+    
+    # 원인/액션 정규화
+    cause_std = _normalize_cause(cause)
+    action_std = _normalize_action(action)
+    
+    # 메시지 조합: "원인 → 액션" (빈 액션이면 원인만)
+    if action_std:
+        msg = f"{cause_std} → {action_std}"
+    else:
+        msg = cause_std
+    
+    # 길이 제한
+    msg = _truncate_msg(msg)
+    
+    return LogEvent(
+        stage=stage,
+        status=status,
+        scope=scope,
+        platform=scope,
+        msg=msg,
+        is_error=True,
+    )
+
+
+def emit_error_warn(stage: str, scope: str, cause: str, action: str = "",
+                    status: str = "WARN") -> LogEvent:
+    """WARN 레벨 표준 에러 (is_error=False)."""
+    return emit_error_standard(stage, scope, cause, action, status=status, is_error=False)

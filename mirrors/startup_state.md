@@ -18,6 +18,8 @@ class StartupState:
     pot_status: str = "unknown"   # unknown/running/standby/staged/failed
     pot_ready: bool = False
     ready_emitted: bool = False
+    # [v3.8.1] deps 수급 실패 시 원본 에러 메시지 보관 — 폴백 제거로 에러 상태 영구 보관
+    deps_error_msg: str = ""
     
     # 내부 동기화
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
@@ -52,6 +54,7 @@ class StartupState:
                 and self.upgrade_done
                 and self.pot_ready
                 and not self.ready_emitted
+                and not self.deps_error_msg  # [v3.8.1] deps 에러 있으면 READY 차단
             )
 
     def is_ready(self) -> bool:
@@ -67,4 +70,5 @@ class StartupState:
                 "pot_status": self.pot_status,
                 "pot_ready": self.pot_ready,
                 "ready_emitted": self.ready_emitted,
+                "deps_error_msg": self.deps_error_msg,
             }

@@ -6,14 +6,18 @@ PATH 밖(writable_base()/node)에 수급하므로 n-challenge가 실패했고, �
 클라이언트 자체를 스킵 → "No video formats found"로 즉사했다. 이 오류는
 bot-block 판정에 없어 마지막 폴백까지 도달하지도 못했다.
 
-[계약]
+[계약 — v3.8.0 순정 위임 개정]
 1. _apply_ejs_opts는 node_exe()가 찾은 node를 js_runtimes로 명시 주입한다.
 2. node가 없으면 js_runtimes를 건드리지 않는다(기본 deno 유지).
 3. ejs:github remote_component는 항상 허용된다.
-4. 회전 후보에 쿠키 미지원 클라이언트(ios)가 없다.
-5. "No video formats found" / "Requested format is not available"는 회전
-   지속 판정(bot-block) 대상이다.
-6. 회전 중 파생 오류가 나도 마지막 후보까지 시도하고 마지막 오류를 보고한다.
+4. [개정] 앱 레벨 회전 체인(_RETRY_CLIENTS)은 폐기 — yt-dlp 순정 단일 auto
+   호출로 완전 위임한다. 클라이언트 로테이션은 yt-dlp 내부
+   _DEFAULT_CLIENTS가 담당한다.
+5. "No video formats found" / "Requested format is not available"는
+   봇 차단/포맷 상실 판정(다운로드 POT 승격) 대상이다.
+6. [개정] 회전이 없으므로 '마지막 후보까지 회전' 계약은 소멸 — 분석은
+   단일 auto 호출 1회이며, 실패 시 뷰의 POT 재시도(_maybe_retry_analysis)가
+   후속한다.
 """
 import pytest
 
@@ -43,13 +47,13 @@ def test_ejs_opts_without_node_keeps_defaults(monkeypatch):
     assert opts["remote_components"] == ["ejs:github"]
 
 
-def test_retry_clients_cookie_compatible():
-    # [계약 4] 쿠키 사용 중 ios는 yt-dlp가 스킵 → 즉사. 후보에서 배제.
-    assert "ios" not in aw.AnalyzeWorker._RETRY_CLIENTS
+def test_retry_clients_deprecated_to_stainless_chain():
+    # [계약 4 개정] 앱 레벨 회전 체인 폐기 — 순정 위임 (v3.8.0).
+    assert aw.AnalyzeWorker._RETRY_CLIENTS == []
 
 
 def test_bot_block_covers_no_format_derivatives():
-    # [계약 5] 회전 중 파생 오류도 회전 지속 판정 대상.
+    # [계약 5] 봇 차단/포맷 상실 판정(다운로드 POT 승격 트리거) 대상.
     assert aw.AnalyzeWorker._is_bot_block(Exception("No video formats found!"))
     assert aw.AnalyzeWorker._is_bot_block(
         Exception("Requested format is not available.")
@@ -83,8 +87,9 @@ class _FailThenYDL:
         return {"formats": [{"id": "f1"}], "title": "t"}
 
 
-def test_rotation_runs_to_last_candidate_on_derived_error(monkeypatch):
-    # [계약 6] 중간 파생 오류("No video formats found")여도 마지막 후보까지 회전.
+def test_stainless_single_call_no_rotation(monkeypatch):
+    # [계약 6 개정] 분석은 순정 단일 auto 호출 1회 — 앱 레벨 회전 없음.
+    # 실패 시 예외가 그대로 상승하고, 뷰의 POT 재시도 인터락이 후속한다.
     _FailThenYDL.failures = ["ERROR: [youtube] x: No video formats found!"]
     _FailThenYDL.fail_times = 99
     _FailThenYDL.seen_clients = []
@@ -92,19 +97,19 @@ def test_rotation_runs_to_last_candidate_on_derived_error(monkeypatch):
     w = _worker()
     with pytest.raises(RuntimeError):
         w._extract_youtube("u", flat=False)
-    assert _FailThenYDL.seen_clients == ["auto", "tv", "web_safari"]
+    assert _FailThenYDL.seen_clients == ["auto"]
 
 
-def test_rotation_succeeds_on_candidate(monkeypatch):
-    _FailThenYDL.failures = ["ERROR: [youtube] x: The page needs to be reloaded."]
-    _FailThenYDL.fail_times = 1
+def test_stainless_call_success(monkeypatch):
+    _FailThenYDL.failures = []
+    _FailThenYDL.fail_times = 0
     _FailThenYDL.seen_clients = []
     monkeypatch.setattr(aw, "YoutubeDL", _FailThenYDL)
     w = _worker()
     info = w._extract_youtube("u", flat=False)
     assert info["formats"] == [{"id": "f1"}]
-    # 통과한 클라이언트 기록 — 다운로드가 같은 클라이언트를 쓰도록 강제하는 값.
-    assert w.client_used == "tv"
+    # 순정 위임 — 클라 기록은 항상 auto (다운로드도 auto로 위임)
+    assert w.client_used == "auto"
 
 
 # ── [TUI 규격] 최종 analysis error 메시지 축약 ──────────────────────────

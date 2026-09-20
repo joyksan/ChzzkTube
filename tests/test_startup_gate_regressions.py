@@ -122,10 +122,6 @@ class _CheckDoneFake:
     def _retire_qthread(self, worker):
         pass
 
-    def defer_fallback_timer(self, extension_ms=15000):
-        """[P5] 실제 슬롯 대역 — work_tick 배선이 요구하는 시그니처."""
-        self.deferred.append(extension_ms)
-
 
 class _DlFake:
     """`get_current_app_state`/`toggle_download`만 실제 구현으로 바인딩한 대역."""
@@ -183,9 +179,8 @@ def test_check_done_reports_deps_true_when_clean(monkeypatch):
     fake._on_update_check_done([])
     ok_arg, msg_arg = fake._startup_coord.report_deps.call_args[0]
     assert (ok_arg, msg_arg) == (True, "deps ok")
-    # [P5] 업그레이드 워커의 수급 하트비트가 폴백 타이머 연장 슬롯에 배선된다
-    # (워치독 하트비트도 연결되므로 슬롯 2개 허용)
-    assert fake.defer_fallback_timer in fake.update_worker.work_tick.slots
+    # [v3.8.1] 폴백 타이머 제거 — work_tick 슬롯에 defer_fallback_timer 없음
+    assert not hasattr(fake, "defer_fallback_timer")
 
 
 # ── P2: 워커 크래시 종료 시그널 분기 ─────────────────────────────────
@@ -270,49 +265,29 @@ class _FakeTimer:
 
 
 class _TimerFake:
-    """`_fallback_timer`만 보유한 경량 대역."""
+    """폴백 타이머 제거 후 빈 대역."""
 
     def __init__(self, startup_completed=False, start=True):
         self._startup_completed = startup_completed
-        self._fallback_timer = _FakeTimer(active=start)
-        # 워치독 대역 (check_timeout은 항상 False, heartbeat는 no-op)
+        # [v3.8.1] 폴백 타이머 제거 — _FakeTimer 사용 안 함
         self._gate_watchdog = _WatchdogFake()
         self._analysis_watchdog = _WatchdogFake()
-        if start:
-            self._fallback_timer.start(15000)
-
-    def defer_fallback_timer(self, extension_ms: int = 15000):
-        return main_module.MainWindow.defer_fallback_timer(self, extension_ms)
 
     def _on_pot_activity(self, status):
-        return main_module.MainWindow._on_pot_activity(self, status)
+        """[v3.8.1] 폴백 타이머 제거로 더 이상 연장하지 않음."""
+        pass
 
 
-def test_defer_fallback_timer_extends_while_startup():
-    """수급 진행 하트비트는 15초 폴백 카운트다운을 되감는다."""
+def test_no_fallback_timer():
+    """[v3.8.1] 폴백 타이머가 없으므로 _fallback_timer 속성 없음."""
     fake = _TimerFake()
-    assert fake._fallback_timer.starts == [15000]
-    fake.defer_fallback_timer(15000)
-    assert fake._fallback_timer.starts == [15000, 15000]
+    assert not hasattr(fake, "_fallback_timer")
 
 
-def test_defer_fallback_timer_noop_after_unlock_or_fired():
-    # READY가 이미 열린 뒤에는 되살리지 않는다(타이머 재시작 0회)
-    done = _TimerFake(startup_completed=True)
-    done.defer_fallback_timer()
-    assert done._fallback_timer.starts == [15000]
-    # 폴백이 이미 발화한 뒤(타이머 비활성)에도 되살리지 않는다
-    fired = _TimerFake(start=False)
-    fired.defer_fallback_timer()
-    assert fired._fallback_timer.starts == []
-
-
-def test_pot_activity_defers_only_for_prewarm_phase():
+def test_no_fallback_defer():
+    """[v3.8.1] defer_fallback_timer 메서드 없음."""
     fake = _TimerFake()
-    fake._on_pot_activity("staged")
-    assert fake._fallback_timer.starts == [15000]  # 전환 토큰은 연장 사유 아님
-    fake._on_pot_activity("prewarm")
-    assert fake._fallback_timer.starts == [15000, 15000]
+    assert not hasattr(fake, "defer_fallback_timer")
 
 
 def test_work_tick_fires_only_on_real_provisioning():
@@ -330,7 +305,7 @@ def test_work_tick_fires_only_on_real_provisioning():
 
 
 class _GateFake:
-    """게이트 하드닝(워치독·유예·재시도) 검증용 경량 대역."""
+    """게이트 하드닝(워치독·재시도) 검증용 경량 대역."""
 
     def __init__(self, *, pot_busy=False, pot_ready=True, worker_running=False,
                  startup_completed=False, timer_active=True, url="https://youtu.be/abcDEFghijk"):
@@ -345,7 +320,6 @@ class _GateFake:
             ensure_ready=lambda *a, **k: self.ensure_ready_calls.append(a),
         )
         self.update_worker = SimpleNamespace(isRunning=lambda: worker_running)
-        self._fallback_timer = _FakeTimer(active=timer_active)
         self._gate_watchdog = _FakeTimer(active=False)
         self._gate_watchdog_active = True
         self._startup_coord = Mock()
@@ -358,9 +332,6 @@ class _GateFake:
         self.canceled = []
         self.ensure_ready_calls = []
         self.logs = []
-
-    def _force_unlock_input(self):
-        return main_module.MainWindow._force_unlock_input(self)
 
     def _startup_chain_active(self):
         return main_module.MainWindow._startup_chain_active(self)
@@ -410,27 +381,10 @@ def test_gate_watchdog_noop_when_pot_idle(monkeypatch):
     assert fake.canceled == []
 
 
-def test_fallback_grace_defers_when_chain_active(monkeypatch):
-    """[Followup-4] 체인이 실제로 동작 중이면 폴백을 1회 유예한다."""
-    import chzzktube.core.raw_log as raw_log
-
-    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
+def test_no_fallback_grace():
+    """[v3.8.1] 폴백 유예 없음 — _force_unlock_input 메서드 자체가 없음."""
     fake = _GateFake(pot_busy=True)
-    fake._force_unlock_input()
-    assert fake._startup_coord.force_unlock.call_count == 0
-    assert fake._fallback_timer.starts == [_FALLBACK_GRACE_MS]  # 유예로 재무장
-    assert getattr(fake, "_fallback_grace_used") is True
-
-
-def test_fallback_fires_after_grace_when_chain_idle(monkeypatch):
-    import chzzktube.core.raw_log as raw_log
-
-    monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
-    fake = _GateFake(worker_running=True)
-    fake._force_unlock_input()  # 유예(체인 동작 중)
-    fake.update_worker.isRunning = lambda: False
-    fake._force_unlock_input()  # 유예 후 재판정 → 개방
-    assert fake._startup_coord.force_unlock.call_count == 1
+    assert not hasattr(type(fake), "_force_unlock_input")
 
 
 def test_deps_fail_promoted_to_gate(monkeypatch):

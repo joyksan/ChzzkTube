@@ -1,16 +1,22 @@
 ##### downloader_helpers/client_opts.py - yt-dlp 옵션 빌더
 """yt-dlp 옵션에 player_client/쿠키 설정을 주입하는 순수 헬퍼."""
 import os
-import shutil
 
 
 def _apply_ffmpeg_opts(opts):
-    """ffmpeg 경로를 ydl_opts에 반영 (Windows/macOS/Linux 호환)."""
+    """ffmpeg 경로를 ydl_opts에 반영 (Windows/macOS/Linux 호환).
+
+    [v3.8.0 격리] 시스템 PATH 탐색(shutil.which) 금지 — 앱 전용 캐시
+    (writable_base()/ffmpeg)에서 수급된 바이너리만 단일 참조한다.
+    """
     # 이미 ffmpeg_location이 설정되어 있으면 스킵
     if "ffmpeg_location" in opts:
         return opts
-    # 시스템 PATH에서 ffmpeg 검색 (Windows에서는 ffmpeg.exe도 시도)
-    ffmpeg_path = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
+    try:
+        from chzzktube.infra.components import ffmpeg_exe
+        ffmpeg_path = ffmpeg_exe()
+    except Exception:
+        ffmpeg_path = None
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
     return opts

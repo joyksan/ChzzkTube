@@ -11,7 +11,8 @@ import os
 
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.pipeline.progress_emitter import emit_dl, emit_err
+from chzzktube.pipeline.progress_emitter import emit_dl
+from chzzktube.core.log_emitter import emit_error_standard
 
 
 def finalize(ctx, total, failed_targets, success_count, skip_targets=None, *, notify=True):
@@ -45,9 +46,33 @@ def finalize(ctx, total, failed_targets, success_count, skip_targets=None, *, no
                         f.write(u + "\n")
             except Exception:
                 pass
-        # [개별 실패 라인] — ERR 컬럼 포맷으로 1건 1줄
+        # [개별 실패 라인] — ERR 컬럼 포맷으로 1건 1줄 (v3.8.0 규격: cause → action)
         for u, reason in failed_targets:
-            raw_log.raw("dl", emit_err(f"{u} — {reason}"), to_tui=True)
+            # 원인 분류: reason 문자열에서 원인 키워드 추출
+            reason_lower = reason.lower()
+            if "bot" in reason_lower or "bot check" in reason_lower:
+                cause = "bot check"
+                action = "check network (F12)"
+            elif "network" in reason_lower or "timeout" in reason_lower or "connection" in reason_lower:
+                cause = "network error"
+                action = "check network (F12)"
+            elif "permission" in reason_lower or "denied" in reason_lower:
+                cause = "permission denied"
+                action = "check folder permissions"
+            elif "checksum" in reason_lower or "hash" in reason_lower:
+                cause = "checksum mismatch"
+                action = "retry mirror (1/3)"
+            elif "not found" in reason_lower or "404" in reason_lower:
+                cause = "not found"
+                action = "check network (F12)"
+            elif "private" in reason_lower or "member" in reason_lower or "unavailable" in reason_lower:
+                cause = "private"
+                action = "check network (F12)"
+            else:
+                cause = "download failed"
+                action = "check logs (F12)"
+
+            raw_log.raw("dl", emit_error_standard("DL", _dl_platform(u), cause, action), to_tui=True)
 
     # [결론 라인] — 상태 세분화: DONE/WARN/FAIL/SKIP
     if ctx.state["canceled"]:

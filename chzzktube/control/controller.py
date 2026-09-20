@@ -1,13 +1,45 @@
 ### controller.py - 다운로드 세션의 상태 머신 및 DownloadWorker 생명주기 관리
 import os
 import re
+import urllib.parse
 from dataclasses import dataclass, replace
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, QThread
 
+from chzzktube.core.dl_platform import _DOMAIN_EXTRACTORS
 from chzzktube.workers.analyze_worker import AnalyzeWorker
 from chzzktube.workers.downloader import DownloadWorker
+
+
+# ── [v3.8.0] URL Validation Gate — 순수 함수 (컨트롤러/뷰 공용) ──────────────
+# 알려진 도메인 추출기 테이블을 단일 진실 공급원으로 재사용
+# (dl_platform._DOMAIN_EXTRACTORS: chzzk/youtube/twitch/instagram 등)
+_KNOWN_DOMAINS = tuple(p for p, _ in _DOMAIN_EXTRACTORS)
+
+
+def _is_valid_url(url) -> bool:
+    """입력 문자열이 다운로드 가능한 URL 규격인지 사전 검증 (v3.8.0).
+
+    `afqweqasd` 같은 임의 문자열이 DownloadWorker까지 유입되어
+    [generic] Extracting URL → DL FAIL 다중 로그를 남기는 것을 원천 차단.
+
+    규칙:
+    - 스킴 필수: http:// 또는 https:// 로 시작
+    - 도메인 필수: 파싱 성공 + '.' 포함 + 알려진 도메인 계열(suffix 매치)
+    - 실패 예시: 'afqweqasd', 'https://afqweqasd.com'(미지원 도메인)
+    - 통과 예시: 'https://youtu.be/xxx', 'https://chzzk.naver.com/...'
+    """
+    s = str(url or "").strip()
+    if not s.startswith(("http://", "https://")):
+        return False
+    try:
+        host = urllib.parse.urlparse(s).netloc.lower()
+    except ValueError:
+        return False
+    if not host or "." not in host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in _KNOWN_DOMAINS)
 
 
 @dataclass(frozen=True)
@@ -144,6 +176,7 @@ class MediaController(QObject):
         *  TXT 파일 경로면 줄 단위로 읽는다 (# 주석 제외). 실패 시 ValueError.
         *  www. 로 시작하는 항목은 https:// 접두사를 보정한다.
         *  watch?v= 단일 영상 주소 뒤 &list= / &index= / &start_radio= 플레이리스트 파라미터를 강제 제거한다.
+        *  [v3.8.0] URL 규격 검증 게이트 — 비URL 임의 문자열은 즉시 ValueError.
         *  dedup=True 이면 중복 타겟을 제거한다. """
         targets = []
         if os.path.isfile(raw_text) and raw_text.lower().endswith(".txt"):
@@ -162,6 +195,13 @@ class MediaController(QObject):
                 t = l.strip()
                 if t:
                     targets.append("https://" + t if t.startswith("www.") else t)
+
+        # [v3.8.0 게이트] 검증 실패 항목 전수 수집 — 한 줄이라도 비URL이면
+        # 전체 배치를 시작하지 않는다 (무검증 억지 다운로드 차단).
+        invalid = [t for t in targets if not _is_valid_url(t)]
+        if invalid:
+            bad = invalid[0][:40] + ("..." if len(invalid[0]) > 40 else "")
+            raise ValueError(f"Invalid URL format: {bad}")
 
         # [핵심] watch?v= 단일 영상 뒤에 붙은 플레이리스트 파라미터 강제 제거!
         cleaned_targets = []

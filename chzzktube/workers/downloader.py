@@ -17,6 +17,7 @@ from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.speed_window import SpeedWindow
 from chzzktube.core.watchdog import GATE_TIMEOUT_SEC, LivenessWatchdog
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
+from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
 
 # [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
 # 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).
@@ -136,7 +137,9 @@ class DownloadWorker(QThread):
         def report_error(message):
             # 로그 장애가 제어용 종료 통지를 막아서는 안 된다.
             try:
-                raw_log.raw("dl", _pe.emit_err(message), to_tui=True)
+                # [v3.8.1] 표준 에러 헬퍼로 변환
+                from chzzktube.core.log_emitter import emit_error_standard
+                raw_log.raw("dl", emit_error_standard("DL", _dl_platform(""), "download failed", message), to_tui=True)
             except Exception:
                 pass
 
@@ -206,13 +209,7 @@ class DownloadWorker(QThread):
                 proc.kill()
                 raw_log.raw(
                     "dl",
-                    _pe.emit_event(
-                        "DL",
-                        "WARN",
-                        "FFMP",
-                        "killed live recorder on worker terminate",
-                        is_error=True,
-                    ),
+                    emit_error_warn("DL", "FFMP", "live recorder killed", "worker terminated"),
                     to_tui=True,
                 )
             except OSError:

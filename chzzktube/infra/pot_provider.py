@@ -67,7 +67,7 @@ from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 
 __all__ = [
     "DEFAULT_HOST", "DEFAULT_PORT", "extract_video_id",
     "fetch_po_token", "probe_server", "server_ping",
-    "NODE_MIN_MAJOR", "get_writable_base", "_is_portable", "_bundle_root",
+    "NODE_MIN_MAJOR", "get_writable_base", "is_portable",
     "node_major_version", "latest_lts_node_url", "_platform_node_url",
     "npm_exe", "node_ok", "node_exe", "bundled_npm_ok", "ensure_node_runtime",
     "server_home", "assign_to_job_object", "read_server_log_tail",

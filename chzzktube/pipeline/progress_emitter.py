@@ -20,12 +20,12 @@
 ──────────────────────────────────────────────────────────────────
 """
 import os
+import re
 import time
 
 from chzzktube.core.log_emitter import (
     emit_event,
     emit_dl,
-    emit_err,
 )
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.media import cli_format_desc, format_bytes
@@ -103,7 +103,12 @@ def emit_progress_tick(ctx, d):
 
 
 def log_success_info(ctx, file_path):
-    """개별 파일 완료 — 용량 포함 한 줄."""
+    """개별 파일 수급 완료 — 용량 포함 한 줄.
+
+    [v3.8.0 Hyper-Minimalist TUI] 중간 임시 스트림(.f399/.f251 등)은 TUI에서
+    은닉한다(to_tui=False). 병합 완료 후 최종 결과물 1줄은 yt-dlp
+    postprocessor 훅(`pp_hook`)이 발행한다 — 지시서 §3 Task 5-2.
+    """
     size = 0
     if file_path and os.path.exists(file_path):
         size = os.path.getsize(file_path)
@@ -111,7 +116,49 @@ def log_success_info(ctx, file_path):
     channel = _dl_platform(ctx.current_url or "")
     fname = os.path.basename(file_path) if file_path else "done"
     msg = f"{fname} ({format_bytes(size)})" if file_path else "done"
-    raw_log.raw("dl", emit_event("DL", "OK", channel, msg), to_tui=True)
+    raw_log.raw(
+        "dl",
+        emit_event("DL", "OK", channel, msg),
+        to_tui=not _is_intermediate_stream(fname),
+    )
+
+
+### [v3.8.0] yt-dlp 분리 포맷 스트림 조각 식별 — '.f399.mp4' / '.f251.webm'
+_INTERMEDIATE_RE = re.compile(r"\.f\d+\.")
+# 병합/후처리 단계에서 최종 결과물만 TUI 노출 (모든 소스 스트림 은닉)
+_PP_FINAL_STATUS = "finished"
+
+
+def _is_intermediate_stream(fname):
+    """분리 포맷 중간 조각(.fNNN) 여부 — TUI 은닉 판정."""
+    return bool(_INTERMEDIATE_RE.search(str(fname or "")))
+
+
+def pp_hook(ctx, d):
+    """yt-dlp postprocessor 훅 — 병합/후처리 완료 시 최종 결과물 1줄만 발행.
+
+    MergeVideo 등 후처리 finished 시 info_dict.filename이 최종 산출물이다.
+    중복 방지: 이미 발행한 경로는 재발행하지 않는다 (ctx._pp_last_file).
+    """
+    if not isinstance(d, dict) or d.get("status") != _PP_FINAL_STATUS:
+        return None
+    info = d.get("info_dict") or {}
+    final = info.get("filepath") or info.get("_filename") or ""
+    if not final or _is_intermediate_stream(os.path.basename(final)):
+        return None
+    if getattr(ctx, "_pp_last_file", None) == final:
+        return None
+    ctx._pp_last_file = final
+    size = os.path.getsize(final) if os.path.exists(final) else 0
+    raw_log.raw(
+        "dl",
+        emit_dl(
+            status="OK",
+            scope=_dl_platform(ctx.current_url or ""),
+            msg=f"{os.path.basename(final)} ({format_bytes(size)})",
+        ),
+        to_tui=True,
+    )
 
 
 # ── 헤더 ───────────────────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from chzzktube.control.controller import MediaController
+from chzzktube.control.controller import MediaController, _is_valid_url
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
 from chzzktube.core import config, log_emitter, log_history, raw_log
@@ -161,8 +161,7 @@ class MainWindow(QMainWindow):
         self._pot_manager = POTManager()
         self._startup_coord = StartupCoordinator(self._pot_manager, self)
         self._pot_manager.pot_finished.connect(self._on_pot_finished)
-        # [P5] POT 수급/빌드 진행 중에는 기동 폴백 타이머를 연장한다(맹인 폴백 방지).
-        self._pot_manager.pot_status_changed.connect(self._on_pot_activity)
+        # [v3.8.1] 폴백 타이머 제거로 _on_pot_activity 연결 제거
         # POT 진행은 기동 폴백과 활성 게이트의 생존 시간을 함께 연장한다.
         self._pot_manager.pot_work_tick.connect(self._on_pot_work_tick)
         self._startup_coord.ui_unlocked.connect(self._on_startup_unlocked)
@@ -202,15 +201,14 @@ class MainWindow(QMainWindow):
         # 구성요소(yt-dlp/streamlink) 자동 업데이트 확인 — 기동 직후 비동기 1회
         QTimer.singleShot(500, self._start_update_check)
 
-        # [P5] 단발 singleShot → 인스턴스 타이머 승격. 15초 단발 타이머는 "의존성을
-        # 열심히 받는 중"과 "멈춤"을 구분하지 못하는 맹인이었다 — 실제 수급 작업
-        # 진행 신호(UpdateWorker.work_tick / POT 상태 전이)가 오면 수명을 연장한다.
-        self._fallback_timer = QTimer(self)
-        self._fallback_timer.setSingleShot(True)
-        self._fallback_timer.timeout.connect(self._force_unlock_input)
-        self._fallback_timer.start(int(FALLBACK_TIMEOUT_SEC * 1000))
+        # [v3.8.1] 폴백 타이머 제거 — deps 수급 실패 시 영구 잠금, 사용자 재시도(ENTER) 대기
+        # self._fallback_timer = QTimer(self)
+        # self._fallback_timer.setSingleShot(True)
+        # self._fallback_timer.timeout.connect(self._force_unlock_input)
+        # self._fallback_timer.start(int(FALLBACK_TIMEOUT_SEC * 1000))
         # [정리] 기동 폴백 만료의 단일 기준 — 이 타이머가 유일한 판정자다(폴링
         # 워치독이 같은 만료를 따로 판정해 유예를 끊던 이중 구조 제거).
+        # [v3.8.1] 폴백 완전 제거 — deps 수급 완료까지 입력 잠금 유지
 
         # 게이트 만료는 _gate_watchdog 하나로 판정한다. QTimer는 폴링에만 사용.
         self._gate_watchdog_active = False
@@ -704,8 +702,6 @@ class MainWindow(QMainWindow):
         title = info.get("title") or data.get("title") or ""
         meta = " · ".join(x for x in (uploader, title) if x)
 
-        platform_tag = self._platform_of_url()
-
         v_first = v_list[0] if v_list else {}
         res = ""
         if isinstance(v_first, dict):
@@ -714,20 +710,35 @@ class MainWindow(QMainWindow):
             if h:
                 res = f"{h}p{fps}" if fps else f"{h}p"
 
-        counts = log_emitter.format_analysis_counts(len(v_list), len(a_list))
-        base_msg = f"analyzed{counts}"
-        if meta:
-            base_msg += f" · {meta[:80]}"
-        anal_msg = f"[{res}] {base_msg}" if res else base_msg
+        # [v3.8.0 Hyper-Minimalist TUI] ANAL 마감 정갈 명세:
+        #   1) RUN  complete 라인            — analyzing complete!
+        #   2) OK   제목 · 채널              — [제목] · [채널명]
+        #   3) OK   가용성(public/member 등) — POT 스코프
+        #   4) OK   대표 포맷(코덱)          — streams isolated
+        availability = str(info.get("availability") or "").strip() or "-"
+        platform_tag = self._platform_of_url()
         raw_log.raw(
             "anal",
             LogEvent(
-                stage="ANAL",
-                status="OK",
-                scope=platform_tag,
-                msg=anal_msg,
-                is_status=True,
-                is_error=False,
+                stage="ANAL", status="RUN", scope=platform_tag,
+                msg=log_emitter.analysis_done_msg(), is_status=True, is_error=False,
+            ),
+            to_tui=True,
+        )
+        meta_msg = f"[{title}] · {uploader}" if (title and uploader) else (title or uploader or "unknown")
+        raw_log.raw(
+            "anal",
+            LogEvent(
+                stage="ANAL", status="OK", scope=platform_tag,
+                msg=meta_msg, is_error=False,
+            ),
+            to_tui=True,
+        )
+        raw_log.raw(
+            "anal",
+            LogEvent(
+                stage="ANAL", status="OK", scope="POT",
+                msg=f"[{availability}]", is_error=False,
             ),
             to_tui=True,
         )
@@ -739,10 +750,12 @@ class MainWindow(QMainWindow):
         self._emit_format_logs(v_list, a_list, platform_tag)
 
     def _emit_format_logs(self, v_list, a_list, platform_tag):
+        # [v3.8.0 Hyper-Minimalist TUI] ANAL 마감 4행 명세의 4번째 행 —
+        # 비디오/오디오 대표 코덱을 지시서 형식([codec] · [codec])으로 1줄 발행.
         v_seen = list(dict.fromkeys(short_codec(f.get("vcodec")) for f in v_list if f.get("vcodec")))
         a_seen = list(dict.fromkeys(short_codec(f.get("acodec")) for f in a_list if f.get("acodec")))
-        codecs = "/".join([c for c in ("/".join(v_seen[:2]), "/".join(a_seen[:2])) if c])
-        if not codecs:
+        parts = [f"[{c}]" for c in v_seen[:1] + a_seen[:1] if c]
+        if not parts:
             return
         raw_log.raw(
             "anal",
@@ -750,7 +763,7 @@ class MainWindow(QMainWindow):
                 stage="ANAL",
                 status="OK",
                 scope=platform_tag,
-                msg=f"[{codecs}] streams isolated",
+                msg=" · ".join(parts),
             ),
             to_tui=True,
         )
@@ -842,7 +855,6 @@ class MainWindow(QMainWindow):
         )
         self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
         # [P5] 수급 진행 하트비트 → 폴백 타이머 연장
-        self.update_worker.work_tick.connect(self.defer_fallback_timer)
         self.update_worker.start()
         # [P1] deps 게이트의 의미는 "검사 단계 완료"다 — stale(업데이트 대상) 존재는 게이트 사유가 아니다.
         # 업데이트 적용은 업데이트 워커의 일이며, READY 게이트를 막으면 안 된다.
@@ -883,41 +895,6 @@ class MainWindow(QMainWindow):
         self._startup_completed = True
         self.update_ui_state()
 
-    def _force_unlock_input(self):
-        if self._startup_completed:
-            return
-        # [Followup-4] 유예 1회 — GUI 블록 등으로 15초 폴백이 체인보다 먼저 만기한
-        # 경우를 건너뛴다. 체인이 실제로 동작 중이면 큐에 적재된 진행 신호가 도착할
-        # 짧은 유예를 주고, 그래도 열리지 않으면 폴백으로 개방한다(잠금 영구화 방지).
-        if not getattr(self, "_fallback_grace_used", False) and self._startup_chain_active():
-            self._fallback_grace_used = True
-            self._fallback_timer.start(_FALLBACK_GRACE_MS)
-            return
-        self._log_gate_pending("fallback fired")
-        self._startup_coord.force_unlock()
-
-    def _startup_chain_active(self) -> bool:
-        """[Followup-4] 기동 체인이 실제로 동작 중인지 — 폴백 유예 판정."""
-        if self._pot_manager.is_busy():
-            return True
-        worker = getattr(self, "update_worker", None)
-        return bool(worker is not None and worker.isRunning())
-
-    def _log_gate_pending(self, reason: str):
-        """[Followup-4] 게이트 대기 원인을 F12/history에 남긴다(TUI 폭 예산 보존)."""
-        names = [f"pot={self._pot_manager.mode}"]
-        worker = getattr(self, "update_worker", None)
-        if worker is not None and worker.isRunning():
-            names.append("deps=running")
-        if getattr(self, "_deps_failed", []):
-            names.append("deps_fail=" + ",".join(self._deps_failed))
-        raw_log.raw(
-            "startup",
-            LogEvent(stage="SYS", status="RUN", scope="MAIN",
-                     msg=f"{reason} · " + " ".join(names)),
-            to_tui=False,
-        )
-
     def _start_gate_watchdog(self):
         """[Followup-3] POT gate 대기 2차 워치독 기동."""
         self._gate_watchdog.reset()
@@ -928,7 +905,6 @@ class MainWindow(QMainWindow):
 
     def _on_pot_work_tick(self):
         """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
-        self.defer_fallback_timer()
         if self._gate_watchdog_active:
             self._gate_watchdog.heartbeat()
 
@@ -1025,21 +1001,6 @@ class MainWindow(QMainWindow):
         self.ctrl.spawn_analyzer(url, self.cfg)
         self.update_ui_state()
 
-    def defer_fallback_timer(self, extension_ms: int = 15000):
-        """[P5] 수급 작업 진행 중에는 폴백 타이머를 연장해 섣부른 UI 개방을 막는다.
-
-        15초 단발 타이머는 수급 진행 중과 멈춤을 구분하지 못했다. 실제 작업
-        하트비트(UpdateWorker.work_tick / POT 상태 전이)마다 카운트다운을 되감아,
-        진짜 무응답일 때만 폴백이 발화한다.
-        """
-        if not self._startup_completed and self._fallback_timer.isActive():
-            self._fallback_timer.start(extension_ms)
-
-    def _on_pot_activity(self, status: str):
-        """[P5] POT 수급/기동 국면(prewarm·starting)에서는 폴백을 서두르지 않는다."""
-        if status in ("prewarm", "starting"):
-            self.defer_fallback_timer()
-
     def _is_stale_analyze_signal(self) -> bool:
         """유령 분석 결과 판별 — 지운 뒤 "stream analyzed"가 한 번 더 뜨는 버그 차단."""
         if not self.ctrl.state.analyzing:
@@ -1070,6 +1031,9 @@ class MainWindow(QMainWindow):
             return
         self._disarm_analysis_watchdog()
         self.ctrl._set_analyzing(False)
+        # [v3.8.0] 분석 실패 시 잔여 분석 데이터 즉시 초기화 —
+        # 이전 URL의 info로 억지 다운로드가 실행되는 것을 원천 차단.
+        self.extracted_data = {"info": None, "v_list": [], "a_list": []}
         pick_pending = getattr(self, "_pick_pending", False)
         self._pick_pending = False
         if pick_pending:
@@ -1081,8 +1045,15 @@ class MainWindow(QMainWindow):
             True,
             True,
         )
-        # [결함 3 수리] 치지직 쿠키 만료 감지 시 CookieSelectDialog 자동 표시
-        if "chzzk cookie expired" in err_msg.lower():
+        # [쿠키 팝업 인터락 v3.8.0] 멤버십/연령제한 감지 시 쿠키 선택창 자동 표시
+        low = (err_msg or "").lower()
+        if (
+            "chzzk cookie expired" in low
+            or "members-only" in low
+            or "member gated" in low
+            or ("age" in low and "restricted" in low)
+            or "confirm your age" in low
+        ):
             from chzzktube.ui.dialogs import CookieSelectDialog
             dlg = CookieSelectDialog(self)
             if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -1093,6 +1064,31 @@ class MainWindow(QMainWindow):
         # [Followup-6] 봇 체크/PO 토큰 사유면 POT 기동 후 1회 재시도를 큐잉한다.
         if self._maybe_retry_analysis(err_msg):
             return
+
+    def _retry_deps(self):
+        """[v3.8.1] deps 에러 시 ENTER로 재시도 — 에러 상태 초기화 후 재시도."""
+        # 에러 상태 초기화
+        self._startup_coord._state.deps_error_msg = ""
+        # URL 입력창에 포커스
+        self.url_input.setFocus()
+        # deps 체크 재시도 (toggle_download와 유사하지만 에러 상태에서 호출)
+        try:
+            targets = MediaController.parse_targets(
+                self.url_input.text().strip(),
+                dedup=self.cfg.get("remove_duplicates"),
+            )
+        except ValueError as e:
+            self.append_concise_log(
+                log_emitter.emit_event("ANAL", "FAIL", "-", f"Invalid URL format — {e}" if "Invalid URL" not in str(e) else str(e)),
+                False,
+                True,
+            )
+            return
+        if not targets:
+            return
+        # deps 재시도 트리거
+        self._startup_coord.report_deps(False, "")  # 에러 상태 클리어용
+        self.toggle_download()
 
     def get_current_app_state(self) -> str:
         # [P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
@@ -1137,6 +1133,10 @@ class MainWindow(QMainWindow):
         elif state == "PICKING":
             self.btn_enter.setEnabled(True)
             self.btn_enter.setText("[ ENTER: Select ]")
+        elif state == "STARTUP" and self._startup_coord._state.deps_error_msg:
+            # [v3.8.1] deps 에러 시 재시도 버튼 표시
+            self.btn_enter.setEnabled(True)
+            self.btn_enter.setText("[ ENTER: Retry Setup ]")
         else:
             self.btn_enter.setEnabled(False)
             self.btn_enter.setText("[ ENTER: Start ]")
@@ -1245,6 +1245,17 @@ class MainWindow(QMainWindow):
             self._esc_action()
             event.accept()
             return
+        if key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
+            # [v3.8.1] deps 에러 시 ENTER로 재시도
+            if self._startup_coord._state.deps_error_msg and not self._startup_completed:
+                self._retry_deps()
+                event.accept()
+                return
+            # [v3.8.1] Setup 완료 후 ENTER로 다운로드 시작
+            if self._startup_completed:
+                self.toggle_download()
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def toggle_download(self):
@@ -1260,8 +1271,9 @@ class MainWindow(QMainWindow):
                 dedup=self.cfg.get("remove_duplicates"),
             )
         except ValueError as e:
+            # [v3.8.0 게이트] 비URL 임의 문자열 등 — 파이프라인 진입 전 1회 경고 후 중단.
             self.append_concise_log(
-                log_emitter.emit_event("SYS", "FAIL", "-", f"parse error: {e}"),
+                log_emitter.emit_event("ANAL", "FAIL", "-", f"Invalid URL format — {e}" if "Invalid URL" not in str(e) else str(e)),
                 False,
                 True,
             )
@@ -1297,6 +1309,19 @@ class MainWindow(QMainWindow):
         self._start_download(targets, "auto", "auto")
 
     def _start_download(self, targets, v_id, a_id):
+        # [v3.8.0 2차 방어선] 워커 구동 직전 URL 재검증 — 잔여 데이터/직접 호출
+        # 경로로 비URL이 유입되는 것을 최종 차단한다.
+        bad = [t for t in targets or [] if not _is_valid_url(getattr(t, "url", t))]
+        if bad:
+            self.append_concise_log(
+                log_emitter.emit_event(
+                    "ANAL", "FAIL", "-",
+                    f"Invalid URL format: {bad[0][:40]}",
+                ),
+                False,
+                True,
+            )
+            return
         self.ctrl.begin_download()
         self.append_concise_log(
             log_emitter.emit_event("DL", "RUN", "YT", "downloading..."),

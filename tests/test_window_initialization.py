@@ -41,13 +41,13 @@ window = ProbeWindow()
 
 assert ProbeWindow.init_calls == 1, ProbeWindow.init_calls
 assert window._watchdog_poll_timer.isActive()
-assert window._fallback_timer.isActive()
+assert not hasattr(window, "_fallback_timer")
 assert not window._gate_watchdog_active
 assert not hasattr(window, "_gate_watchdog_timer")
 assert not hasattr(window, "_fallback_watchdog")
 assert not window._analysis_watchdog_active
 
-widgets = (window.url_input, window._fallback_timer, window._gate_watchdog)
+widgets = (window.url_input, window._gate_watchdog)
 window._pot_retry_done.add("retained-url")
 window._pot_retry_pending = True
 window._pot_retry_url = "retained-url"
@@ -56,7 +56,7 @@ for _ in range(3):
     window._poll_watchdogs()
 
 assert ProbeWindow.init_calls == 1, ProbeWindow.init_calls
-assert (window.url_input, window._fallback_timer, window._gate_watchdog) == widgets
+assert (window.url_input, window._gate_watchdog) == widgets
 assert window._pot_retry_done == {"retained-url"}, window._pot_retry_done
 assert window._pot_retry_pending is True
 assert window._pot_retry_url == "retained-url"
@@ -81,7 +81,7 @@ assert not window._gate_watchdog_active
 
 for timer in (
     window._watchdog_poll_timer,
-    window._fallback_timer,
+
 ):
     timer.stop()
 print("initialization and polling contract verified")

@@ -1,6 +1,6 @@
 # ChzzkTube 아키텍처
 
-> 2026-09-18 · v3.7.0 소스 대조. 문서의 계층은 **책임 구분**이며 엄격한 import DAG를 뜻하지 않는다.
+> 2026-09-18 · v3.8.0 소스 대조. 문서의 계층은 **책임 구분**이며 엄격한 import DAG를 뜻하지 않는다.
 > 기준 루트: `/Users/jskim/Documents/ChzzkTube`. 아래 모듈명은 각 그룹의 절대 경로에 속한다.
 > **집계:** 패키지 기능 모듈 40개 + 루트 실행·검증 진입점 2개 = 도식 내 Python 파일 42개.
 > 빈 `__init__.py` 7개, 테스트·미러·빌드/유지보수 스크립트는 기능 모듈 집계에서 제외한다.
@@ -222,7 +222,7 @@ flowchart TB
 
 **분기 주의:** 현재 `live` 타입에는 치지직 라이브도 들어가지만 `download_target()`은 이를
 `_download_youtube_live()`로 보낸다. 위 그림은 현행 함수 분기이며 플랫폼별 정상 녹화를 검증했다는 뜻이 아니다.
-또한 `expand_targets()`는 워커 최상위 `try` 밖(루프 진입 직후)에서 호출되며, `finally` → `_fin.finalize()` → `finished_all.emit`이 정확히 한 번만 발행되도록 구조화됐다(v3.6.3).
+또한 `expand_targets()`는 워커 최상위 `try` 밖(루프 진입 직후)에서 호출되며, `finally` → `_fin.finalize()` → `finished_all.emit`이 정확히 한 번만 발행되도록 구조화됐다(v3.8.0).
 
 ## 7) POT 수명주기 — 준비와 가동을 분리
 
@@ -269,7 +269,7 @@ flowchart TB
 ```
 
 - 분석 재시도 처리가 대기 다운로드 회수보다 먼저다. 오류 문자열 전부가 아니라 `_needs_pot_retry()`의 지정 마커만 대상이다.
-- `_pot_retry_done`은 URL당 반복 시도를 차단한다. v3.7.0부터 재시도는 `url_input.setText(url)`(textChanged 비파리)에서 `Controller.spawn_analyzer(url)` 명시 호출로 전환 — 문자열 동등성에 관계없이 분석이 재시작된다.
+- `_pot_retry_done`은 URL당 반복 시도를 차단한다. v3.8.0부터 재시도는 `url_input.setText(url)`(textChanged 비파리)에서 `Controller.spawn_analyzer(url)` 명시 호출로 전환 — 문자열 동등성에 관계없이 분석이 재시작된다.
 - gate timeout은 Manager가 busy일 때 취소하고 `_pending_download`를 해제한다. 분석 재시도 플래그까지 모두 청소하는 계약은 현재 코드에 없다.
 - 일반 공개 영상은 POT 백그라운드 작업만을 이유로 입력을 잠그지 않는다. 입력 READY는 서버 준비 보증이 아니다.
 
@@ -299,11 +299,11 @@ flowchart LR
 
 ## 현재 문서와 구현을 읽을 때의 주의점
 
-> `docs/HANDOVER.md`의 정책과 이력은 참고하되, 현재 구조와 신호 연결은 소스와 대조해야 한다. 아래는 v3.7.0 기준 수리 완료와 남은 항목을 구분한 것이다.
+> `docs/HANDOVER.md`의 정책과 이력은 참고하되, 현재 구조와 신호 연결은 소스와 대조해야 한다. 아래는 v3.8.0 기준 수리 완료와 남은 항목을 구분한 것이다.
 
-> `docs/HANDOVER.md`의 정책과 이력은 참고하되, 현재 구조와 신호 연결은 소스와 대조해야 한다. 아래는 v3.7.0 기준 수리 완료와 남은 항목을 구분한 것이다.
+> `docs/HANDOVER.md`의 정책과 이력은 참고하되, 현재 구조와 신호 연결은 소스와 대조해야 한다. 아래는 v3.8.0 기준 수리 완료와 남은 항목을 구분한 것이다.
 
-### 수리 완료 (v3.6.3)
+### 수리 완료 (v3.8.0)
 
 - **워치독 단일 진실**: 폴링 내 UI 재초기화 제거(초기화는 생성자 1회, 링 타이머는 초기화 완료 후 시작) · 게이트 QTimer 폐지(`_gate_watchdog_active` 플래그) · fallback `_fallback_timer` 단일 판정(`_fallback_watchdog` 삭제) · 분석 워커는 3 spawn-site에서 arm/disarm. (참고: `DownloadWorker`는 다운로드 중 파일/스트림 liveness만 판별하는 자체 watchdog을 유지 — 게이트/폴백 워치독과는 별개.)
 - **분석 타임아웃 뷰 소유**: 워커는 무페이로드 `activity`만 발행하고, 만료 시 `_on_analysis_timeout()`이 워커를 유기하고 FAIL로 마감. 강제 terminate와 죽은 타이머 참조는 제거.
@@ -314,7 +314,7 @@ flowchart LR
 - Infra→UI 역참조 제거(`node_provider`) + 테스트 세션 QApplication 단일화(`tests/conftest.py`).
 - Chzzk live v2 API(`_analyze_chzzk_live_v2`) + `playlist` 채널 탭 정규화.
 
-### 수리 완료 (v3.7.0)
+### 수리 완료 (v3.8.0)
 
 - **근원 원인**: 앱이 포터블 Node.js(`~/.chzzktube/node`)를 수급했으나 yt-dlp가 PATH의 `deno`만 탐색 → n-challenge(EJS) 해결이 불가 → `No video formats found` 회전 실패.
 - `client_opts._apply_ejs_opts` — `node_provider.node_exe()` 탐색 node를 `js_runtimes={'node':{'path':...}}`로 명시 주입(분석/라이브/다운로드 4 경로). node 없으면 기본(deno) 유지.

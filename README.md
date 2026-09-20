@@ -4,7 +4,7 @@ Hyper-Minimalist Modern TUI 미디어 추출기 — YouTube / 치지직(Chzzk) �
 
 "fzf · lazygit" 감성의 모노스페이스 Flat TUI로, OS 순정 GUI 위젯 없이 콘솔만으로 모든 작업을 처리한다.
 
-**버전**: `v3.7.2` — yt-dlp 순정 클라이언트 로테이션 완전 위임, 3계층 우회 파이프라인 재설계
+**버전**: `v3.8.1` — 단독 환경 격리(시스템 PATH/패키지 매니저 철폐), URL 검증 게이트, Layer 3 POT 준비 수리, Hyper-Minimalist TUI 정제
 
 ### 스택
 

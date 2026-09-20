@@ -700,7 +700,17 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
                 npm_cli = os.path.join(root, "npm-cli.js")
                 break
 
-        npm_cmd = [curr_node, npm_cli] if npm_cli else [shutil.which("npm") or "npm"]
+        # [v3.8.0 격리] npm 해석은 격리 런타임 단일 경로 —
+        # npm-cli.js(포터블 node 동봉) → npm_exe(포터블 스크립트) 순.
+        # 시스템 PATH(shutil.which) 폴백은 철폐한다.
+        if npm_cli:
+            npm_cmd = [curr_node, npm_cli]
+        else:
+            from chzzktube.infra.node_provider import npm_exe
+            npm_path = npm_exe()
+            if not npm_path:
+                return None, "npm not found in isolated Node.js runtime"
+            npm_cmd = [npm_path]
         server_dir = os.path.join(server_home(), "server")
 
         try:

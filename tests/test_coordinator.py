@@ -23,7 +23,7 @@ class TestReadyEmission:
     def test_ready_after_deps_and_upgrade(self, coord):
         coord.report_deps(True, "deps ok")
         coord.report_upgrade(True, "")
-        coord.report_pot(True, "standby")  # POT 단계 완료 필요
+        coord.report_pot(True, "ready")  # POT 단계 완료 필요
         assert coord._ready_emitted is True
 
     def test_ready_not_emitted_before_upgrade(self, coord):
@@ -33,7 +33,7 @@ class TestReadyEmission:
     def test_duplicate_upgrade_no_double_ready(self, coord):
         coord.report_deps(True, "deps ok")
         coord.report_upgrade(True, "")
-        coord.report_pot(True, "standby")
+        coord.report_pot(True, "ready")
         first = coord._ready_emitted
         coord.report_upgrade(True, "late")
         assert coord._ready_emitted == first  # 여전히 True, 중복 아님
@@ -47,7 +47,7 @@ class TestReadyEmission:
     def test_ready_after_prewarm_staged(self, coord):
         coord.report_deps(True, "deps ok")
         coord.report_upgrade(True, "")
-        coord.report_pot(True, "staged")
+        coord.report_pot(True, "ready")
         assert coord._ready_emitted is True
 
     def test_ready_after_pot_gate_ready_token(self, coord):
@@ -131,28 +131,24 @@ class TestDepsGateSemantics:
     def test_stale_does_not_block_ready(self, coord):
         coord.report_deps(True, "update")  # stale 감지된 기동
         coord.report_upgrade(True, "yt-dlp updated")
-        coord.report_pot(True, "staged")
+        coord.report_pot(True, "ready")
         assert coord._ready_emitted is True
 
 
-class TestForceUnlockKeepsPrewarm:
-    """[P3 회귀] 15초 폴백은 백그라운드 POT 프리웜을 취소하지 않는다.
+class TestForceUnlockRemoved:
+    """[v3.8.1] force_unlock 제거 검증 — 폴백 제거로 READY는 deps 성공 시에만."""
 
-    cancel()은 _POTWorker._child_procs(항상 빈 목록 — append 0건)를 순회하므로
-    npm/tsc 자식을 죽이지 못한 채 QThread만 terminate해 고아 프로세스와
-    prewarm-lock 점유를 남겼다. 폴백의 책임은 READY 발산뿐이다.
-    """
-
-    def test_force_unlock_does_not_cancel_pot(self):
+    def test_no_force_unlock_method(self):
+        """force_unlock 메서드가 없음 — 폴백 제거."""
         pot = Mock()
         coord = StartupCoordinator(pot)
-        coord.force_unlock()
-        assert coord._ready_emitted is True
-        assert pot.cancel.call_count == 0
+        assert not hasattr(coord, "force_unlock")
 
-    def test_force_unlock_repeat_does_not_cancel_pot(self):
+    def test_ready_blocked_by_deps_error(self):
+        """deps 에러 시 READY 차단."""
         pot = Mock()
         coord = StartupCoordinator(pot)
-        coord.force_unlock()
-        coord.force_unlock()
-        assert pot.cancel.call_count == 0
+        coord.report_deps(False, "ffmpeg: not found")
+        # READY 발산 시도 시 차단되어야 함
+        coord._try_emit_ready()
+        assert coord._ready_emitted is False

@@ -80,7 +80,7 @@ def test_full_log_mirror_preserves_raw_msg():
 
 
 def test_emit_format_logs_uses_bus():
-    """분석 성공 포맷 로그: _emit_format_logs가 raw 버스로 [codec] streams isolated 1줄 발행."""
+    """분석 성공 포맷 로그: _emit_format_logs가 raw 버스로 [codec] · [codec] 1줄 발행 (v3.8.0 명세)."""
     from unittest.mock import patch
 
     import chzzktube.core.raw_log as raw_log
@@ -98,4 +98,4 @@ def test_emit_format_logs_uses_bus():
             sent.append(call.args[1])
 
     assert len(sent) == 1  # v/a 2줄 분리 폐지 → 1줄
-    assert "[H264/VP9/OPUS/AAC] streams isolated" in sent[0].msg
+    assert sent[0].msg == "[H264] · [OPUS]"

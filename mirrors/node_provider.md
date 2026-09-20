@@ -112,22 +112,17 @@ def node_ok():
 
 
 def node_exe():
-    """PO Token 서버 기동용 node 탐색 — bgutil 요구(Node >= 22) 충족 후보만 유효.
+    """PO Token 서버 기동용 node 탐색 — 격리 단일 경로 (v3.8.0).
 
-    후보 순서: 시스템 PATH → 캐시된 포터블 node → frozen 번들.
-    요구 버전을 충족하는 후보가 없으면 None → ensure_node_runtime 재구성 트리거.
-    포터블 빌드 첫 실행시 다른 DEPS와 함께 다운로드됨.
+    [격리 원칙] 시스템 PATH(shutil.which) 탐색 완전 제거 — 오직 앱 전용
+    저장소만 참조한다. 후보 순서: writable_base()/node 포터블 → frozen 번들.
+    요구 버전(Node >= 22)을 충족하는 후보가 없으면 None →
+    ensure_node_runtime 재구성 트리거. 포터블 빌드 첫 실행시 다른 DEPS와
+    함께 다운로드됨.
     """
     from chzzktube.infra.platform import exe_suffix, is_windows as _np_is_win
 
     _exe_suffix = exe_suffix()
-
-    # 1. 시스템 Node.js 확인 (번들이 아닌 외부 참조)
-    system_node = shutil.which("node") or shutil.which("node.exe")
-    if system_node:
-        maj = node_major_version(system_node)
-        if maj is not None and maj >= NODE_MIN_MAJOR:
-            return system_node
 
     cands = []
     local_node_dir = os.path.join(get_writable_base(), "node")
@@ -146,7 +141,7 @@ def node_exe():
             except Exception:
                 pass
 
-    if _is_portable():
+    if is_portable():
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
         cands.extend(
             c for c in [
@@ -159,10 +154,6 @@ def node_exe():
         _me = getattr(sys, "_MEIPASS", None)
         if _me and os.path.isfile(os.path.join(_me, f"node{_exe_suffix}")):
             cands.insert(0, os.path.join(_me, f"node{_exe_suffix}"))
-
-    which_node = shutil.which("node")
-    if which_node:
-        cands.append(which_node)
 
     majors = [(c, node_major_version(c)) for c in cands]
     ok = [c for c, m in majors if m is not None and m >= NODE_MIN_MAJOR]
@@ -198,27 +189,19 @@ def ensure_node_runtime(log_func):
       못해 서버가 ERR_REQUIRE_ESM으로 크래시했다 (PO Token 기동 실패 근본 원인).
     - 자가 치유: node.exe는 살아있어도 번들 npm이 깨진 경우(부분 추출/AV 격리)
       재설치로 수리 — bundled_npm_ok 참조.
-    - 번들이 아닌 외부 라이브러리 참조 전환:
-      시스템 Node.js 22+ 우선 사용 → 없으면 로컬 포터블 → 마지막으로 다운로드.
-      포터블 빌드 첫 실행시 다른 DEPS와 함께 다운로드됨.
+    - [v3.8.0 격리] 시스템 Node.js/npm 참조 철폐 — writable_base()/node
+      포터블 런타임 단일 경로만 판정·수급한다.
+
+    Returns:
+        True: 현재 탐색된 node가 요구 버전 충족 + 포터블 npm 무결
+        False: 재구성(다운로드) 실패 또는 수급 후에도 요구 미충족
     """
     from chzzktube.infra.pot_server import _download_with_progress, _prune_outdated_node_dirs
 
-    # 1. 시스템 Node.js 확인 (번들이 아닌 외부 참조)
-    system_node = shutil.which("node")
-    if system_node:
-        system_major = node_major_version(system_node)
-        if system_major is not None and system_major >= NODE_MIN_MAJOR:
-            if shutil.which("npm"):
-                log_func(f"using system Node.js v{system_major} ({system_node})")
-                return True
-
-    # 2. 로컬 포터블 Node.js 확인
+    # [v3.8.0 격리] 로컬 포터블 Node.js 판정 — 시스템 PATH 참조 없음
     cur = node_exe()
     cur_major = node_major_version(cur) if cur else None
-    if cur_major is not None and cur_major >= NODE_MIN_MAJOR and (
-        bundled_npm_ok(cur) or shutil.which("npm")
-    ):
+    if cur_major is not None and cur_major >= NODE_MIN_MAJOR and bundled_npm_ok(cur):
         return True
     if cur_major is not None and cur_major >= NODE_MIN_MAJOR and not bundled_npm_ok(cur):
         log_func("[~] node ok but bundled npm broken — reinstalling runtime.")

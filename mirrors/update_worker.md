@@ -17,7 +17,7 @@ import chzzktube.infra.updater as updater
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_event import LogEvent
 from PySide6.QtCore import QThread, Signal
-from chzzktube.core.log_emitter import emit_component
+from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
 
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (
@@ -184,8 +184,24 @@ class UpdateWorker(QThread):
         ff_err = components.ensure_ffmpeg(_ffmpeg_cb)
         if ff_err:
             ok_overall = False
+            # ff_err에서 원인 파악하여 표준 헬퍼로 변환
+            if "binary incompatible" in ff_err.lower() or "not runnable" in ff_err.lower():
+                cause = "binary incompatible"
+                action = "retry mirror (1/3)"
+            elif "all mirrors exhausted" in ff_err.lower() or "all mirrors exhausted" in ff_err.lower():
+                cause = "all mirrors exhausted"
+                action = "check network (F12)"
+            elif "checksum mismatch" in ff_err.lower() or "hash mismatch" in ff_err.lower():
+                cause = "checksum mismatch"
+                action = "retry mirror (1/3)"
+            elif "network" in ff_err.lower() or "timeout" in ff_err.lower() or "connection" in ff_err.lower():
+                cause = "network error"
+                action = "check network (F12)"
+            else:
+                cause = "setup failed"
+                action = "check logs (F12)"
             summaries.append(f"ffmpeg: {ff_err}")
-            raw_log.raw("deps", emit_component("DEPS", "FAIL", "FFMP", ff_err, is_error=True),
+            raw_log.raw("deps", emit_error_standard("DEPS", "FFMP", cause, action),
                         to_tui=True)
         elif ffmpeg_acted[0]:
             summaries.append("ffmpeg provisioned")
@@ -219,12 +235,26 @@ class UpdateWorker(QThread):
             else:
                 ok_overall = False
                 summaries.append("node setup failed")
-                raw_log.raw("deps", emit_component("DEPS", "FAIL", "NODE", "setup failed", is_error=True),
+                raw_log.raw("deps", emit_error_standard("DEPS", "NODE", "setup failed", "check logs (F12)"),
                             to_tui=True)
         except Exception as e:
             ok_overall = False
-            summaries.append(f"node: {e}")
-            raw_log.raw("deps", emit_component("DEPS", "FAIL", "NODE", str(e), is_error=True),
+            # 예외 메시지에서 원인 추출 시도
+            err_msg = str(e)
+            if "permission denied" in str(e).lower():
+                cause = "permission denied"
+                action = "check folder permissions"
+            elif "not found" in str(e).lower() or "no such file" in str(e).lower():
+                cause = "not found"
+                action = "check network (F12)"
+            elif "permission" in str(e).lower():
+                cause = "permission denied"
+                action = "check folder permissions"
+            else:
+                cause = "setup failed"
+                action = "check logs (F12)"
+            summaries.append(f"node: {e} ({traceback.format_exc(limit=3).strip().splitlines()[-1]})")
+            raw_log.raw("deps", emit_error_standard("DEPS", "NODE", cause, action),
                         to_tui=True)
 
         summary = "; ".join(summaries) if summaries else ""

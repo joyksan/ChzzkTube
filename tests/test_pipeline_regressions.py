@@ -99,7 +99,9 @@ def test_chzzk_filename_sanitizes_and_falls_back():
 def test_needs_pot_contract():
     assert main_module._needs_pot({"age_limit": 18, "availability": "public"}) is True
     assert main_module._needs_pot({"age_limit": 0, "availability": "needs_auth"}) is True
-    assert main_module._needs_pot({"age_limit": 0, "availability": "subscriber_only"}) is True
+    # [v3.8.0 개정] subscriber_only(멤버십)는 POT 게이트에서 제외 —
+    # Layer 1/2에서 쿠키+EJS로 해결하며, 부족분은 _needs_pot_promotion이 승격.
+    assert main_module._needs_pot({"age_limit": 0, "availability": "subscriber_only"}) is False
     assert main_module._needs_pot({"age_limit": 0, "availability": "public"}) is False
     assert main_module._needs_pot({"age_limit": 0, "availability": None}) is False
     assert main_module._needs_pot(None) is False
