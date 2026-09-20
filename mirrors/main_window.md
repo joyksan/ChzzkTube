@@ -51,7 +51,7 @@ from chzzktube.core.watchdog import (
 from chzzktube.infra.po_client import server_ping
 from chzzktube.infra.pylib_bootstrap import bootstrap as _bootstrap
 from chzzktube.ui import log_console, theme
-from chzzktube.ui.dialogs import ExitConfirmDialog, SettingsDialog, VerboseLogWindow
+from chzzktube.ui.dialogs import DepsProvisioningDialog, ExitConfirmDialog, SettingsDialog, VerboseLogWindow
 from chzzktube.workers.update_worker import UpdateWorker
 
 try:
@@ -251,6 +251,19 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
         is_running = self.ctrl.state.get("running", False)
+        
+        # 2. 수급 중(UpdateWorker/POTManager) 감지
+        is_upgrading = (
+            hasattr(self, "update_worker") 
+            and self.update_worker is not None 
+            and self.update_worker.isRunning()
+        )
+        is_pot_busy = (
+            hasattr(self, "_pot_manager") 
+            and self._pot_manager is not None 
+            and self._pot_manager.is_busy()
+        )
+
         parent_dlg = (
             self.settings_dlg
             if (hasattr(self, "settings_dlg")
@@ -258,9 +271,18 @@ class MainWindow(QMainWindow):
                 and self.settings_dlg.isVisible())
             else self
         )
-        dlg = ExitConfirmDialog(parent_dlg, is_running=is_running)
 
-        # 2. [소리 복구 & 반짝임] Windows 시스템 알림 음(Beep) 재생 및 작업 표시줄 알림
+        # 수급 중이면 전용 다이얼로그 표시
+        if is_upgrading or is_pot_busy:
+            dlg = DepsProvisioningDialog(
+                parent_dlg, 
+                is_upgrading=is_upgrading, 
+                is_pot_busy=is_pot_busy
+            )
+        else:
+            dlg = ExitConfirmDialog(parent_dlg, is_running=is_running)
+
+        # 3. [소리 복구 & 반짝임] Windows 시스템 알림 음(Beep) 재생 및 작업 표시줄 알림
         if platform.system() == "Windows":
             self._flash_dialog(dlg, winsound)
 
@@ -268,6 +290,12 @@ class MainWindow(QMainWindow):
 
         # [종료] 클릭 시 -> 스레드 안전 중단 후 즉시 종료
         if result == 1:
+            # 수급 중 강제 종료 시 협조적 취소 요청
+            if is_upgrading and hasattr(self, "update_worker") and self.update_worker is not None:
+                self.update_worker.cancel()
+            if is_pot_busy and hasattr(self, "_pot_manager") and self._pot_manager is not None:
+                self._pot_manager.cancel()
+
             if hasattr(self, "settings_dlg") and self.settings_dlg:
                 self.settings_dlg.close()
             if getattr(self, "verbose_win", None) is not None:
@@ -327,6 +355,10 @@ class MainWindow(QMainWindow):
                         self.ctrl.worker_dl.kill_live_process()
                 except OSError:
                     pass
+
+            # 프로비저닝 아티팩트 정리 (종료 시)
+            import chzzktube.infra.cleanup as _cleanup
+            _cleanup.cleanup_on_shutdown()
 
             log_history.session_end()
             raw_log.flush()
@@ -669,9 +701,37 @@ class MainWindow(QMainWindow):
             self._pot_manager.ensure_ready("gate")
             self._start_gate_watchdog()
 
+    def _preflight_deps_check(self) -> bool:
+        """런타임 deps 무결성 사전 체크 — 실패 시 사용자 알림 후 False 반환."""
+        from chzzktube.infra.updater import verify_deps_integrity
+        ok, missing = verify_deps_integrity()
+        if not ok:
+            self.append_concise_log(
+                log_emitter.emit_event("DEPS", "FAIL", "DEPS", f"deps missing: {', '.join(missing)}"),
+                False,
+                True,
+            )
+            try:
+                from chzzktube.ui.dialogs import TuiNoticeDialog
+                from PySide6.QtWidgets import QWidget
+                # 부모가 유효한 QWidget인지 확인 (테스트 mock 환경 방지)
+                if isinstance(self, QWidget):
+                    TuiNoticeDialog(
+                        self,
+                        title="ChzzkTube",
+                        text=f"missing dependencies:\n{', '.join(missing)}\nrestart to auto-provision",
+                        ok_label="OK",
+                    ).exec()
+            except Exception:
+                pass
+            return False
+        return True
+
     def run_analysis(self):
         url = self.url_input.text().strip()
         if not url:
+            return
+        if not self._preflight_deps_check():
             return
         self.append_concise_log(
             log_emitter.emit_event("ANAL", "RUN", "YT", "analyzing..."),
@@ -998,6 +1058,8 @@ class MainWindow(QMainWindow):
             is_error=False,
         )
         self._arm_analysis_watchdog()
+        if not self._preflight_deps_check():
+            return
         self.ctrl.spawn_analyzer(url, self.cfg)
         self.update_ui_state()
 
@@ -1059,7 +1121,8 @@ class MainWindow(QMainWindow):
             if dlg.exec() == QDialog.DialogCode.Accepted:
                 self.cfg["browser_cookie"] = dlg.selected_type
                 # 재분석 트리거
-                self.ctrl.spawn_analyzer(self.url_input.text().strip(), self.cfg)
+                if self._preflight_deps_check():
+                    self.ctrl.spawn_analyzer(self.url_input.text().strip(), self.cfg)
             return
         # [Followup-6] 봇 체크/PO 토큰 사유면 POT 기동 후 1회 재시도를 큐잉한다.
         if self._maybe_retry_analysis(err_msg):
@@ -1265,6 +1328,10 @@ class MainWindow(QMainWindow):
             return
         if state != "IDLE":
             return
+
+        if not self._preflight_deps_check():
+            return
+
         try:
             targets = MediaController.parse_targets(
                 self.url_input.text().strip(),
@@ -1370,6 +1437,8 @@ class MainWindow(QMainWindow):
             is_error=False,
         )
         self._arm_analysis_watchdog()
+        if not self._preflight_deps_check():
+            return
         self.ctrl.spawn_analyzer(url, self.cfg, deep=True)
         self.update_ui_state()
 

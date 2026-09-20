@@ -2,6 +2,7 @@ import json
 import os
 import sys
 
+
 def _repo_root():
     """저장소 루트 — chzzktube/core/config.py 기준 parents[2] 고정."""
     return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -23,17 +24,26 @@ def resolve_dirs():
     assert os.path.isdir(base_dir), base_dir
     return base_dir, config_dir
 
+
+def is_frozen() -> bool:
+    """단일 진실: 실행 환경의 frozen 여부.
+
+    호출부는 이 함수를 직접 쓰지 말 것 — 경로 리졸버가 캡슐화한다.
+    """
+    return getattr(sys, "frozen", False)
+
+
 def writable_base():
     """쓰기 보장 런타임 캐시 루트 — node/PO 서버/플러그인/ffmpeg 등
     실행 시 수급하는 구성요소의 단일 경로 출처 (pot_provider·components 공용).
     """
-    local_appdata = os.environ.get("LOCALAPPDATA") 
+    local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
         return os.path.join(local_appdata, "ChzzkTube")
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.8.1"
+_APP_VERSION = "v3.8.2"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -44,21 +54,35 @@ LOG_DIR = os.path.join(CONFIG_DIR, "logs")
 def _pylib_root():
     """프로젝트 로컬 pip 오버레이 루트 (<repo>/.pylib).
 
-    [소유권 분리] venv(site-packages)는 uv 소유로 간주하고 앱이 직접 수정하지
-    않는다. 인앱 업데이터는 이 디렉터리에만 whl을 해제하고, 부트스트랩이
-    sys.path 선두에 둬 오버레이 복사가 항상 우선한다.
-
-    환경 변수 CHZZKTUBE_PYLIB_DIR 로 강제 지정 가능 (CI/진단용).
+    [DEPRECATED] 하위 호환용 별칭 — 새 코드는 pylib_overlay_path() 사용.
+    호출부는 환경을 분기하지 않는다. pylib_overlay_path()가 SSOT다.
     """
     env = os.environ.get("CHZZKTUBE_PYLIB_DIR")
     if env:
-        return env
+        return os.path.abspath(env)
+    # Dev 모드 기본값 (frozen이면 pylib_overlay_path()가 writable_base() 사용)
     return os.path.join(_repo_root(), ".pylib")
 
 
-def pylib_overlay_path():
-    """개발 진입점(main.py / smoke_test.py)이 sys.path에 올릴 오버레이 경로."""
-    return _pylib_root()
+def pylib_overlay_path() -> str:
+    """Python 오버레이 패키지(.pylib)의 단일 진실 공급원 (SSOT).
+
+    호출부는 환경을 분기하지 않는다.
+    우선순위 체인:
+    1. 환경변수 강제 오버라이드 — CHZZKTUBE_PYLIB_DIR (CI/테스트/진단)
+    2. Frozen 환경: writable_base()/.pylib (%LOCALAPPDATA%/ChzzkTube/.pylib 또는 ~/.chzzktube/.pylib)
+    3. Dev 환경: <repo>/.pylib
+    """
+    env_override = os.environ.get("CHZZKTUBE_PYLIB_DIR")
+    if env_override:
+        return os.path.abspath(env_override)
+
+    if is_frozen():
+        base = writable_base()
+    else:
+        base = _repo_root()
+
+    return os.path.join(base, ".pylib")
 
 
 def default_config():

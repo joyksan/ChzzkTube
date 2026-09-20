@@ -1,26 +1,25 @@
-"""Node.js 런타임 수급 전용 모듈 (SRP: Node.js 런타임 관리만 담당).
+"""Node.js 런타임 수급 전용 모듈 (SSOT: writable_base()/node 단일 경로).
 
 - node_exe / node_major_version / npm_exe : node 실행 파일 탐색
 - node_ok / ensure_node_runtime : bgutil 요구 버전 충족 검증·자동 수급
 - bundled_npm_ok : 포터블 npm 무결성 검사
 
+[SSOT 원칙 v3.8.2]
+- 오직 writable_base()/node/ 단일 경로만 읽기/쓰기
+- frozen 번들(_MEIPASS, _internal), bundle_root, 시스템 PATH 탐색 완전 제거
+- 수급은 ProvisioningManager(bridge) 위임 — 이 모듈은 경로 판정만 담당
+
 서버 기동/빌드/소스 수급은 pot_server.py가 담당.
-공통 경로 헬퍼는 infra.paths에서 import.
 """
-import os
-import re
-import sys
 import json
+import os
 import platform
-import shutil
-import zipfile
-import tarfile
+import re
 import subprocess
 import urllib.request
 
 import chzzktube.core.config as config
-from chzzktube.core.log_emitter import emit_component
-from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
+from chzzktube.infra.paths import get_writable_base
 
 
 # ── 상수 (node_provider 전용) ──────────────────────────────────────
@@ -58,7 +57,10 @@ def node_major_version(node_path, timeout=10):
 
 
 def latest_lts_node_url(major=NODE_MIN_MAJOR):
-    """nodejs.org dist index에서 지정 major의 최신 플랫뷸 URL (조회 실패 시 폴백)."""
+    """nodejs.org dist index에서 지정 major의 최신 플랫뷸 URL (조회 실패 시 폴백).
+
+    [호환 유지] ProvisioningManager._fetch_from_nodejs가 사용.
+    """
     try:
         with urllib.request.urlopen(
             "https://nodejs.org/dist/index.json", timeout=15
@@ -80,7 +82,10 @@ def latest_lts_node_url(major=NODE_MIN_MAJOR):
 
 
 def _platform_node_url(ver):
-    """플랫폼별 Node.js 배포 URL 생성 (Windows: zip, macOS: tar.gz)."""
+    """플랫폼별 Node.js 배포 URL 생성 (Windows: zip, macOS: tar.gz).
+
+    [호환 유지] ProvisioningManager._fetch_from_nodejs에서 재사용.
+    """
     from chzzktube.infra.platform import is_macos, is_windows
 
     if is_windows():
@@ -92,7 +97,7 @@ def _platform_node_url(ver):
     return f"https://nodejs.org/dist/{ver}/node-{ver}-linux-{arch}.tar.gz"
 
 
-# ── Node.js 실행 파일 탐색 ─────────────────────────────────────────
+# ── Node.js 실행 파일 탐색 (SSOT: writable_base()/node 단일 경로) ──
 def npm_exe():
     """현재 사용 중인 node 런타임과 동일한 디렉터리의 npm 스크립트 경로."""
     node = node_exe()
@@ -112,13 +117,12 @@ def node_ok():
 
 
 def node_exe():
-    """PO Token 서버 기동용 node 탐색 — 격리 단일 경로 (v3.8.0).
+    """PO Token 서버 기동용 node 탐색 — SSOT 단일 경로 (v3.8.2).
 
-    [격리 원칙] 시스템 PATH(shutil.which) 탐색 완전 제거 — 오직 앱 전용
-    저장소만 참조한다. 후보 순서: writable_base()/node 포터블 → frozen 번들.
-    요구 버전(Node >= 22)을 충족하는 후보가 없으면 None →
-    ensure_node_runtime 재구성 트리거. 포터블 빌드 첫 실행시 다른 DEPS와
-    함께 다운로드됨.
+    [SSOT 원칙] 오직 writable_base()/node/ 하위만 탐색.
+    - frozen 번들(_MEIPASS, _internal), bundle_root, 시스템 PATH 완전 제거
+    - 실행 비트 보장(macOS) + 요구 버전 필터
+    - 후보 없으면 None → ProvisioningManager 수급 트리거
     """
     from chzzktube.infra.platform import exe_suffix, is_windows as _np_is_win
 
@@ -131,7 +135,8 @@ def node_exe():
         for root, dirs, files in os.walk(local_node_dir):
             if exe_name in files:
                 cands.append(os.path.join(root, exe_name))
-    # [macOS] 포터블 node 실행 권한 보장 (tar.gz 추출 시 실행 비트 누락 방지)
+
+    # [macOS] tar.gz 추출 시 실행 비트 누락 방지
     if not _np_is_win():
         for c in cands:
             try:
@@ -141,27 +146,9 @@ def node_exe():
             except Exception:
                 pass
 
-    if is_portable():
-        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-        cands.extend(
-            c for c in [
-                os.path.join(exe_dir, f"node{_exe_suffix}"),
-                os.path.join(exe_dir, "_internal", f"node{_exe_suffix}"),
-                os.path.join(exe_dir, "_internal", "node", f"node{_exe_suffix}"),
-            ]
-            if os.path.isfile(c)
-        )
-        _me = getattr(sys, "_MEIPASS", None)
-        if _me and os.path.isfile(os.path.join(_me, f"node{_exe_suffix}")):
-            cands.insert(0, os.path.join(_me, f"node{_exe_suffix}"))
-
     majors = [(c, node_major_version(c)) for c in cands]
     ok = [c for c, m in majors if m is not None and m >= NODE_MIN_MAJOR]
-    if ok:
-        return ok[0]
-    if majors and all(m is None for _, m in majors):
-        return majors[0][0]  # 버전 판별 전면 실패 폴백 — 무한 재설치 방지
-    return None
+    return ok[0] if ok else (cands[0] if cands else None)
 
 
 def bundled_npm_ok(node_path):
@@ -182,23 +169,16 @@ def bundled_npm_ok(node_path):
 
 
 def ensure_node_runtime(log_func):
-    """bgutil 서버 요구(Node >= 22) 충족을 위한 Node.js 런타임 자동 수급/재구성.
+    """bgutil 서버 요구(Node >= 22) 충족 — ProvisioningManager 위임 (v3.8.2).
 
-    [수정 이력]
-    - 구버전은 v20.18.0을 받아 bgutil의 require(esm) 요구를 충족하지
-      못해 서버가 ERR_REQUIRE_ESM으로 크래시했다 (PO Token 기동 실패 근본 원인).
-    - 자가 치유: node.exe는 살아있어도 번들 npm이 깨진 경우(부분 추출/AV 격리)
-      재설치로 수리 — bundled_npm_ok 참조.
-    - [v3.8.0 격리] 시스템 Node.js/npm 참조 철폐 — writable_base()/node
-      포터블 런타임 단일 경로만 판정·수급한다.
+    [SSOT] 수급은 ProvisioningManager → bridge → ProvisioningManager로 위임.
+    이 모듈은 판정(node_ok/bundled_npm_ok)만 담당.
 
     Returns:
-        True: 현재 탐색된 node가 요구 버전 충족 + 포터블 npm 무결
-        False: 재구성(다운로드) 실패 또는 수급 후에도 요구 미충족
+        True: node 요구 버전 충족 + npm 무결
+        False: 수급 실패 또는 수급 후에도 요구 미충족
     """
-    from chzzktube.infra.pot_server import _download_with_progress, _prune_outdated_node_dirs
-
-    # [v3.8.0 격리] 로컬 포터블 Node.js 판정 — 시스템 PATH 참조 없음
+    # 1. 현재 상태 확인 (SSOT: writable_base()/node만)
     cur = node_exe()
     cur_major = node_major_version(cur) if cur else None
     if cur_major is not None and cur_major >= NODE_MIN_MAJOR and bundled_npm_ok(cur):
@@ -213,73 +193,68 @@ def ensure_node_runtime(log_func):
     else:
         log_func("node.js >= 22 missing — downloading portable runtime")
 
-    node_dir = os.path.join(get_writable_base(), "node")
-    os.makedirs(node_dir, exist_ok=True)
-
-    node_url = latest_lts_node_url()
-    is_tarball = node_url.endswith(".tar.gz")
-    dest_name = "node_portable.tar.gz" if is_tarball else "node_portable.zip"
-    archive_dest = os.path.join(get_writable_base(), dest_name)
-
+    # 2. ProvisioningManager 위임 (동기 브리지)
     try:
-        _download_with_progress(node_url, archive_dest, log_func, "node.js runtime downloading")
-        log_func("node.js runtime extracting...")
-        if is_tarball:
-            if os.path.exists(node_dir):
-                try:
-                    for root, dirs, files in os.walk(node_dir):
-                        for d in dirs:
-                            try:
-                                os.chmod(os.path.join(root, d), 0o755)
-                            except (PermissionError, OSError):
-                                pass
-                        for f in files:
-                            try:
-                                os.chmod(os.path.join(root, f), 0o755)
-                            except (PermissionError, OSError):
-                                pass
-                except Exception:
-                    pass
-                shutil.rmtree(node_dir, ignore_errors=True)
-            os.makedirs(node_dir, exist_ok=True)
-            try:
-                result = subprocess.run(
-                    ["tar", "-xzf", archive_dest, "-C", node_dir],
-                    capture_output=True, text=True, timeout=120,
-                )
-                if result.returncode != 0:
-                    raise RuntimeError(f"tar failed: {result.stderr}")
-            except Exception:
-                with tarfile.open(archive_dest, "r:gz") as tf:
-                    if sys.version_info >= (3, 12):
-                        tf.extractall(node_dir, filter="data")
-                    else:
-                        for member in tf.getmembers():
-                            try:
-                                tf.extract(member, node_dir)
-                            except (PermissionError, OSError):
-                                pass
-        else:
-            if os.path.exists(node_dir):
-                try:
-                    shutil.rmtree(node_dir, ignore_errors=True)
-                except Exception:
-                    pass
-            os.makedirs(node_dir, exist_ok=True)
-            with zipfile.ZipFile(archive_dest, "r") as z:
-                z.extractall(node_dir)
-        _node_ver_cache.clear()
-        new_node = node_exe()
-        new_major = node_major_version(new_node) if new_node else None
-        if new_major is not None and new_major >= NODE_MIN_MAJOR and bundled_npm_ok(new_node):
-            log_func(f"portable Node.js v{new_major} ready.")
-            _prune_outdated_node_dirs(node_dir)
-            return True
-        log_func(
-            f"Node.js still below requirement (>= {NODE_MIN_MAJOR}) after configure",
-            False, True,
-        )
-        return False
+        from chzzktube.infra.provisioning.bridge import provision_component_sync
+
+        def _bridge_log(evt):
+            if isinstance(evt, str):
+                log_func(evt)
+            else:
+                msg = getattr(evt, "msg", str(evt))
+                if getattr(evt, "is_error", False):
+                    log_func(msg, False, True)
+                else:
+                    log_func(msg)
+
+        result = provision_component_sync("node", log_func=_bridge_log, force=True)
+        if result is None or not result.success:
+            log_func(f"Node.js provisioning failed: {result.error if result else 'unavailable'}", False, True)
+            return False
     except Exception as e:
-        log_func(f"Node.js auto-setup failed: {e}", False, True)
+        log_func(f"Node.js provisioning failed: {e}", False, True)
         return False
+
+    # 3. 재검증 (수급 후)
+    _node_ver_cache.clear()
+    new_node = node_exe()
+    new_major = node_major_version(new_node) if new_node else None
+    if new_major is not None and new_major >= NODE_MIN_MAJOR and bundled_npm_ok(new_node):
+        log_func(f"portable Node.js v{new_major} ready.")
+        _prune_outdated_node_dirs()
+        return True
+    log_func(
+        f"Node.js still below requirement (>= {NODE_MIN_MAJOR}) after configure",
+        False, True,
+    )
+    return False
+
+
+def _prune_outdated_node_dirs():
+    """오래된 node 버전 디렉토리 정리 (SSOT: writable_base()/node만 대상)."""
+    node_dir = os.path.join(get_writable_base(), "node")
+    if not os.path.isdir(node_dir):
+        return
+    import shutil as _shutil
+
+    # 최신 node 실행파일 위치 기준으로 상위 디렉토리 유지
+    current = node_exe()
+    if not current:
+        return
+    keep_root = os.path.dirname(current)
+    for entry in os.listdir(node_dir):
+        full = os.path.join(node_dir, entry)
+        if not os.path.isdir(full):
+            continue
+        # 유지 대상이면 스킵
+        try:
+            if os.path.samefile(full, keep_root) or keep_root.startswith(full + os.sep):
+                continue
+        except Exception:
+            continue
+        # npm/node_modules가 포함된 폴더만 대상 (안전장치)
+        if any(f.startswith("node") for f in os.listdir(full)[:5]):
+            try:
+                _shutil.rmtree(full, ignore_errors=True)
+            except Exception:
+                pass

@@ -122,6 +122,50 @@ class ExitConfirmDialog(QDialog):
         vbox.addLayout(btn_box)
 
 
+class DepsProvisioningDialog(QDialog):
+    """수급 중 종료 확인 다이얼로그 — 280×125, 중앙 정렬, 영문 (HANDOVER §4.1 준수)."""
+    def __init__(self, parent=None, is_upgrading=False, is_pot_busy=False):
+        super().__init__(parent)
+        self.setWindowTitle("ChzzkTube")
+        self.setFixedSize(280, 125)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        self.setStyleSheet(theme.DIALOG_BG_QSS)
+
+        vbox = QVBoxLayout(self)
+        vbox.setSpacing(14)
+        vbox.setContentsMargins(16, 16, 16, 16)
+
+        parts = []
+        if is_upgrading:
+            parts.append("updating dependencies")
+        if is_pot_busy:
+            parts.append("preparing pot server")
+        msg = " ".join(parts) if parts else "provisioning in progress"
+        msg += ".\nstop and exit?"
+
+        lbl = QLabel(msg)
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setWordWrap(True)
+        lbl.setStyleSheet("font-size: 11px; color: #e3e3e3; line-height: 1.4;")
+        vbox.addWidget(lbl)
+
+        btn_box = QHBoxLayout()
+        btn_box.setSpacing(8)
+
+        btn_stop = QPushButton("Stop & Exit")
+        btn_stop.setStyleSheet(theme.BTN_EXIT_DANGER_QSS)
+        btn_stop.clicked.connect(lambda: self.done(1))
+
+        btn_continue = QPushButton("Continue")
+        btn_continue.setStyleSheet(theme.BTN_NEUTRAL_QSS)
+        btn_continue.clicked.connect(lambda: self.done(0))
+
+        btn_box.addStretch(1)
+        btn_box.addWidget(btn_stop)
+        btn_box.addWidget(btn_continue)
+        vbox.addLayout(btn_box)
+
+
 class CookieSelectDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)

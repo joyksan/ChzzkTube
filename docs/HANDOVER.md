@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-22 - v3.8.1 — 폴백 완전 제거·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정 (patch)
+> 마지막 갱신: 2026-09-22 - v3.8.2 — Path Strategy Pattern으로 .pylib SSOT 완성·Frozen/Dev 환경 분리 캡슐화 (patch)
 
 ---
 
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.8.0`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.8.2`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -662,6 +662,8 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 > v3.7.0(2026-09-18) — download pipeline contract overhaul: ClassifiedTarget 단일 계약, VOD 품질 우선 폴백(web→web_safari→ios→tv), PO 토큰 1:1 바인딩, skip 집계, conftest .pylib bootstrap, analyze_worker Mock 제거, 쿠키 정책 SSOT 정렬.
 > v3.7.2(2026-09-19) — yt-dlp 순정 클라이언트 로테이션 완전 위임: 앱 레벨 수동 백 체인 제거, 3계층 파이프라인 재설계, POT 게이트 정단화(subscriber_only 제외).
 > v3.8.0(2026-09-20) — 단독 환경 격리·입력 게이트·Layer 3 POT 수리·TUI 정제: 시스템 PATH(`shutil.which`)·OS 패키지 매니저(brew/apt) 참조 전면 철폐(전용 `writable_base()`·`.pylib` 단일 경로), URL 검증 게이트 2중 방어(비URL 배치 차단), `POTManager.instance()` 부재 결함을 워커 안전 L0/L1 인프라 호출로 근본 수리 + 1080p 미달 승격 판정 신설, FAIL 단일 발행(finalizer)·중간 `.fNNN` 스트림 TUI 은닉·ANAL 마감 정갈 명세.
+> v3.8.1(2026-09-22) — 폴백 완전 제거·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정: 15초 강제 언락(`force_unlock`) 제거, `MediaController._is_valid_url()` 순수 게이트 신설, `emit_error_standard`/`emit_error_warn` 전면 도입, `staged` ≠ `ready` 상태 의미 명확화.
+> v3.8.2(2026-09-22) — Path Strategy Pattern으로 .pylib SSOT 완성: `config.pylib_overlay_path()` 단일 경로 리졸버로 Frozen/Dev 환경 분리 캡슐화, 호출부 `if is_frozen()` 분기 0건 달성, frozen 시 `writable_base()/.pylib`(`%LOCALAPPDATA%/ChzzkTube/.pylib` 또는 `~/.chzzktube/.pylib`) 사용.
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
