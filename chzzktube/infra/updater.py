@@ -34,11 +34,34 @@ _PYPI_API = "https://pypi.org/pypi/{pkg}/json"
 _NIGHTLY_API = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp{_ext}"
 
 def installed_version(pypi_name):
-    """Installed version string, or None if not installed / failure."""
-    try:
-        return im.version(pypi_name)
-    except Exception:
+    """Installed version string from .pylib overlay only, or None if not installed.
+
+    SSOT: 오직 .pylib 내부 dist-info만 스캔하여 버전 판정.
+    .venv나 시스템 site-packages에 존재하더라도 무시한다.
+    """
+    import glob
+    import os
+    from chzzktube.core.config import pylib_overlay_path
+
+    pylib_root = pylib_overlay_path()
+    if not os.path.isdir(pylib_root):
         return None
+
+    # 패키지명 정규화: yt-dlp -> yt_dlp, streamlink -> streamlink
+    pkg_dir = pypi_name.replace("-", "_")
+    dist_info_pattern = os.path.join(pylib_root, f"{pkg_dir}-*.dist-info")
+
+    for dist_info in glob.glob(dist_info_pattern):
+        metadata_path = os.path.join(dist_info, "METADATA")
+        if os.path.isfile(metadata_path):
+            try:
+                with open(metadata_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("Version:"):
+                            return line.split(":", 1)[1].strip()
+            except Exception:
+                continue
+    return None
 
 def latest_version(pypi_name, timeout=1.5):
     """Latest stable version from PyPI, or None on failure.
@@ -171,6 +194,81 @@ def check_deps(log_func=None):
         results.append(("pot", "SKIP", "unknown"))
 
     return results
+
+
+def verify_deps_integrity() -> tuple[bool, list[str]]:
+    """런타임 의존성 무결성 검증 — 주요 deps 존재/실행 가능 여부 확인.
+
+    Returns:
+        (ok, missing_list): ok=True면 모든 필수 deps 정상, False면 누락/실패 목록 반환
+    """
+    from chzzktube.core import config
+    import chzzktube.infra.components as components
+    import chzzktube.infra.pot_provider as pot_provider
+    import subprocess
+    import sys
+
+    missing = []
+
+    # 1. Python packages (yt-dlp, streamlink) — .pylib overlay에서 import 시도
+    try:
+        import yt_dlp
+    except ImportError:
+        missing.append("yt-dlp (not importable from .pylib)")
+
+    try:
+        import streamlink
+    except ImportError:
+        missing.append("streamlink (not importable from .pylib)")
+
+    # 2. ffmpeg — 격리 캐시에서 실행 가능 확인
+    try:
+        ffmpeg_path = components.ffmpeg_exe()
+        if not ffmpeg_path:
+            missing.append("ffmpeg (not found in cache)")
+        else:
+            # 실행 테스트
+            result = subprocess.run(
+                [ffmpeg_path, "-version"],
+                capture_output=True,
+                timeout=5,
+                **{**{}, **__import__("chzzktube.infra.platform").spawn_kwargs()}
+            )
+            if result.returncode != 0:
+                missing.append("ffmpeg (execution failed)")
+    except Exception as e:
+        missing.append(f"ffmpeg (check error: {e})")
+
+    # 3. node — 격리 캐시에서 실행 가능 확인
+    try:
+        node_path = pot_provider.node_exe()
+        if not node_path:
+            missing.append("node (not found in cache)")
+        else:
+            result = subprocess.run(
+                [node_path, "--version"],
+                capture_output=True,
+                timeout=5,
+                **{**{}, **__import__("chzzktube.infra.platform").spawn_kwargs()}
+            )
+            if result.returncode != 0:
+                missing.append("node (execution failed)")
+    except Exception as e:
+        missing.append(f"node (check error: {e})")
+
+    # 4. POT server readiness — 디스크 준비 상태만 확인 (liveness 아님)
+    try:
+        from chzzktube.infra.pot_server import pot_readiness
+        from chzzktube.infra.po_client import server_ping
+        if not server_ping():
+            ready, _ = pot_readiness()
+            if not ready:
+                missing.append("pot server (not ready)")
+    except Exception:
+        missing.append("pot server (check error)")
+
+    return len(missing) == 0, missing
+
 
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
@@ -438,14 +536,9 @@ def _overlay_root():
     try:
         from chzzktube.core.config import pylib_overlay_path
 
-        path = os.path.abspath(pylib_overlay_path())
+        return os.path.abspath(pylib_overlay_path())
     except Exception:
         return ""
-    try:
-        os.makedirs(path, exist_ok=True)
-    except Exception:
-        return ""
-    return path
 
 
 def _refresh_overlay_sys_path():

@@ -1,3 +1,38 @@
+### 2026-09-22 — v3.8.2 : Path Strategy Pattern으로 .pylib SSOT 완성 — Frozen/Dev 환경 분리 캡슐화 (patch)
+
+#### 배경 (v3.8.1 → v3.8.2)
+- **호출부 환경 분기 철폐**: `if is_frozen()` 조건문이 `updater.py`, `provisioning/manager.py` 등 호출부 곳곳에 산재 — 결합도 상승, 테스트 복잡도 증가.
+- **단일 경로 리졸버(SSOT) 부재**: Python 오버레이(`.pylib`) 경로가 Dev(`<repo>/.pylib`)와 Frozen(`writable_base()/.pylib`)로 분기돼 있으나, 이를 캡슐화한 단일 진실 공급원(`config.pylib_overlay_path()`)이 없어 호출부가 환경을 알아야 했다.
+- **frozen 빌드에서 .pylib 경로 불일치**: frozen 시 `%LOCALAPPDATA%/ChzzkTube/.pylib` 또는 `~/.chzzktube/.pylib`를 사용해야 하나, 기존 코드는 `<repo>/.pylib`를 고정 참조해 동일 코드 경로로 테스트 불가.
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `core/config.py` | `is_frozen()` 단일 진실 함수 추가. **`pylib_overlay_path()` SSOT 구현** — 우선순위: 1) `CHZZKTUBE_PYLIB_DIR` 환경변수, 2) Frozen: `writable_base()/.pylib`, 3) Dev: `<repo>/.pylib`. `_pylib_root()`는 하위 호환 별칭으로 유지. |
+| `infra/provisioning/manager.py` | `ProvisioningManager.__init__`: `config._pylib_root()` → `config.pylib_overlay_path()` 한 줄로 단순화 (환경 분기 제거). |
+| `infra/updater.py` | `_overlay_root()`: 경로 리졸버 위임으로 단순화 (frozen 분기 완전 제거). `installed_version()`: `config.pylib_overlay_path()` 사용. |
+| `tests/test_pylib_overlay.py` | Frozen 모드 테스트 2개 추가: `test_pylib_overlay_frozen_mode_uses_writable_base`, `test_pylib_overlay_frozen_mode_env_override_priority`. |
+| `docs/HANDOVER.md` | §1.2 경로 계약 테이블에 `.pylib` frozen 경로 추가, `CHZZKTUBE_PYLIB_DIR` 문서화. |
+
+#### 설계 원칙 보강
+1. **단일 경로 리졸버(SSOT)**: 호출부는 환경을 모른다 — 오직 `config.pylib_overlay_path()`만 부른다. 환경 분기(if is_frozen)는 경로 리졸버 내부에만 존재.
+2. **단일 격리(Single Isolated Runtime)**: 실행체 해석은 `writable_base()` 및 `.pylib` 오버레이만 — 시스템 PATH/패키지 매니저 참조 0건.
+3. **순정 우선, POT 승격**: Layer 1~2는 yt-dlp 순정 위임(EJS 솔버 포함), 실패·1080p 미달 시에만 Layer 3 POT 승격. 720p `tv` 타협 폐기.
+4. **워커 스레드 경계**: 워커는 뷰 소유 QObject(POTManager)에 접근하지 않고, L0/L1 순수 인프라만 호출.
+5. **입력 게이트 2중 방어**: 파싱 단계(배치 전체 차단) + 워커 구동 직전 재검증.
+6. **로그 단일 발행**: FAIL은 finalizer 1회, ANAL 마감은 명세 4행, DL 중간 스트림은 은닉.
+7. **폴백 완전 제거**: 15초 강제 언락(`force_unlock`) 제거 — deps 수급 실패 시 영구 잠금, 사용자 재시도(ENTER) 대기. 프리웜 중 `defer_fallback_timer` 제거, `_on_pot_activity` 연결 해제.
+
+#### 검증
+- 전체 pytest **310 passed** (신규 frozen 모드 테스트 2개 포함)
+- `python -m compileall -q chzzktube` 통과
+- `sync_mirrors.py --check` 0 변경
+- 실측: `sys.frozen` 시뮬레이션 시 `pylib_overlay_path()` → `writable_base()/.pylib`, 환경변수 오버라이드 우선 적용 확인
+- 호출부 전역에서 `if is_frozen` 분기 0건 달성
+
+---
+
 ### 2026-09-22 — v3.8.1 : 폴백 완전 제거·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정 (patch)
 
 #### 배경 (v3.8.0 → v3.8.1)

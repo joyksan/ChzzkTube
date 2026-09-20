@@ -1,11 +1,13 @@
 """프로젝트 로컬 pip 오버레이(.pylib) 계약 테스트 — 네트워크 없음.
 
 [계약]
-- _pylib_root()는 <repo>/.pylib 고정 (CHZZKTUBE_PYLIB_DIR로만 오버라이드)
+- pylib_overlay_path()는 SSOT: 환경변수 > Frozen(writable_base) > Dev(repo root)
+- _pylib_root()는 하위 호환 별칭 (Dev 기본값만 반환)
 - bootstrap()은 sys.path 선두 1회 삽입, 중복 안전
 - _extract_pylib_whl()은 prefix dist-info만 정리 (venv 무관)
 """
 import os
+import sys
 import zipfile
 
 
@@ -39,9 +41,32 @@ def test_pylib_overlay_env_override(tmp_path, monkeypatch):
     )
 
 
-def test_pylib_bootstrap_inserts_first(tmp_path, monkeypatch):
-    import sys
+def test_pylib_overlay_frozen_mode_uses_writable_base(tmp_path, monkeypatch):
+    """Frozen 모드에서 pylib_overlay_path()가 writable_base()/.pylib 반환하는지 검증."""
+    from chzzktube.core.config import pylib_overlay_path, writable_base, _repo_root
 
+    monkeypatch.delenv("CHZZKTUBE_PYLIB_DIR", raising=False)
+    # sys.frozen 시뮬레이션
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+    path = os.path.abspath(pylib_overlay_path())
+    expected = os.path.join(writable_base(), ".pylib")
+    assert path == os.path.abspath(expected)
+    assert path != _repo_root()  # Dev 경로와 달라야 함
+
+
+def test_pylib_overlay_frozen_mode_env_override_priority(tmp_path, monkeypatch):
+    """Frozen 모드에서도 환경변수 오버라이드가 최우선 적용되는지 검증."""
+    from chzzktube.core.config import pylib_overlay_path
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("CHZZKTUBE_PYLIB_DIR", str(tmp_path / "custom_frozen"))
+
+    path = os.path.abspath(pylib_overlay_path())
+    assert path == os.path.abspath(str(tmp_path / "custom_frozen"))
+
+
+def test_pylib_bootstrap_inserts_first(tmp_path, monkeypatch):
     from chzzktube.infra.pylib_bootstrap import bootstrap
 
     target = os.path.abspath(str(tmp_path / "ov"))
@@ -50,6 +75,29 @@ def test_pylib_bootstrap_inserts_first(tmp_path, monkeypatch):
     assert os.path.abspath(got) == target
     assert sys.path[0] == target
     sys.path.remove(target)
+
+
+def test_pylib_bootstrap_frozen_mode_creates_writable_base_pylib(tmp_path, monkeypatch):
+    """Frozen 모드에서 bootstrap()이 writable_base()/.pylib 생성하고 sys.path에 삽입하는지 검증."""
+    from chzzktube.infra.pylib_bootstrap import bootstrap
+    from chzzktube.core.config import writable_base
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("CHZZKTUBE_PYLIB_DIR", raising=False)
+
+    expected_path = os.path.join(writable_base(), ".pylib")
+    # 기존 경로 정리
+    if expected_path in sys.path:
+        sys.path.remove(expected_path)
+    if os.path.exists(expected_path):
+        import shutil
+        shutil.rmtree(expected_path, ignore_errors=True)
+
+    got = bootstrap(clear_caches=False)
+    assert os.path.abspath(got) == os.path.abspath(expected_path)
+    assert sys.path[0] == os.path.abspath(expected_path)
+    assert os.path.isdir(expected_path)
+    sys.path.remove(os.path.abspath(expected_path))
 
 
 def test_extract_pylib_whl_cleans_old_distinfo(tmp_path):

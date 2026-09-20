@@ -66,9 +66,11 @@
 | `LOG_DIR` | `<repo>/logs/` | `<exe-dir>/logs/` | `chzzktube_YYYY-MM-DD.log`, 30일 보존 |
 | `ICON_PATH` | `<BASE_DIR>/icon.ico` | `<BASE_DIR>/icon.ico` | 창 아이콘 |
 | `writable_base()` | `$HOME/.chzzktube` | Windows는 `%LOCALAPPDATA%/ChzzkTube`, 그 외는 `$HOME/.chzzktube` | 쓰기 보장 사용자 데이터/캐시 루트 |
+| `.pylib` (Python 오버레이) | `<repo>/.pylib` | `writable_base()/.pylib` (`%LOCALAPPDATA%/ChzzkTube/.pylib` 또는 `~/.chzzktube/.pylib`) | yt-dlp/streamlink wheel 해제 오버레이 — `config.pylib_overlay_path()` SSOT |
 
 - `CONFIG_DIR`는 설정 저장 위치이며, `download_path`의 기본값으로도 사용된다. 사용자는 `dl_config.json`에서 별도 다운로드 경로를 지정할 수 있다.
 - `CHZZKTUBE_COMPONENTS_DIR` 환경 변수가 설정되면 `components.components_root()`가 그 경로를 최우선으로 사용한다. 미설정 시 소스는 `<repo>/components`, frozen은 `<exe-dir>/components`다.
+- `CHZZKTUBE_PYLIB_DIR` 환경 변수가 설정되면 `config.pylib_overlay_path()`가 그 경로를 최우선으로 사용한다(Dev/Frozen 공통).
 
 ### 1.2.2 런타임 캐시·외부 구성요소
 
