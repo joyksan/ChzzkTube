@@ -892,10 +892,69 @@ class VerboseLogWindow(QDialog):
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
 
-    def append(self, msg, is_status=False):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Full Log (F12)")
+        self.resize(760, 480)
+        self.setStyleSheet(theme.DIALOG_BG_QSS)
+
+        self.te = QTextEdit(self)
+        self.te.setReadOnly(True)
+        self.te.setStyleSheet(theme.TE_CONTENT_QSS)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+        layout.addWidget(self.te)
+
+        btn_row = QHBoxLayout()
+        self.lbl_info = QLabel("")
+        self.lbl_info.setStyleSheet("color: #888888; font-size: 11px;")
+        btn_close = QPushButton("[ Close: Esc ]")
+        btn_close.setProperty("class", "tui-tag")
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.setStyleSheet(theme.TUI_STYLE)
+        btn_close.clicked.connect(self.close)
+
+        btn_row.addWidget(self.lbl_info)
+        btn_row.addStretch(1)
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+        # 갱신형 라인 추적: component_id -> block number
+        self._status_lines: dict[str, int] = {}
+
+    def append(self, msg, is_status=False, component_id: str = None):
         if not msg:
             return
-        if is_status:
+        if is_status and component_id:
+            # 갱신형: component_id로 기존 라인 찾기/생성
+            doc = self.te.document()
+            cursor = self.te.textCursor()
+            
+            if component_id in self._status_lines:
+                # 기존 블록 찾아서 내용 교체
+                block_num = self._status_lines[component_id]
+                block = doc.findBlockByNumber(block_num)
+                if block.isValid():
+                    cursor.setPosition(block.position())
+                    cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock, QTextCursor.MoveMode.KeepAnchor)
+                    cursor.removeSelectedText()
+                    cursor.insertText(str(msg))
+                else:
+                    # 블록이 없으면 새로 추가
+                    cursor.movePosition(QTextCursor.MoveOperation.End)
+                    cursor.insertBlock()
+                    cursor.insertText(str(msg))
+                    self._status_lines[component_id] = doc.blockCount() - 1
+            else:
+                # 새로 추가
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                cursor.insertBlock()
+                cursor.insertText(str(msg))
+                self._status_lines[component_id] = doc.blockCount() - 1
+        elif is_status and not component_id:
+            # 기존 방식: 마지막 줄만 갱신 (하위 호환)
             cursor = self.te.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)

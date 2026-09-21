@@ -1,3 +1,34 @@
+### 2026-09-22 — v3.8.3 : 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률 (patch)
+
+#### 배경 (v3.8.2 → v3.8.3)
+- **부트스트랩 패러독스 잔재**: `ParallelDownloader`·PyPI/GitHub/nodejs 메타 패처에 `httpx`가 남아 있고 의존성에는 미선언 — 프로비저닝 실행 시 `No module named 'httpx'` 크래시 가능.
+- **아카이브 오선택**: 구 `filter_assets`가 GyanD 릴리즈 목록 순서(`assets[0]`)를 그대로 사용해 `.7z`를 낚아채 `zipfile.BadZipFile`로 귀결. FFmpeg 7.1 직링크도 실존하지 않는 파일명(`ffmpeg-7.1-essentials.zip`)을 가리킴.
+- **로그 넘침**: stale 요약을 콤마로 나열, 집계 progress bar를 한 줄에 직렬 나열 — 1타임스탬프 1정보 규격 위반. TUI/F12에 진행 틱이 그대로 누적돼 바 넘침 발생.
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `infra/provisioning/downloader.py` | `httpx.AsyncClient` 제거 → `urllib.request`+`asyncio.to_thread` 전환. 64KB 청크 스트리밍·per-read 30s 타임아웃·2s/5% 콜백 레이트리밋·SHA-256 검증·`.part` 원자 교체·지수 백오프 유지. |
+| `infra/provisioning/manager.py` | `httpx` 동적 import 3건 제거 → `_fetch_json_sync`+`asyncio.to_thread` 공통 헬퍼. `_archive_type_from` 확장자 판정 + 미지원 형식 화이트리스트 가드. `_on_progress`를 `_fmt_progress` 단일 포맷터(`PCT · SPEED [GAUGE] · msg`)로 통일, TUI 컴포넌트별 갱신형·F12 갱신형 분리. |
+| `infra/provisioning/resolver.py` | `filter_assets`에 아카이브 확장자 선호 정렬 추가 — `.zip` 최우선, `.7z`/`.rar`/`.xz` 등 stdlib 해제 불가 형식은 후보에서 완전 배제. |
+| `infra/provisioning/verifier.py` | 바이너리 판정에 `spec.install_rel_path` 사용 (`node/bin/node` 등 중첩 경로 대응). |
+| `infra/components.py` | `_download`를 `ProgressBar` 기반으로 전환(SHA-256 옵션·per-read 타임아웃 포함). FFmpeg 7.1 URL을 실존 자산(`ffmpeg-7.1-essentials_build.zip`)으로 교정. macOS는 Homebrew bottle 우선·evermeet.cx 폴백 순서 확정 + bottle 전멸 시 정적 빌드 폴백. Windows는 3회 재시도+`testzip` 검증. |
+| `infra/pot_server.py` | `_download_with_progress`를 `ProgressBar` 기반으로 전환(per-read 타임아웃 포함). |
+| `ui/progress_bar.py` (신규) | stdlib-only `ProgressBar`/`ProgressManager` — TUI 상태줄 갱신형·F12 갱신형(`component_id` 블록 추적)·`MIN_UPDATE_INTERVAL 2.0s`+`MIN_PCT_DELTA 5%` 지터링 방지. |
+| `ui/log_console.py` | `_progress_lines` 추적 — 컴포넌트별 갱신형 라인(`is_progress`) 유지, 결과 로그가 진행줄을 잡아먹지 않도록 분리. |
+| `ui/dialogs.py` | `VerboseLogWindow.append(msg, is_status, component_id)` — `component_id` 블록 교체로 F12 갱신형 지원. |
+| `ui/main_window.py` | stale 요약을 콤마 나열에서 라벨별 개별 줄 발행으로 변경(1줄 1정보). F12 미러에 `component_id` 전달. |
+| `tests/test_provisioning_stdlib.py` (신규) | 7건: stdlib 다운로드 성공/병렬/진행 콜백/HTTP 오류/네트워크 오류/SHA-256 성공·불일치·`.part` 정리·메타 패처 성공/실패. |
+
+#### 검증
+- 전체 pytest **317 passed**
+- `python -m compileall -q chzzktube` 통과
+- `python sync_mirrors.py --check` 변경 0건/누락 0건
+- `git grep httpx -- chzzktube/` 잔여 참조 0건
+
+---
+
 ### 2026-09-22 — v3.8.2 : Path Strategy Pattern으로 .pylib SSOT 완성 — Frozen/Dev 환경 분리 캡슐화 (patch)
 
 #### 배경 (v3.8.1 → v3.8.2)

@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-22 - v3.8.2 — Path Strategy Pattern으로 .pylib SSOT 완성·Frozen/Dev 환경 분리 캡슐화 (patch)
+> 마지막 갱신: 2026-09-22 - v3.8.3 — 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률 (patch)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.8.1` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.8.1"` (최신: 2026-09-22 단독 환경 격리·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정 (patch))
+- **버전**: `v3.8.3` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.8.3"` (최신: 2026-09-22 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률 (patch))
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -664,6 +664,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 > v3.8.0(2026-09-20) — 단독 환경 격리·입력 게이트·Layer 3 POT 수리·TUI 정제: 시스템 PATH(`shutil.which`)·OS 패키지 매니저(brew/apt) 참조 전면 철폐(전용 `writable_base()`·`.pylib` 단일 경로), URL 검증 게이트 2중 방어(비URL 배치 차단), `POTManager.instance()` 부재 결함을 워커 안전 L0/L1 인프라 호출로 근본 수리 + 1080p 미달 승격 판정 신설, FAIL 단일 발행(finalizer)·중간 `.fNNN` 스트림 TUI 은닉·ANAL 마감 정갈 명세.
 > v3.8.1(2026-09-22) — 폴백 완전 제거·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정: 15초 강제 언락(`force_unlock`) 제거, `MediaController._is_valid_url()` 순수 게이트 신설, `emit_error_standard`/`emit_error_warn` 전면 도입, `staged` ≠ `ready` 상태 의미 명확화.
 > v3.8.2(2026-09-22) — Path Strategy Pattern으로 .pylib SSOT 완성: `config.pylib_overlay_path()` 단일 경로 리졸버로 Frozen/Dev 환경 분리 캡슐화, 호출부 `if is_frozen()` 분기 0건 달성, frozen 시 `writable_base()/.pylib`(`%LOCALAPPDATA%/ChzzkTube/.pylib` 또는 `~/.chzzktube/.pylib`) 사용.
+> v3.8.3(2026-09-22) — 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률: `httpx` 잔재 완전 제거(`ParallelDownloader`·PyPI/GitHub/nodejs 메타 패처를 `urllib`+`asyncio.to_thread`로 전환), `filter_assets` `.zip` 강제 선택·`.7z` 배제 + `archive_type` 화이트리스트 가드, FFmpeg 7.1 URL 교정, Verifier `install_rel_path` 판정, `ProgressBar` 신규(TUI 컴포넌트별 갱신형·F12 누적→갱신형·§3.5 포맷터), stale 요약 개별 줄화·집계 직렬 나열 제거.
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
