@@ -20,12 +20,14 @@ import platform
 import shutil
 import sys
 import tempfile
+import time
 import urllib.request
 import zipfile
 from pathlib import Path
 
 import chzzktube.core.config as config
 from chzzktube.core.log_emitter import emit_component, emit_event, emit_dl, emit_error_standard, emit_error_warn
+from chzzktube.ui import ProgressBar
 
 _UA = "ChzzkTube-Components/1.0"
 
@@ -69,31 +71,69 @@ def _ghcr_token(scope):
     return data.get("token")
 
 
-def _download(url, dest, log, label="", is_status=False):
-    """파일 다운로드(진행 로그 포함). 성공 시 dest 경로 반환.
-    
-    is_status=True 면 진행률 로그를 상태 줄로 표시 (이전 줄 덮어쓰기).
+def _download(url, dest, log=None, label="", expected_sha256=None):
+    """파일 다운로드(진행 바 포함). 성공 시 dest 경로 반환.
+
+    ProgressBar를 사용하여 raw_log 히스토리에 진행 바를 기록 (상태 줄 덮어쓰기 방지).
     """
-    log(emit_component("DEPS", "RUN", "DEPS", f"{label or os.path.basename(url)} fetching..."), is_status)
-    tmp = dest + ".part"
-    with _http_get(url, timeout=60) as resp, open(tmp, "wb") as f:
-        total = int(resp.headers.get("Content-Length") or 0)
-        done, last_mb = 0, -1
-        while True:
-            chunk = resp.read(1024 * 512)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
-            mb = done // (1024 * 1024)
-            # 진행률 로그 빈도 조절: 8MB 이상 파일은 2MB마다, 미만은 완료 시에만
-            if total < 8 * 1024 * 1024 or mb != last_mb and mb % 2 == 0:
-                last_mb = mb
-                pct = f" ({done * 100 // total}%)" if total else ""
-                log(emit_component("DEPS", "RUN", "DEPS", f"{label or 'download'} {mb} MB{pct}"), is_status)
-    os.replace(tmp, dest)
-    log(emit_component("DEPS", "OK", "DEPS", f"{label or os.path.basename(dest)} done ({done / 1048576:.1f} MB)"))
-    return dest
+    # log 함수가 없으면 기본 raw_log 사용
+    log_func = log if callable(log) else None
+
+    with ProgressBar(component=label or os.path.basename(url), log_func=log_func) as bar:
+        bar.start()
+        tmp = dest + ".part"
+        req = urllib.request.Request(url, headers={"User-Agent": _UA})
+
+        # ghcr.io 토큰 처리
+        if "ghcr.io" in url:
+            try:
+                token = _ghcr_token("repository:homebrew/core/ffmpeg:pull")
+                req.headers["Authorization"] = f"Bearer {token}"
+            except Exception:
+                pass
+
+        hasher = hashlib.sha256() if expected_sha256 else None
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as f:
+                # Set per-read timeout
+                try:
+                    sock = resp.fp.raw._sock
+                    if sock is not None:
+                        sock.settimeout(30.0)
+                except AttributeError:
+                    pass
+
+                total = int(resp.headers.get("Content-Length", 0))
+                downloaded = 0
+
+                while True:
+                    chunk = resp.read(1024 * 512)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if hasher is not None:
+                        hasher.update(chunk)
+                    bar.update(downloaded, total)
+
+            # SHA-256 검증
+            if hasher is not None:
+                computed_sha256 = hasher.hexdigest()
+                if computed_sha256 != expected_sha256:
+                    raise ValueError(f"SHA256 mismatch: {computed_sha256} != {expected_sha256}")
+
+            os.replace(tmp, dest)
+            bar.finish("completed")
+            return dest
+
+        except BaseException:
+            # 정리
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
 
 
 def _sha256(path):
@@ -121,11 +161,29 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
     promote_single_root=True 면 zip 최상위에 폴더 하나만 있을 때(예: zipball 루트
     bgutil-ytdlp-pot-provider-1.3.2/) 그 내부를 dest_dir 로 승격한다.
     """
+    import zipfile
+    
+    # 사전 검증: zip 파일 무결성 확인
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            bad_file = zf.testzip()
+            if bad_file is not None:
+                raise zipfile.BadZipFile(f"Corrupted zip entry: {bad_file}")
+    except zipfile.BadZipFile as e:
+        log(emit_component("DEPS", "FAIL", "DEPS", f"{label} zip validation failed: {e}"))
+        raise
+    
     tmp = dest_dir + ".tmp"
     _rmtree(tmp)
     os.makedirs(os.path.dirname(tmp) or ".", exist_ok=True)
-    with zipfile.ZipFile(zip_path) as zf:
-        zf.extractall(tmp)
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(tmp)
+    except zipfile.BadZipFile as e:
+        _rmtree(tmp)
+        log(emit_component("DEPS", "FAIL", "DEPS", f"{label} zip extraction failed: {e}"))
+        raise
+    
     if promote_single_root:
         entries = os.listdir(tmp)
         if len(entries) == 1 and os.path.isdir(os.path.join(tmp, entries[0])):
@@ -149,7 +207,7 @@ FFMPEG_DIRNAME = "ffmpeg"
 # GitHub 릴리즈 URL: 버전 명시 (latest 사용 시 source code를 가리켜 404 발생)
 FFMPEG_RELEASE_URL = (
     "https://github.com/GyanD/codexffmpeg/releases/download/7.1/"
-    "ffmpeg-7.1-essentials.zip"
+    "ffmpeg-7.1-essentials_build.zip"
 )
 _FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
 
@@ -289,30 +347,46 @@ def _ensure_ffmpeg_windows(log, force):
     bin_dir = os.path.join(dest, "bin")
     exe_path = os.path.join(bin_dir, "ffmpeg.exe")
 
-    # GitHub에서 다운로드
+    # GitHub에서 다운로드 (최대 3회 재시도)
     os.makedirs(dest, exist_ok=True)
-    log(emit_component("DEPS", "RUN", "FFMP", "downloading..."))
-
-    with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
-        zp = _download(FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg")
-        _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
-
-    if os.path.isfile(exe_path):
-        _wire_ffmpeg_path(bin_dir)
-        log(emit_component("DEPS", "OK", "FFMP", "ok"))
-        return None
-
-    return "ffmpeg.exe not found after extract"
+    max_retries = 3
+    last_err = None
+    
+    for attempt in range(max_retries):
+        if attempt > 0:
+            log(emit_component("DEPS", "WARN", "FFMP", f"retry {attempt}/{max_retries}"))
+            time.sleep(2 ** attempt)  # exponential backoff
+        
+        try:
+            log(emit_component("DEPS", "RUN", "FFMP", "downloading..."))
+            with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
+                zp = _download(FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg")
+                _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
+            
+            if os.path.isfile(exe_path):
+                _wire_ffmpeg_path(bin_dir)
+                log(emit_component("DEPS", "OK", "FFMP", "ok"))
+                return None
+            last_err = "ffmpeg.exe not found after extract"
+        except zipfile.BadZipFile as e:
+            last_err = f"BadZipFile: {e}"
+            log(emit_component("DEPS", "WARN", "FFMP", f"corrupted download: {e}"))
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            log(emit_component("DEPS", "WARN", "FFMP", f"download failed: {e}"))
+    
+    return f"ffmpeg install failed after {max_retries} attempts: {last_err}"
 
 
 def _ensure_ffmpeg_macos(log, force):
-    """맥용 ffmpeg 자동 수급 - Homebrew bottle HTTP 직접 다운로드 (v3.8.0).
+    """맥용 ffmpeg 자동 수급 — Homebrew bottle 우선 전략 (v3.8.3).
 
-    [격리] `brew` 서브프로세스 실행 철폐 — formulae.brew.sh API에서 bottle
-    tar.gz URL을 받아 SHA-256 검증 후 직접 수급한다 (시스템 무간섭).
+    [전략] evermeet.cx는 불안정(HTML 반환 등). Homebrew bottle을 최우선으로,
+    실패 시 evermeet.cx 정적 빌드로 폴백한다.
     """
     dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
 
+    # 1차: Homebrew bottle API (공식, 안정적)
     try:
         log(emit_component("DEPS", "RUN", "FFMP", "downloading (Homebrew bottle)..."))
         with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
@@ -359,7 +433,7 @@ def _ensure_ffmpeg_macos(log, force):
                             if total >= 8 * 1024 * 1024 and mb != last_mb and mb % 2 == 0:
                                 last_mb = mb
                                 pct = f" ({done * 100 // total}%)" if total else ""
-                                log(emit_component("DEPS", "RUN", "FFMP", f"ffmpeg [{key}] {mb} MB{pct}"), True)
+                                log(emit_component("DEPS", "RUN", "FFMP", f"ffmpeg [{key}] {mb} MB{pct}"), False)
                     if total and done != total:
                         last_err = f"ffmpeg [{key}] download incomplete"
                         continue
@@ -432,15 +506,18 @@ def _ensure_ffmpeg_macos(log, force):
             except Exception as e:  # noqa: BLE001 — 후보별 폴백
                 last_err = f"ffmpeg [{key}] install failed: {type(e).__name__}"
                 continue
-        # bottle 전멸 — evermeet.cx 정적 빌드로 최종 폴백 (실측 2026-09:
-        # formulae 9.x arm64 bottle 3종 전부 현행 15.7.4에서 dyld abort).
-        ever_err = _ensure_ffmpeg_macos_static(log, dest)
-        if ever_err is None:
-            return None
-        # [계약] ensure_ffmpeg는 실패 시 문자열 반환 (LogEvent 아님)
-        return "all mirrors exhausted"
+        # bottle 전멸 — evermeet.cx 정적 빌드로 최종 폴백
+        log(emit_component("DEPS", "WARN", "FFMP", f"all bottles failed: {last_err} — trying static build"))
     except Exception as e:
-        return f"{type(e).__name__}: {e}"
+        log(emit_component("DEPS", "WARN", "FFMP", f"Homebrew API failed: {e} — trying static build"))
+
+    # 2차: evermeet.cx 정적 빌드 (universal2, 모든 macOS에서 실행 가능)
+    log(emit_component("DEPS", "RUN", "FFMP", "downloading (static universal2)..."))
+    static_err = _ensure_ffmpeg_macos_static(log, dest)
+    if static_err is None:
+        log(emit_component("DEPS", "OK", "FFMP", "ok (static)"))
+        return None
+    return f"all mirrors exhausted: {static_err}"
 
 
 def _fetch_url(url, dest_path, timeout=60):
@@ -481,6 +558,19 @@ def _ensure_ffmpeg_macos_static(log, dest):
                     # redirector(getrelease)는 302를 반환하므로 _http_get이 아닌
                     # 리다이렉트 추적 opener 사용
                     _fetch_url(url, zp)
+                    
+                    # 검증: 다운로드된 파일이 유효한 zip인지 확인
+                    try:
+                        import zipfile
+                        with zipfile.ZipFile(zp) as zf:
+                            bad_file = zf.testzip()
+                            if bad_file is not None:
+                                raise zipfile.BadZipFile(f"Corrupted zip entry: {bad_file}")
+                    except zipfile.BadZipFile as e:
+                        last_err = f"static {os.path.basename(url)} invalid zip: {e}"
+                        log(emit_component("DEPS", "WARN", "FFMP", f"invalid zip, trying next URL"))
+                        continue
+                    
                     _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
                 cand = os.path.join(dest, "ffmpeg")
                 if not os.path.isfile(cand):
@@ -504,8 +594,6 @@ def _ensure_ffmpeg_macos_static(log, dest):
                 last_err = f"static {os.path.basename(url)} failed: {type(e).__name__}"
                 continue
         return last_err or "static fallback failed"
-    except Exception as e:
-        return f"{type(e).__name__}: {e}"
     except Exception as e:
         return f"{type(e).__name__}: {e}"
 
@@ -549,7 +637,7 @@ def _ensure_ffmpeg_linux(log, force):
         url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
         with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
             tar_path = os.path.join(td, "ffmpeg.tar.xz")
-            _download(url, tar_path, log, "ffmpeg", is_status=True)
+            _download(url, tar_path, log, "ffmpeg")
 
             log(emit_component("DEPS", "RUN", "FFMP", "extracting..."))
             if os.path.exists(dest):

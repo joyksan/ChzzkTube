@@ -25,6 +25,7 @@ from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
 from chzzktube.infra.node_provider import NODE_MIN_MAJOR
 from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
+from chzzktube.ui import ProgressBar
 from chzzktube.infra.platform import (
     attach_to_parent_lifecycle,
     daemon_spawn_kwargs,
@@ -357,31 +358,44 @@ def _spawn_existing(log_full_func=None):
 
 
 def _download_with_progress(url, dest_path, log_func, desc):
-    """청크 단위 분할 다운로드 및 콘솔에 친절한 진행률 출력."""
-    temp_dest = dest_path + ".tmp"
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube"})
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            total_size = int(resp.headers.get("content-length", 0))
-            downloaded = 0
-            with open(temp_dest, "wb") as f:
-                while True:
-                    chunk = resp.read(1024 * 1024)  # 1MB
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size > 0:
-                        pct = int(downloaded / total_size * 100)
-                        log_func(f"{desc}... {pct}%", True, False)
+    """청크 단위 분할 다운로드 및 콘솔에 친절한 진행률 출력.
+
+    ProgressBar를 사용하여 TUI 상태 줄 갱신형 + F12 갱신형으로 진행률 기록.
+    """
+    with ProgressBar(component=desc, log_func=log_func) as bar:
+        bar.start()
+        temp_dest = dest_path + ".tmp"
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                # Set per-read timeout
+                try:
+                    sock = resp.fp.raw._sock
+                    if sock is not None:
+                        sock.settimeout(30.0)
+                except AttributeError:
+                    pass
+
+                total_size = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+                with open(temp_dest, "wb") as f:
+                    while True:
+                        chunk = resp.read(1024 * 1024)  # 1MB
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        bar.update(downloaded, total_size)
+
+                if os.path.exists(temp_dest):
+                    shutil.move(temp_dest, dest_path)
+                bar.finish("completed")
+        finally:
             if os.path.exists(temp_dest):
-                shutil.move(temp_dest, dest_path)
-    finally:
-        if os.path.exists(temp_dest):
-            try:
-                os.remove(temp_dest)
-            except Exception:
-                pass
+                try:
+                    os.remove(temp_dest)
+                except Exception:
+                    pass
 
 
 def _prewarm_lock_path():

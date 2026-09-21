@@ -142,10 +142,11 @@ class Verifier:
         if spec.type == ComponentType.PYTHON_PKG:
             return cls.verify_python_pkg(spec, install_path)
         elif spec.type == ComponentType.BINARY:
-            # 바이너리 경로 계산
-            binary_path = install_path
-            if install_path.is_dir():
-                binary_path = install_path / spec.name
+            # 바이너리 경로 계산 - install_rel_path 사용 (예: "node/bin/node", "ffmpeg/bin/ffmpeg")
+            if install_path.is_dir() and spec.install_rel_path:
+                binary_path = install_path.parent / spec.install_rel_path
+            else:
+                binary_path = install_path
             return cls.verify_binary(spec, binary_path)
         elif spec.type == ComponentType.SERVER:
             return cls.verify_bgutil(spec, install_path)

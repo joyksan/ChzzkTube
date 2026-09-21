@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import asyncio
+import json
+import os
 import time
+import urllib.error
+import urllib.request
 import zipfile
 import tarfile
 import tempfile
@@ -24,7 +28,7 @@ from chzzktube.infra.provisioning.downloader import ParallelDownloader, Download
 from chzzktube.infra.provisioning.verifier import Verifier
 from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
 import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_component
+from chzzktube.core.log_emitter import emit_component, emit_progress
 
 
 @dataclass
@@ -59,21 +63,132 @@ class ProvisioningManager:
         self.manifest = ProvisionManifest.load(self.base_dir)
         self.log = log_func
         self._downloader = ParallelDownloader(progress_cb=self._on_progress)
+        self._active_progress: dict[str, dict] = {}  # component -> {downloaded, total, speed, eta}
 
     def _emit(self, stage, status, scope, msg, is_status=False, is_error=False):
-        """raw_log 버스 단일 경유."""
+        """raw_log 버스 단일 경유 — 발행자만 raw_log.raw() 호출 (이중 적재 방지)."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
-        if self.log:
-            self.log(evt)
         raw_log.raw("provisioning", evt, to_tui=is_status, is_error=is_error)
 
-    async def _on_progress(self, component: str, downloaded: int, total: int):
-        """다운로드 진행률 하트비트 (무페이로드 아님 — TUI 상태용)."""
-        if total > 0:
-            pct = int(downloaded / total * 100)
-            mb = downloaded // (1024 * 1024)
-            self._emit("DEPS", "RUN", component.upper(),
-                       f"downloading... {mb}MB ({pct}%)", is_status=True)
+    async def _on_progress(self, component: str, downloaded: int, total: int, speed_bps: float = 0.0, eta_sec: float = 0.0):
+        """다운로드 진행률 하트비트 — TUI: 컴포넌트별 개별 갱신형 라인, F12: 개별 누적."""
+        if total <= 0:
+            return
+
+        pct = int(downloaded / total * 100)
+        downloaded_mb = downloaded / (1024 * 1024)
+        total_mb = total / (1024 * 1024)
+
+        speed_str = self._format_speed(speed_bps)
+        eta_str = self._format_eta(eta_sec)
+
+        # 개별 진행 저장
+        self._active_progress[component] = {
+            "pct": pct,
+            "downloaded_mb": downloaded_mb,
+            "total_mb": total_mb,
+            "speed": speed_str,
+            "eta": eta_str,
+            "state": "running",
+        }
+
+        # 진행률 메시지: §3.5-3.6 포맷
+        progress_msg = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
+        if eta_str:
+            progress_msg += f" ETA {eta_str}"
+
+        # 1. TUI: 컴포넌트별 갱신형 라인 (component_id로 추적, is_progress=True)
+        tui_msg = self._fmt_progress(pct, speed_str, progress_msg)
+        self.log(
+            emit_component("DEPS", "RUN", component.upper(), tui_msg),
+            is_status=False,
+            is_error=False,
+            component_id=f"deps_{component}",
+            is_progress=True,
+        )
+
+        # 2. F12: 개별 진행 (누적, 타임스탬프 포함) — 동일 포맷
+        event = emit_progress(
+            stage="DEPS",
+            status="RUN",
+            scope=component.upper(),
+            msg=self._fmt_progress(pct, speed_str, progress_msg),
+            speed=speed_str,
+            pct=pct,
+            bar_frac=pct / 100.0,
+            is_status=False,  # F12에 누적
+            is_error=False,
+        )
+        raw_log.raw("provisioning", event, to_tui=False, is_error=False)
+
+    @staticmethod
+    def _format_speed(bps: float) -> str:
+        if bps >= 1024 * 1024:
+            return f"{bps / (1024 * 1024):.1f} MB/s"
+        elif bps >= 1024:
+            return f"{bps / 1024:.1f} KB/s"
+        elif bps > 0:
+            return f"{bps:.0f} B/s"
+        return ""
+
+    @staticmethod
+    def _format_eta(seconds: float) -> str:
+        if seconds < 60:
+            return f"{int(seconds)}s"
+        elif seconds < 3600:
+            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
+        else:
+            return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
+
+    @staticmethod
+    def _fmt_progress(pct: int, speed: str, msg: str = "") -> str:
+        """§3.5-3.6 진행률 포맷: PCT(3자리 우측) · SPEED(8자리 우측) [GAUGE 10블록] · msg"""
+        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+        speed_str = f" · {speed:>8}" if speed else " ·        "
+        msg_str = f" · {msg}" if msg else ""
+        return f"{pct:3d}%{speed_str} [{bar}]{msg_str}"
+
+    def _emit_f12_progress(self, component: str, pct: int, state: str, msg: str = "", speed: str = ""):
+        """F12에 개별 진행/완료/실패 상태 갱신형 출력 (각각 별도 줄)."""
+        scope = component.upper()
+        status = "OK" if state == "completed" else "FAIL" if state == "failed" else "RUN"
+
+        full_msg = self._fmt_progress(pct, speed, msg)
+
+        event = emit_progress(
+            stage="DEPS",
+            status=status,
+            scope=scope,
+            msg=full_msg,
+            speed=speed,
+            pct=pct,
+            bar_frac=pct / 100.0,
+            is_status=True,  # F12 갱신형 (각각 별도 줄)
+            is_error=(state == "failed"),
+        )
+        # F12에만 보냄 (to_tui=False로 TUI 상태 줄 보호)
+        raw_log.raw("provisioning", event, to_tui=False, is_error=(state == "failed"))
+
+    def _emit_f12_summary(self, total: int, ok: int, failed: int):
+        """F12 마지막 줄: 완료/실패 요약 (갱신형, component_id로 추적)."""
+        if failed > 0:
+            msg = f"completed {ok}/{total} failed {failed} see f12"
+        else:
+            msg = f"completed {ok}/{total}"
+        
+        event = emit_progress(
+            stage="DEPS",
+            status="OK" if failed == 0 else "WARN",
+            scope="SUMMARY",
+            msg=msg,
+            speed="",
+            pct=100,
+            bar_frac=1.0,
+            is_status=True,  # F12 갱신형 (component_id로 같은 줄 갱신)
+            is_error=(failed > 0),
+        )
+        # component_id로 같은 줄 갱신
+        raw_log.raw("provisioning", event, to_tui=False, is_error=(failed > 0))
 
     # ── 1. Resolve ──────────────────────────────────────────────
     async def resolve(self, stale_only: bool = False, channel: str = "stable") -> list[ProvisionPlan]:
@@ -117,81 +232,156 @@ class ProvisioningManager:
         for mirror in sorted(spec.mirrors, key=lambda m: m.priority):
             try:
                 if mirror.name == "pypi":
-                    return await self._fetch_from_pypi(spec, mirror)
+                    result = await self._fetch_from_pypi(spec, mirror)
                 elif "github" in mirror.name:
-                    return await self._fetch_from_github(spec, mirror)
+                    result = await self._fetch_from_github(spec, mirror)
                 elif mirror.name == "nodejs.org":
-                    return await self._fetch_from_nodejs(spec, mirror)
+                    result = await self._fetch_from_nodejs(spec, mirror)
+                else:
+                    result = None
+
+                if result[0] and result[1]:
+                    return result
             except Exception:
-                continue
+                pass
         return None, None, None, None, None
+
+    async def _fetch_json(self, url: str, *, headers: Optional[dict[str, str]] = None):
+        """Worker thread에서 동기 urllib JSON 요청을 수행한다."""
+        return await asyncio.to_thread(self._fetch_json_sync, url, headers)
+
+    @staticmethod
+    def _fetch_json_sync(
+        url: str, headers: Optional[dict[str, str]] = None
+    ) -> Optional[dict | list]:
+        request = urllib.request.Request(url, headers=headers or {})
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, urllib.error.HTTPError):
+            return None
 
     async def _fetch_from_pypi(self, spec, mirror):
         """PyPI JSON API에서 최신 버전 + whl URL."""
-        import httpx
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(mirror.url_template.format(pkg=spec.name))
-            data = resp.json()
-            version = data["info"]["version"]
-            sha256 = None
-            
-            for f in data.get("releases", {}).get(version, []):
-                fn = f["filename"].lower()
-                if "py3-none-any" in fn and "whl" in fn:
-                    sha256 = f.get("digests", {}).get("sha256")
-                    return version, f["url"], sha256, "pypi", "whl"
-            
-            for f in data.get("releases", {}).get(version, []):
-                if "whl" in f["filename"].lower():
-                    sha256 = f.get("digests", {}).get("sha256")
-                    return version, f["url"], sha256, "pypi", "whl"
-        
+        data = await self._fetch_json(
+            mirror.url_template.format(pkg=spec.name)
+        )
+        if not data:
+            return None, None, None, None, None
+        version = data.get("info", {}).get("version")
+        sha256 = None
+
+        for f in data.get("releases", {}).get(version, []):
+            fn = f["filename"].lower()
+            if "py3-none-any" in fn and "whl" in fn:
+                sha256 = f.get("digests", {}).get("sha256")
+                return version, f["url"], sha256, "pypi", "whl"
+
+        for f in data.get("releases", {}).get(version, []):
+            if "whl" in f["filename"].lower():
+                sha256 = f.get("digests", {}).get("sha256")
+                return version, f["url"], sha256, "pypi", "whl"
+
         return None, None, None, None, None
+
+    @staticmethod
+    def _archive_type_from(filename: str, spec: ComponentSpec) -> str:
+        """아카이브 파일명 확장자로 해제 방법 판정 (하드코딩 금지).
+
+        bgutil 서버는 npm 소스 구조이므로 항상 server로 간주하고(해제 후 npm 빌드),
+        그 외는 .zip / .tar.gz / .tar.xz 확장자를 그대로 반환한다.
+        """
+        if spec.name == "bgutil-ytdlp-pot-provider":
+            return "server"
+        low = (filename or "").lower()
+        if low.endswith(".tar.gz") or low.endswith(".tgz"):
+            return "tar.gz"
+        if low.endswith(".tar.xz"):
+            return "tar.xz"
+        if low.endswith(".whl"):
+            return "whl"
+        return "zip"
 
     async def _fetch_from_github(self, spec, mirror):
         """GitHub Releases API에서 최신 릴리스 asset 선택."""
-        import httpx
-        async with httpx.AsyncClient(timeout=15) as client:
-            if spec.name == "bgutil-ytdlp-pot-provider":
-                api_url = f"https://api.github.com/repos/Brainicism/{spec.name}/releases/latest"
-                resp = await client.get(api_url)
-                data = resp.json()
-                tag_name = data["tag_name"]
-                assets = filter_assets(data.get("assets", []), spec)
-                if assets:
-                    asset = assets[0]
-                    return tag_name, asset["browser_download_url"], None, "github", "server"
-            else:
-                resp = await client.get(mirror.url_template)
-                data = resp.json()
-                tag_name = data["tag_name"]
-                assets = filter_assets(data.get("assets", []), spec)
-                if assets:
-                    asset = assets[0]
-                    return tag_name, asset["browser_download_url"], None, mirror.name, "zip"
-        
+        if spec.name == "bgutil-ytdlp-pot-provider":
+            api_url = (
+                "https://api.github.com/repos/Brainicism/"
+                f"{spec.name}/releases/latest"
+            )
+        else:
+            api_url = mirror.url_template
+        data = await self._fetch_json(
+            api_url,
+            headers={"User-Agent": "ChzzkTube-Provisioner/1.0"},
+        )
+        if not data:
+            return None, None, None, None, None
+        tag_name = data.get("tag_name")
+        assets = filter_assets(data.get("assets", []), spec)
+        if tag_name and assets:
+            asset = assets[0]
+            archive_type = self._archive_type_from(asset["name"], spec)
+            return tag_name, asset["browser_download_url"], None, mirror.name, archive_type
+
         return None, None, None, None, None
 
     async def _fetch_from_nodejs(self, spec, mirror):
-        """nodejs.org dist index에서 latest LTS."""
-        import httpx
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(mirror.url_template)
-            entries = resp.json()
-            ver = next(
-                (e.get("version") for e in entries
-                 if str(e.get("version", "")).startswith("v22.")),
-                None
-            )
-            if not ver:
-                ver = entries[0]["version"]
-            
-            from chzzktube.infra.node_provider import _platform_node_url
-            url = _platform_node_url(ver)
-            archive_type = "tar.gz" if "darwin" in url else "zip"
-            return ver, url, None, "nodejs.org", archive_type
-        
-        return None, None, None, None, None
+        """nodejs.org dist index에서 latest LTS + SHA256 체크섬 조회."""
+        data = await self._fetch_json(mirror.url_template)
+        if not data:
+            return None, None, None, None, None
+        entries = data
+        ver = next(
+            (e.get("version") for e in entries if str(e.get("version", "")).startswith("v22.")),
+            None,
+        )
+        if not ver:
+            ver = entries[0]["version"]
+
+        from chzzktube.infra.node_provider import _platform_node_url
+        url = _platform_node_url(ver)
+        archive_type = "tar.gz" if "darwin" in url else "zip"
+
+        # SHA256 체크섬 조회 (SHASUMS256.txt에서 해당 파일 해시 추출)
+        sha256 = await self._fetch_nodejs_sha256(ver, url)
+        return ver, url, sha256, "nodejs.org", archive_type
+
+    async def _fetch_nodejs_sha256(self, version: str, download_url: str) -> Optional[str]:
+        """nodejs.org SHASUMS256.txt에서 특정 버전/플랫폼 파일의 SHA256 조회."""
+        # SHASUMS256.txt URL 구성
+        shasums_url = f"https://nodejs.org/dist/{version}/SHASUMS256.txt"
+        try:
+            shasums_text = await self._fetch_text(shasums_url)
+            if not shasums_text:
+                return None
+            # 파일명 추출 (URL에서)
+            filename = download_url.split("/")[-1]
+            # SHASUMS256.txt에서 해당 파일명 찾기
+            for line in shasums_text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                # 형식: "sha256_hash  filename"
+                parts = line.split()
+                if len(parts) >= 2 and parts[1] == filename:
+                    return parts[0]
+        except Exception:
+            pass
+        return None
+
+    async def _fetch_text(self, url: str) -> Optional[str]:
+        """Worker thread에서 동기 urllib 텍스트 요청을 수행한다."""
+        return await asyncio.to_thread(self._fetch_text_sync, url)
+
+    @staticmethod
+    def _fetch_text_sync(url: str) -> Optional[str]:
+        request = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube-Provisioner/1.0"})
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                return response.read().decode("utf-8")
+        except (OSError, UnicodeDecodeError, urllib.error.HTTPError):
+            return None
 
     # ── 2. Provision ────────────────────────────────────────────
     async def provision(self, plans: list[ProvisionPlan]) -> list[ProvisionResult]:
@@ -214,19 +404,28 @@ class ProvisioningManager:
         results = await self._downloader.download_all(tasks)
 
         final_results = []
+        ok_count = 0
+        fail_count = 0
         for plan, dl_result in zip(plans, results):
             if not dl_result.success:
-                self._emit("DEPS", "FAIL", plan.component.upper(),
-                           f"download failed: {dl_result.error[:100]}")
+                # 다운로드 실패: TUI 진행 라인 실패로 마무리, F12 실패 출력
+                self._finalize_progress_line(plan.component, False, f"download failed: {dl_result.error[:50]}")
+                self._emit_f12_progress(plan.component, 0, "failed", msg=f"download failed: {dl_result.error[:50]}")
+                self._emit("DEPS", "FAIL", plan.component.upper(), f"download failed: {dl_result.error[:100]}")
+                fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"download failed: {dl_result.error}"
                 ))
                 continue
 
             installed_path = await self._extract_and_install(plan, dl_result.task.dest, dl_result.sha256 or "")
+
             if isinstance(installed_path, str):
-                self._emit("DEPS", "FAIL", plan.component.upper(),
-                           f"install failed: {installed_path}")
+                # 설치 실패
+                self._finalize_progress_line(plan.component, False, f"install failed: {installed_path[:50]}")
+                self._emit_f12_progress(plan.component, 0, "failed", msg=f"install failed: {installed_path[:50]}")
+                self._emit("DEPS", "FAIL", plan.component.upper(), f"install failed: {installed_path}")
+                fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"install failed: {installed_path}"
                 ))
@@ -234,25 +433,87 @@ class ProvisioningManager:
 
             verify_result = Verifier.verify(plan.spec, installed_path)
             if not verify_result.success:
-                self._emit("DEPS", "FAIL", plan.component.upper(),
-                           f"verification failed: {verify_result.error}")
+                # 검증 실패
+                self._finalize_progress_line(plan.component, False, f"verification failed: {verify_result.error[:50]}")
+                self._emit_f12_progress(plan.component, 0, "failed", msg=f"verification failed: {verify_result.error[:50]}")
+                self._emit("DEPS", "FAIL", plan.component.upper(), f"verification failed: {verify_result.error}")
+                fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"verification failed: {verify_result.error}"
                 ))
                 continue
 
-            self._emit("DEPS", "OK", plan.component.upper(),
-                       f"{plan.component} {'updated' if plan.is_update else 'installed'} → {verify_result.version}")
+            # 성공: TUI 진행 라인 100% 완료로 마무리, F12 완료 출력
+            self._finalize_progress_line(plan.component, True, f"→ {verify_result.version}")
+            self._emit_f12_progress(plan.component, 100, "completed", msg=f"→ {verify_result.version}")
+            self._emit("DEPS", "OK", plan.component.upper(), f"{plan.component} {'updated' if plan.is_update else 'installed'} → {verify_result.version}")
+            ok_count += 1
             final_results.append(ProvisionResult(
                 plan.component, True, version=verify_result.version,
                 action="updated" if plan.is_update else "installed",
                 sha256=dl_result.sha256 or "",
             ))
 
+        # 마지막: F12 요약 줄 출력
+        self._emit_f12_summary(len(plans), ok_count, fail_count)
+
         return final_results
+
+    def _finalize_progress_line(self, component: str, success: bool, msg: str):
+        """TUI 진행 라인을 완료/실패 상태로 마무리 (is_progress=False로 히스토리 확정)."""
+        pct = 100 if success else 0
+        bar = "█" * 10 if success else "░" * 10
+        status = "completed" if success else "failed"
+        tui_msg = self._fmt_progress(pct, "", f"{status} {msg}")
+        
+        # is_progress=False로 호출하면 진행 라인 확정 (히스토리로 남음)
+        self.log(
+            emit_component("DEPS", "OK" if success else "FAIL", component.upper(), tui_msg),
+            is_status=False,
+            is_error=not success,
+            component_id=f"deps_{component}",
+            is_progress=False,  # 진행 라인 확정
+        )
+        # 진행 라인 추적에서 제거
+        self._active_progress.pop(component, None)
+
+    def _ensure_nodejs_npm_links(self, node_dir: Path):
+        """Node.js 설치 후 npm/npx 심볼릭 링크 보장."""
+        try:
+            bin_dir = node_dir / "bin"
+            lib_npm = node_dir / "lib" / "node_modules" / "npm"
+            if not lib_npm.exists():
+                return
+            
+            npm_cli = lib_npm / "bin" / "npm-cli.js"
+            npx_cli = lib_npm / "bin" / "npx-cli.js"
+            
+            # npm symlink
+            npm_link = bin_dir / "npm"
+            if npm_cli.exists() and not npm_link.exists():
+                npm_link.symlink_to(os.path.relpath(npm_cli, bin_dir))
+            
+            # npx symlink
+            npx_link = bin_dir / "npx"
+            if npx_cli.exists() and not npx_link.exists():
+                npx_link.symlink_to(os.path.relpath(npx_cli, bin_dir))
+                
+            # 실행 권한 보장
+            for link in (npm_link, npx_link):
+                if link.exists() or link.is_symlink():
+                    try:
+                        os.chmod(link, 0o755)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
 
     async def _extract_and_install(self, plan: ProvisionPlan, archive: Path, sha256: str) -> Path:
         """아카이브 추출/설치 수행."""
+        # stdlib-only: zip/tar.gz/tar.xz/whl/server만 지원, 7z 등 외부 의존성 차단
+        if plan.archive_type not in ("zip", "tar.gz", "tar.xz", "whl", "server"):
+            return f"unsupported archive type: {plan.archive_type} — stdlib-only"
+
         try:
             if plan.archive_type == "whl":
                 from chzzktube.infra.updater import _extract_pylib_whl
@@ -276,16 +537,39 @@ class ProvisioningManager:
                 with tempfile.TemporaryDirectory(prefix=f"cz_{plan.component}_") as td:
                     with tarfile.open(archive, "r:gz") as tar:
                         tar.extractall(td)
+                    # 단일 루트 디렉토리 승격 (Node.js tarball 등)
+                    entries = os.listdir(td)
+                    if len(entries) == 1 and os.path.isdir(os.path.join(td, entries[0])):
+                        inner = os.path.join(td, entries[0])
+                        dest = self.base_dir / plan.component
+                        if dest.exists():
+                            shutil.rmtree(dest, ignore_errors=True)
+                        shutil.move(inner, str(dest))
+                        # Node.js: npm 심볼릭 링크 보장
+                        if plan.component == "node":
+                            self._ensure_nodejs_npm_links(dest)
+                        return dest
                     dest = self.base_dir / plan.component
                     if dest.exists():
                         shutil.rmtree(dest, ignore_errors=True)
                     shutil.move(td, str(dest))
+                    if plan.component == "node":
+                        self._ensure_nodejs_npm_links(dest)
                     return dest
 
             elif plan.archive_type == "tar.xz":
                 with tempfile.TemporaryDirectory(prefix=f"cz_{plan.component}_") as td:
                     with tarfile.open(archive, "r:xz") as tar:
                         tar.extractall(td, filter="data")
+                    # 단일 루트 디렉토리 승격
+                    entries = os.listdir(td)
+                    if len(entries) == 1 and os.path.isdir(os.path.join(td, entries[0])):
+                        inner = os.path.join(td, entries[0])
+                        dest = self.base_dir / plan.component
+                        if dest.exists():
+                            shutil.rmtree(dest, ignore_errors=True)
+                        shutil.move(inner, str(dest))
+                        return dest
                     dest = self.base_dir / plan.component
                     if dest.exists():
                         shutil.rmtree(dest, ignore_errors=True)

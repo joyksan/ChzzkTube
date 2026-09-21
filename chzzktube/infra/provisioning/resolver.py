@@ -123,18 +123,45 @@ def get_platform_asset_filters() -> tuple[str, ...]:
         return ("linux", "x86_64", "amd64")
 
 
+# [stdlib-only] zipfile로 해제 불가능한 아카이브 — 수급 후보에서 완전 배제.
+# py7zr 등 외부 의존성을 수급 계층(L0)에 들이지 않기 위한 명시적 경계.
+ARCHIVE_UNSUPPORTED_EXT = (".7z", ".rar", ".xz", ".tar.zst", ".zst")
+# 선호 순위: 앞일수록 우선. .zip 최우선, 확장자 없음(원시 바이너리) 차선.
+ARCHIVE_PREFERRED_EXT = (".zip", "")
+
+
 def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
-    """플랫폼 및 스펙 필터에 맞는 asset만 선별."""
+    """플랫폼·스펙 필터 + 아카이브 확장자 선호 정렬로 asset 선별.
+
+    [stdlib-only 원칙] 수급 계층(L0)은 외부 압축 라이브러리에 의존하지 않는다.
+    해제 가능한 형식(.zip)만 유효 후보로 남기고, 파싱 불가 형식(.7z 등)은
+    명시적으로 배제한다. 선정된 asset은 zipfile로 해제 가능해야 한다.
+
+    [정렬 규칙] GyanD 릴리즈는 7z가 zip보다 파일명 앞에 오므로, 단순 목록
+    순서(assets[0])로 뽑으면 7z를 낚아채 BadZipFile로 귀결된다.
+    → .zip 최우선, 그다음 확장자 없는 원시 바이너리. 해제 불가 형식 제외.
+    """
     platform_filters = get_platform_asset_filters()
     spec_filters = spec.asset_filters
     all_filters = platform_filters + spec_filters
 
-    filtered = []
+    candidates = []
     for asset in assets:
         name = asset.get("name", "").lower()
-        if any(f in name for f in all_filters):
-            # 제외 키워드
-            if any(x in name for x in ("debug", "symbols", "pdb", ".sig", ".asc")):
-                continue
-            filtered.append(asset)
-    return filtered
+        if not any(f in name for f in all_filters):
+            continue
+        # 제외 키워드
+        if any(x in name for x in ("debug", "symbols", "pdb", ".sig", ".asc")):
+            continue
+        # [stdlib-only] zipfile로 해제 불가능한 아카이브 — 후보에서 완전 배제
+        if any(name.endswith(ext) for ext in ARCHIVE_UNSUPPORTED_EXT):
+            continue
+        rank = next(
+            (i for i, ext in enumerate(ARCHIVE_PREFERRED_EXT) if name.endswith(ext)),
+            len(ARCHIVE_PREFERRED_EXT),
+        )
+        candidates.append((rank, asset))
+
+    # 안정 정렬 — 동순위는 원래 순서 보존
+    candidates.sort(key=lambda pair: pair[0])
+    return [asset for _, asset in candidates]
