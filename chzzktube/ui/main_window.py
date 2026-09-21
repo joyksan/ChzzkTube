@@ -890,12 +890,12 @@ class MainWindow(QMainWindow):
 
     def _on_update_check_done(self, stale):
         if stale:
-            summary = ", ".join(f"{label} {cur}→{latest}" for label, _, cur, latest in stale)
-            self.append_concise_log(
-                log_emitter.emit_event("DEPS", "WARN", "-", f"update — {summary}"),
-                is_status=False,
-                is_error=False,
-            )
+            for label, _, cur, latest in stale:
+                self.append_concise_log(
+                    log_emitter.emit_event("DEPS", "WARN", label.upper(), f"update {cur}→{latest}"),
+                    is_status=False,
+                    is_error=False,
+                )
             self._stale_updates = True
         else:
             self._stale_updates = False
@@ -1230,14 +1230,21 @@ class MainWindow(QMainWindow):
     def _mirror_event_full(self, event, is_status=False):
         if isinstance(event, LogEvent):
             line = event.msg if event.msg else ""
+            self._last_full_event = event  # component_id 추출용 저장
+            component_id = getattr(event, 'component_id', None) or getattr(event, 'scope', None)
         else:
             line = str(event)
+            component_id = None
         if is_status:
             self._last_status_line = line
-        self._mirror_full_log(line, is_status)
+        try:
+            self._mirror_full_log(line, is_status, component_id=component_id)
+        except TypeError:
+            # 하위 호환: component_id 인자 없는 구버전 mock 호출
+            self._mirror_full_log(line, is_status)
 
-    def _mirror_full_log(self, msg, is_status=False):
-        msg = str(msg)
+    def _mirror_full_log(self, line, is_status=False, component_id: str = None):
+        msg = str(line)
         if len(msg) > 4096:
             msg = msg[:4096] + "…"
         ts = time.strftime("%H:%M:%S")
@@ -1250,9 +1257,13 @@ class MainWindow(QMainWindow):
             self._full_log_win_n = len(self._full_log_buf)
         if win_visible:
             try:
-                win.append(stamped, is_status)
-            except (AttributeError, RuntimeError):
-                pass
+                win.append(stamped, is_status, component_id)
+            except (AttributeError, RuntimeError, TypeError):
+                # 하위 호환: component_id 인자 없는 구버전 append 호출
+                try:
+                    win.append(stamped, is_status)
+                except (AttributeError, RuntimeError):
+                    pass
 
     def append_concise_log(self, msg, is_status=False, is_error=False, fg_color=None):
         if isinstance(msg, LogEvent):

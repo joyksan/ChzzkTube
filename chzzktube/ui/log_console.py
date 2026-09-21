@@ -48,7 +48,10 @@ class ConciseLogConsole:
         self._budget_key = None
         # [리플로우 대비] 원본 로그 버퍼 — msg는 잘리지 않은 전체를 보관하고,
         # 화면에는 렌더 시점 예산으로 잘라서 그린다. 창 폭 변경 시 재구성 루트.
-        self._buffer = deque(maxlen=4096)  # list[dict] = {msg, is_status, is_error, fg_color}
+        # list[dict] = {msg, is_status, is_error, fg_color, no_wrap, component_id, is_progress}
+        self._buffer = deque(maxlen=4096)
+        # 진행률 갱신형 라인 추적: component_id -> buffer index
+        self._progress_lines: dict[str, int] = {}
 
     def _sync_budget(self):
         """로그를 찍는 시점 기준으로 트리 줄바꿈 예산을 재동기화한다.
@@ -74,7 +77,8 @@ class ConciseLogConsole:
             if self._buffer:
                 self.reflow()
 
-    def append(self, msg, is_status=False, is_error=False, fg_color=None, no_wrap=False):
+    def append(self, msg, is_status=False, is_error=False, fg_color=None, no_wrap=False, 
+           component_id: str = None, is_progress: bool = False):
         """빈 줄 생성 차단 및 정밀 문단 삭제 파이프라인.
 
         [진행률 갱신형 계약] 진행률/진행 중 상태 로그는 반드시 is_status=True로
@@ -83,16 +87,28 @@ class ConciseLogConsole:
         매 틱 새 줄이 쌓여 '한 행 = 한 정보' 규칙을 위반한다. DL/LIVE 틱,
         DEPS 다운로드 %, PO 서버 진행 등 모든 반복 로그가 해당.
 
+        [다중 컴포넌트 진행률 갱신형] component_id와 is_progress=True로 호출하면
+        해당 컴포넌트의 기존 진행 라인을 갱신한다 (여러 컴포넌트 동시 갱신형 지원).
+        이 라인은 is_status 로그에 의해 지워지지 않으며, 완료 시 is_progress=False로
+        호출하면 히스토리로 확정된다.
+
         [줄바꿈 계약] 줄바꿈 결정은 발행자(raw() 경유 LogEvent → 구독자) 측의
         no_wrap 플래그를 그대로 따르며, 렌더 레이어에서 문자열 내용을 다시
         뜯어 판단하지 않는다(정규식 라우팅 제로). LogEvent 경유분(컬럼 포맷·
         프리포맷)은 True, 큐 호환용 bare 문자열은 False다.
         """
         self._sync_budget()  # 현재 뷰포트/폰트 기준 예산 보장 — 자동랩 침범 방지
+        
+        # 진행률 갱신형: 기존 라인 갱신
+        if component_id and is_progress:
+            self._update_progress_line(component_id, msg, is_error, fg_color, no_wrap)
+            return
+        
         # [리플로우 대비] 원본 로그를 버퍼에 보관 (렌더 시점 절단을 위해 잘리지 않음)
         self._buffer.append(
             {"msg": msg, "is_status": is_status, "is_error": is_error,
-             "fg_color": fg_color, "no_wrap": bool(no_wrap)}
+             "fg_color": fg_color, "no_wrap": bool(no_wrap),
+             "component_id": component_id, "is_progress": is_progress}
         )
         doc = self.te.document()
         cursor = self.te.textCursor()
@@ -166,6 +182,36 @@ class ConciseLogConsole:
         self.te.moveCursor(QTextCursor.MoveOperation.End)
         sb = self.te.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    def _update_progress_line(self, component_id: str, msg: str, is_error: bool, fg_color: str, no_wrap: bool):
+        """특정 컴포넌트의 진행률 라인을 갱신 (buffer 교체 + reflow)."""
+        idx = self._progress_lines.get(component_id)
+        if idx is not None and 0 <= idx < len(self._buffer):
+            # 기존 버퍼 엔트리 갱신
+            self._buffer[idx] = {
+                "msg": msg,
+                "is_status": False,
+                "is_error": is_error,
+                "fg_color": fg_color,
+                "no_wrap": bool(no_wrap),
+                "component_id": component_id,
+                "is_progress": True,
+            }
+        else:
+            # 새 진행 라인 추가
+            self._buffer.append({
+                "msg": msg,
+                "is_status": False,
+                "is_error": is_error,
+                "fg_color": fg_color,
+                "no_wrap": bool(no_wrap),
+                "component_id": component_id,
+                "is_progress": True,
+            })
+            self._progress_lines[component_id] = len(self._buffer) - 1
+        
+        # 전체 reflow로 갱신 반영
+        self.reflow()
 
     def add_task_separator(self):
         """하나의 다운로드 작업이 완전히 종료되었을 때만 1줄 여백 추가.
@@ -290,6 +336,7 @@ class ConciseLogConsole:
         """창 폭 변경 시 전체 재렌더링 — 버퍼의 원본 로그를 새 예산으로 다시 그린다.
 
         상태 로그는 연속 그룹의 마지막 것만 그려 Single-Line In-Place를 유지한다.
+        진행률 라인(is_progress=True)은 모두 보존한다.
         """
         buf = self._buffer
         if not buf:
@@ -300,17 +347,21 @@ class ConciseLogConsole:
         self._pending_blank = False
         self._just_removed_status = False
 
-        # 상태 로그 연속 그룹의 마지막만 렌더링 대상으로 추려낸다
+        # 상태 로그 연속 그룹의 마지막만, 진행률 라인은 모두 렌더링 대상으로 추려낸다
         entries = []
         i = 0
         while i < len(buf):
             e = buf[i]
-            if e["is_status"]:
+            if e.get("is_status"):
                 j = i
-                while j + 1 < len(buf) and buf[j + 1]["is_status"]:
+                while j + 1 < len(buf) and buf[j + 1].get("is_status"):
                     j += 1
                 entries.append(buf[j])
                 i = j + 1
+            elif e.get("is_progress"):
+                # 진행률 라인은 모두 포함
+                entries.append(e)
+                i += 1
             else:
                 entries.append(e)
                 i += 1
@@ -322,7 +373,7 @@ class ConciseLogConsole:
             if idx > 0 or not doc.isEmpty():
                 cursor.insertBlock()
             self._insert_clamped(
-                cursor, e["msg"], e["is_status"], e["is_error"], e["fg_color"],
+                cursor, e["msg"], e.get("is_status", False), e.get("is_error", False), e.get("fg_color"),
                 e.get("no_wrap", False),
             )
 
