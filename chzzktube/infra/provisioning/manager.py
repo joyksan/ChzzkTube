@@ -185,7 +185,10 @@ class ProvisioningManager:
 
     @staticmethod
     def _format_speed(bps: float) -> str:
-        if bps >= 1024 * 1024:
+        """GB/s 승격으로 자릿수 폭주를 원천 차단"""
+        if bps >= 1024 * 1024 * 1024:
+            return f"{bps / (1024 * 1024 * 1024):.1f} GB/s"
+        elif bps >= 1024 * 1024:
             return f"{bps / (1024 * 1024):.1f} MB/s"
         elif bps >= 1024:
             return f"{bps / 1024:.1f} KB/s"
@@ -204,9 +207,13 @@ class ProvisioningManager:
 
     @staticmethod
     def _fmt_progress(pct: int, speed: str, msg: str = "") -> str:
-        """§3.5-3.6 진행률 포맷: PCT(3자리 우측) · SPEED(8자리 우측) [GAUGE 10블록] · msg"""
+        """§3.5-3.6 규격 엄수: PCT(3자리) · SPEED(10자리 고정) [GAUGE 10블록] · msg"""
         bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-        speed_str = f" · {speed:>8}" if speed else " ·        "
+        
+        # 속도가 있든 없든 정확히 10자리의 폭을 강제하여 [GAUGE]의 시작 위치를 완벽하게 세로 정렬!
+        speed_padded = f"{speed:>10}" if speed else " " * 10
+        speed_str = f" · {speed_padded}"
+        
         msg_str = f" · {msg}" if msg else ""
         return f"{pct:3d}%{speed_str} [{bar}]{msg_str}"
 
