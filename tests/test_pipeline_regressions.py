@@ -155,7 +155,7 @@ class _Win:
     def isVisible(self):
         return self._visible
 
-    def append(self, line, is_status=False):
+    def append(self, line, is_status=False, component_id=None):
         self.appends.append(line)
 
 
@@ -164,6 +164,8 @@ def test_mirror_full_log_index_advances_only_when_visible():
     m = SimpleNamespace(_full_log_buf=deque(maxlen=100), _full_log_win_n=0,
                         verbose_win=_Win(False))
     mirror(m, "hidden line")
+    # HANDOVER 3.7-3: F12 및 파일 로그는 to_tui 여부와 관계없이 전량 기록 —
+    # 창 닫힌 상태에서도 _full_log_buf에 누적된다. (진행 틱 포함)
     assert len(m._full_log_buf) == 1 and m._full_log_win_n == 0
 
     m.verbose_win = _Win(True)

@@ -183,11 +183,13 @@
 [03:17:20] DEPS │ OK   │ NODE │ [v22.23.2] verified
 [03:17:20] DEPS │ OK   │ POT  │ [running] port 4416
 [03:17:21] SYS  │ READY│ MAIN │ ready - input unlocked
-[03:17:22] ANAL │ RUN  │ YT   │ probing stream manifest...
-[03:17:22] ANAL │ OK   │ YT   │ [1080p30] analyzed · YTN · "news"
-[03:17:22] ANAL │ OK   │ YT   │ [H264/VP9/OPUS/AAC] streams isolated
-[03:17:23] DL   │ RUN  │ YT   │ [1080p30]  65% ·  12.4M/s [██████░░░░]
-[03:17:23] DL   │ RUN  │ YT   │ [1080p30] 100% ·   4.1M/s [██████████]
+[03:17:22] ANAL │ RUN  │ YT   │ analying... -> analyzing complete!
+[03:17:22] ANAL │ OK   │ YT   │ [제목] · [채널명]
+[03:17:22] ANAL │ OK   │ POT  │ [public] (또는 [gated: age\_limit=19], [members-only])
+[03:17:22] ANAL │ OK   │ YTDL │ [1080p60] [av01.0.08M.08] [3280k https] [29.88MiB]
+[03:17:22] ANAL │ OK   │ YTDL │ [opus] [160k https] [7.64MiB]
+[03:17:23] DL   │ RUN  │ YT   │   65% ·  12.4M/s [██████░░░░]
+[03:17:23] DL   │ RUN  │ YT   │  100% ·   4.1M/s [██████████]
 [03:17:24] MERG │ RUN  │ FFMP │ muxing audio and video streams...
 [03:17:25] DL   │ OK   │ YT   │ saved · video.mp4 (11.56MB)
 ```
@@ -717,7 +719,8 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 > v3.8.0(2026-09-20) — 단독 환경 격리·입력 게이트·Layer 3 POT 수리·TUI 정제: 시스템 PATH(`shutil.which`)·OS 패키지 매니저(brew/apt) 참조 전면 철폐(전용 `writable_base()`·`.pylib` 단일 경로), URL 검증 게이트 2중 방어(비URL 배치 차단), `POTManager.instance()` 부재 결함을 워커 안전 L0/L1 인프라 호출로 근본 수리 + 1080p 미달 승격 판정 신설, FAIL 단일 발행(finalizer)·중간 `.fNNN` 스트림 TUI 은닉·ANAL 마감 정갈 명세.
 > v3.8.1(2026-09-22) — 폴백 완전 제거·URL 검증 게이트·표준 에러 헬퍼·POT 상태 수정: 15초 강제 언락(`force_unlock`) 제거, `MediaController._is_valid_url()` 순수 게이트 신설, `emit_error_standard`/`emit_error_warn` 전면 도입, `staged` ≠ `ready` 상태 의미 명확화.
 > v3.8.2(2026-09-22) — Path Strategy Pattern으로 .pylib SSOT 완성: `config.pylib_overlay_path()` 단일 경로 리졸버로 Frozen/Dev 환경 분리 캡슐화, 호출부 `if is_frozen()` 분기 0건 달성, frozen 시 `writable_base()/.pylib`(`%LOCALAPPDATA%/ChzzkTube/.pylib` 또는 `~/.chzzktube/.pylib`) 사용.
-> v3.8.3(2026-09-22) — 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률: `httpx` 잔재 완전 제거(`ParallelDownloader`·PyPI/GitHub/nodejs 메타 패처를 `urllib`+`asyncio.to_thread`로 전환), `filter_assets` `.zip` 강제 선택·`.7z` 배제 + `archive_type` 화이트리스트 가드, FFmpeg 7.1 URL 교정, Verifier `install_rel_path` 판정, `ProgressBar` 신규(TUI 컴포넌트별 갱신형·F12 누적→갱신형·§3.5 포맷터), stale 요약 개별 줄화·집계 직렬 나열 제거.
+> v3.8.3(2026-09-22) — 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률: `httpx` 잔여 완전 제거(`ParallelDownloader`·PyPI/GitHub/nodejs 메타 패처를 `urllib`+`asyncio.to_thread`로 전환), `filter_assets` `.zip` 강제 선택·`.7z` 배제 + `archive_type` 화이트리스트 가드, FFmpeg 7.1 URL 교정, Verifier `install_rel_path` 판정, `ProgressBar` 신규(TUI 컴포넌트별 갱신형·F12 누적→갱신형·§3.5 포맷터), stale 요약 개별 줄화·집계 직렬 나열 제거.
+> v3.8.3-p1(2026-09-22) — 진행률 viewer 회귀 수리: `MainWindow` 브리지 슬롯(`_render_concise`/`_mirror_event_full`)이 `component_id`/`is_progress`를 유지하도록 교정, 진행 라인 완료 시 TUI 히스토리에 유지, F12/`_full_log_buf`에 진행 틱 전량 기록(is_status 여부와 무관). `raw_log.raw()` 단일 진입점이 `component_id`/`is_progress`를 전파하도록 확장. `tests/test_progress_integration.py` 신규 추가 (10개 케이스). (patch)
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)

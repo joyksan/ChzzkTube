@@ -1,4 +1,4 @@
-﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
+##### main.py - 메인 윈도우 및 앱 실행 진입점
 import os
 import platform
 import re
@@ -1299,13 +1299,13 @@ class MainWindow(QMainWindow):
             msg = msg[:4096] + "…"
         ts = time.strftime("%H:%M:%S")
         stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
-        if not is_status:
-            self._full_log_buf.append(stamped)
+        # HANDOVER 3.7-3: F12 및 파일 로그는 to_tui 여부와 관계없이 전량 기록.
+        # 진행 틱(is_status=True)도 파일에는 남겨야 한다 (파일·F12 전량 기록).
+        self._full_log_buf.append(stamped)
         win = getattr(self, "verbose_win", None)
         win_visible = win is not None and win.isVisible()
-        if not is_status and win_visible:
-            self._full_log_win_n = len(self._full_log_buf)
         if win_visible:
+            self._full_log_win_n = len(self._full_log_buf)
             try:
                 win.append(stamped, is_status, component_id)
             except (AttributeError, RuntimeError, TypeError):
