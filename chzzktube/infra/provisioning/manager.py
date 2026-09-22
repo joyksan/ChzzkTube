@@ -55,6 +55,51 @@ class ProvisionResult:
     sha256: str = ""
 
 
+# ── 아카이브 바이너리 구조 평탄화 헬퍼 (모듈 레벨 단독 함수) ───────────
+def _promote_extracted_binaries(temp_dir: str, target_dest: Path, component_name: str) -> Path:
+    """Homebrew Bottle의 중첩된 Cellar/bin 구조 속에서 바이너리를 색출해 target_dest/bin/으로 승격시킵니다.
+    초천재 병약 미소녀 해커의 미학이 담긴 무결점 경로 구출기랍니다.
+    """
+    td_path = Path(temp_dir)
+    target_bin_dir = target_dest / "bin"
+    target_bin_dir.mkdir(parents=True, exist_ok=True)
+
+    # 컴포넌트별 필수 바이너리 정의
+    targets = ("ffmpeg", "ffprobe") if component_name == "ffmpeg" else ("node", "npm")
+    found_bins = {}
+
+    for p in td_path.rglob("*"):
+        if p.is_file() and p.name.lower() in [t + (".exe" if os.name == "nt" else "") for t in targets]:
+            stem = p.name.replace(".exe", "").lower()
+            if stem not in found_bins:
+                found_bins[stem] = p
+
+    # 바이너리가 색출되었다면 target_dest/bin/ 직하위로 평탄화 복사
+    if "ffmpeg" in found_bins or "node" in found_bins:
+        for stem, src_path in found_bins.items():
+            dest_file = target_bin_dir / src_path.name
+            if dest_file.exists():
+                dest_file.unlink()
+            shutil.copy2(src_path, dest_file)
+            if os.name != "nt":
+                dest_file.chmod(dest_file.stat().st_mode | 0o755)
+        return target_dest
+
+    # 단일 루트 폴더 승격 (일반 아카이브 구조 대응)
+    entries = os.listdir(temp_dir)
+    if len(entries) == 1 and os.path.isdir(os.path.join(temp_dir, entries[0])):
+        inner = os.path.join(temp_dir, entries[0])
+        if target_dest.exists():
+            shutil.rmtree(target_dest, ignore_errors=True)
+        shutil.move(inner, str(target_dest))
+        return target_dest
+
+    if target_dest.exists():
+        shutil.rmtree(target_dest, ignore_errors=True)
+    shutil.move(temp_dir, str(target_dest))
+    return target_dest
+
+
 class ProvisioningManager:
     """단일 파사드 — resolve → download → verify → commit."""
     
@@ -511,11 +556,12 @@ class ProvisioningManager:
         event = emit_component(
             "DEPS", "OK" if success else "FAIL", component.upper(),
             self._fmt_progress(pct, "", f"{status} {msg}"),
-            is_status=True,
+            is_status=False,            # ← True에서 False로 교정하여 삭제 방지
             is_error=not success,
         )
         event.component_id = f"deps_{component}"
         event.is_progress = False
+
         if not self._emit_via_log(event):
             raw_log.raw(
                 "provisioning", event, to_tui=True,
@@ -580,49 +626,23 @@ class ProvisioningManager:
                     shutil.move(td, str(dest))
                     return dest
 
-            elif plan.archive_type == "tar.gz":
+            elif plan.archive_type in ("tar.gz", "tar.xz"):
                 with tempfile.TemporaryDirectory(prefix=f"cz_{plan.component}_") as td:
-                    with tarfile.open(archive, "r:gz") as tar:
-                        tar.extractall(td)
-                    # 단일 루트 디렉토리 승격 (Node.js tarball 등)
-                    entries = os.listdir(td)
-                    if len(entries) == 1 and os.path.isdir(os.path.join(td, entries[0])):
-                        inner = os.path.join(td, entries[0])
-                        dest = self.base_dir / plan.component
-                        if dest.exists():
-                            shutil.rmtree(dest, ignore_errors=True)
-                        shutil.move(inner, str(dest))
-                        # Node.js: npm 심볼릭 링크 보장
-                        if plan.component == "node":
-                            self._ensure_nodejs_npm_links(dest)
-                        return dest
+                    mode = "r:gz" if plan.archive_type == "tar.gz" else "r:xz"
+                    with tarfile.open(archive, mode) as tar:
+                        # [초천재의 무결점 보안] gz/xz 가리지 않고 Python 3.12+ safe filter 강제
+                        tar.extractall(td, filter="data")
+
                     dest = self.base_dir / plan.component
-                    if dest.exists():
-                        shutil.rmtree(dest, ignore_errors=True)
-                    shutil.move(td, str(dest))
+                    # 중첩된 Cellar/bin 및 일반 단일 루트 구조를 한 번에 평탄화 승격
+                    _promote_extracted_binaries(td, dest, plan.component)
+
+                    # Node.js 런타임일 경우 심볼릭 링크 일관 보장
                     if plan.component == "node":
                         self._ensure_nodejs_npm_links(dest)
-                    return dest
 
-            elif plan.archive_type == "tar.xz":
-                with tempfile.TemporaryDirectory(prefix=f"cz_{plan.component}_") as td:
-                    with tarfile.open(archive, "r:xz") as tar:
-                        tar.extractall(td, filter="data")
-                    # 단일 루트 디렉토리 승격
-                    entries = os.listdir(td)
-                    if len(entries) == 1 and os.path.isdir(os.path.join(td, entries[0])):
-                        inner = os.path.join(td, entries[0])
-                        dest = self.base_dir / plan.component
-                        if dest.exists():
-                            shutil.rmtree(dest, ignore_errors=True)
-                        shutil.move(inner, str(dest))
-                        return dest
-                    dest = self.base_dir / plan.component
-                    if dest.exists():
-                        shutil.rmtree(dest, ignore_errors=True)
-                    shutil.move(td, str(dest))
                     return dest
-
+                
             return f"unknown archive type: {plan.archive_type}"
 
         except Exception as e:
