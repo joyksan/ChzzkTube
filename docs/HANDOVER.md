@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-23 - v3.8.4 — FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·relocatable Bottle (patch)
+> 마지막 갱신: 2026-09-23 - v3.8.4 — FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·실행 판정 위임 Bottle (patch)
 
 ---
 
@@ -622,7 +622,7 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
     | 아키텍처 매핑 | `_normalize_arch`: `x86_64`/`amd64` → `amd64`, `aarch64`/`arm64` → `arm64`, 그 외 `ValueError` |
     | 무결성 | GitHub asset `digest` 필드는 **존재하지 않는다** — 별도 `checksums.sha256` 텍스트를 받아 정확한 basename 매칭으로만 SHA-256을 얻는다 |
     | zip 배제 | `.7z`/`.rar`/`.zst`는 7z 의존 회피를 위해 후보에서 제외한다 (`py7zr`류 L0 유입 금지) |
-    | macOS 공급자 | `formulae.brew.sh` bottle. `cellar`가 `:any*`(relocatable)일 때만 채택하고 SHA-256은 필수 |
+    | macOS 공급자 | `formulae.brew.sh` bottle. SHA-256 필수. `cellar` 메타데이터로는 **선제 거부하지 않고**, 최종 판정은 `_verify_ffmpeg` 실측 실행에 위임 |
     | macOS 정적 폴백 | **존재하지 않는다.** evermeet.cx는 Apple Silicon 빌드를 제공하지 않는다 |
     | 전개 | ZIP은 정규화 경로 prefix 검사, tar는 `filter="data"`. `TarError`는 `ValueError`로 정규화 |
     | 설치 | `bin_incoming` → `bin_backup` → `os.replace` 로 교체하고 실패 시 backup 복원. `ffmpeg`·`ffprobe` 둘 다 필요 |

@@ -1,4 +1,4 @@
-### 2026-09-23 — v3.8.4 : FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·relocatable Bottle (patch)
+### 2026-09-23 — v3.8.4 : FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·실행 판정 위임 Bottle (patch)
 
 #### 배경 (v3.8.3 → v3.8.4)
 - **버전 하드코딩**: Windows는 FFmpeg 7.1 직링크, Linux는 `ffmpeg-release-amd64-static.tar.xz` 고정 — 동적 모듈인데도 생명주기 갱신이 불가능했다.
@@ -20,8 +20,8 @@
 | 파일 | 내용 |
 |------|------|
 | `tests/test_ffmpeg_resolver_contract.py` (신규) | 4건: Windows static GPL 선택 및 GitHub `digest` 무시, Linux ARM64 → `linuxarm64` 매핑, checksum 파서 정확 매칭·형식 거부, 미지원 아키텍처 ValueError. |
-| `tests/test_ffmpeg_archive_contract.py` (신규) | 6건: ZIP/tar path traversal 차단, 중첩 `Cellar/.../bin` 보존, 비relocatable cellar 거부, evermeet 폴백 부재(심볼 미존재 검증), SHA-256 부재 bottle 거부. |
-| `tests/test_v38_contracts.py` (보수) | bottle 계약 테스트를 subprocess tar → stdlib tarfile + relocatable + SHA-256 계약으로 재작성. 소진형 응답 스텁으로 다운로드 루프 종료 보장. |
+| `tests/test_ffmpeg_archive_contract.py` (신규) | 7건: ZIP/tar path traversal 차단, 중첩 `Cellar/.../bin` 보존, fixed cellar은 스킵이 아니라 프로브, 실행 검증 실패 시 명시적 FAIL, evermeet 폴백 부재(심볼 미존재), SHA-256 부재 bottle 거부, PATH 원복 누수 격리. |
+| `tests/test_v38_contracts.py` (보수) | bottle 계약 테스트를 subprocess tar → stdlib tarfile + SHA-256 + 실행 판정 계약으로 재작성. 소진형 응답 스텁으로 다운로드 루프 종료 보장. |
 
 #### 거버넌스 정합
 - HANDOVER §5-27 "수급 무결성 및 무검증 레거시 폴백 절대 금지 (v3.8.5)" 및 §6의 evermeet/미검증 폴백 금지 조항과 구현을 일치시켰다.

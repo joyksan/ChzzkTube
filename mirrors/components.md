@@ -9,7 +9,7 @@
 *  [동적 버전] 동적 모듈은 생명주기 갱신을 위해 항상 최신 릴리스를 받는다.
    버전 하드코딩 금지 — GitHub API latest + checksums.sha256로 재해석.
 *  Windows/Linux: BtbN/FFmpeg-Builds GitHub Release (zip / tar.xz, SHA-256 필수)
-*  macOS: Homebrew formulae API (bottle tar.gz, relocatable + SHA-256 필수)
+*  macOS: Homebrew formulae API (bottle tar.gz, SHA-256 필수 + _verify_ffmpeg 실측 판정)
 
 [전수조사 정리 2026-09-04] 구 설계(Hitomi Downloader style 전체 구성요소
 자동수급: yt-dlp 휠 / bgutil 플러그인 / pot-pack / streamlink-pack)는
@@ -212,7 +212,7 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
 FFMPEG_DIRNAME = "ffmpeg"
 # [v3.8.4 동적 수급] 하드코딩 릴리스 URL 전면 폐기.
 # Windows/Linux: BtbN/FFmpeg-Builds GitHub Release API + checksums.sha256
-# macOS: Homebrew formulae API (bottle tar.gz) — relocatable bottle만 채택
+# macOS: Homebrew formulae API (bottle tar.gz) — cellar 메타데이터로 스킵하지 않고 실측으로 판정
 BTBN_RELEASE_API = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
 BTBN_CHECKSUM_ASSET = "checksums.sha256"
 BTBN_UA = "ChzzkTube-Provisioner/1.0"
@@ -509,7 +509,7 @@ def ensure_ffmpeg(log=None, force=False):
 
     OS별 처리 (시스템 PATH/패키지 매니저 참조 없음):
     - Windows: 캐시 → BtbN GitHub latest (win64/winarm64 static gpl zip)
-    - macOS: 캐시 → Homebrew formulae bottle (relocatable tar.gz)
+    - macOS: 캐시 → Homebrew formulae bottle (tar.gz, _verify_ffmpeg 실측 판정)
     - Linux: 캐시 → BtbN GitHub latest (linux64/linuxarm64 static gpl tar.xz)
     """
     log = _logcb(log)
@@ -674,10 +674,11 @@ def _ensure_ffmpeg_macos(log, force):
     evermeet.cx 정적 폴백은 폐기 — Apple Silicon(arm64) 빌드를 제공하지 않아
     Rosetta2/dyld 실패만 양산하기 때문이다.
 
-    [relocatable 계약] Bottle은 `cellar: ":any_skip_relocation"` 인 경우에만
-    앱 격리 캐시로 복사해도 실행이 보장된다. `/opt/homebrew/Cellar` 같은 절대
-    경로 bottle은 dylib 링크가 고정되어 dyld: Library not loaded로 즉사하므로
-    채택하지 않는다(설치 성공으로 위장 금지).
+    [판정 위임 계약] `cellar` 메타데이터로 후보를 선제 탈락시키지 않는다.
+    cellar은 빌드 시점의 정보일 뿐이며, 실제 시스템에 동일한 dylib이 존재하면
+    절대경로 Cellar bottle도 정상 실행된다. → 시도는 전부 허용하고, 최종 판정은
+    `_verify_ffmpeg` 실측 실행 검증에 위임한다. SHA-256은 여전히 필수이며,
+    무검증 수급과 검증 실패 은폐는 금지된다.
     """
     dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
 
@@ -696,24 +697,26 @@ def _ensure_ffmpeg_macos(log, force):
         # 후보 키를 호환 순서대로 전부 시도한다 (SHA 불일치·실행 불가
         # bottle은 다음 후보로 폴백 — Tahoe 빌드의 구형 OS dyld abort 대응).
         # [인증] ghcr.io blob 다운로드는 Bearer 토큰 필수 — _http_get이 자동 처리.
+        #
+        # [v3.8.5 판정 위임] cellar 메타데이터로 후보를 선제 탈락시키지 않는다.
+        # `cellar`는 빌드 시점의 정보일 뿐이며, 사용자의 실제 시스템에 동일한
+        # dylib이 존재하면 비-relocatable bottle도 정상 실행된다. 메타데이터로
+        # 스킵하면 실행 가능한 환경에서도 100% 자폭한다.
+        # → 시도는 전부 허용하고, 최종 판정은 _verify_ffmpeg 실행 검증에 위임한다.
         last_err = None
         for key in keys:
             entry = files.get(key) or {}
             url = entry.get("url")
             sha256 = entry.get("sha256")
-            cellar = entry.get("cellar", "")
-            if not url:
-                last_err = "Homebrew bottle URL missing"
+            cellar = entry.get("cellar")
+            if not url or not sha256:
+                last_err = f"ffmpeg [{key}] formula entry incomplete (url/sha256)"
                 continue
-            # [relocatable 게이트] 절대경로 Cellar bottle은 dyld 실패가 확정적이다.
-            if cellar and not str(cellar).startswith(":any"):
-                last_err = (
-                    f"ffmpeg [{key}] bottle is not relocatable (cellar={cellar})"
-                )
+            if not (cellar and str(cellar).startswith(":any")):
+                # 무결성 검증은 유지한 채 1차 프로브만 허용한다 (거부 아님).
                 log(emit_error_warn(
-                    "DEPS", "FFMP", "bottle not relocatable", "skip mirror (F12)"
+                    "DEPS", "FFMP", "bottle fixed cellar", f"probing [{key}] (F12)"
                 ))
-                continue
             try:
                 with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
                     tar_path = os.path.join(td, "ffmpeg.tar.gz")
@@ -743,13 +746,7 @@ def _ensure_ffmpeg_macos(log, force):
                         f"ffmpeg [{key}] done ({done / 1048576:.1f} MB)"
                     ))
 
-                    # [검증 필수] bottle은 반드시 SHA-256을 확보해 검증한다.
-                    if not sha256:
-                        last_err = f"ffmpeg [{key}] bottle has no sha256 in formula"
-                        log(emit_error_warn(
-                            "DEPS", "FFMP", "checksum missing", "skip mirror (F12)"
-                        ))
-                        continue
+                    # [검증 필수] 루프 진입 시 sha256 존재를 이미 확인했다.
                     got = _sha256(tar_path)
                     if got.lower() != str(sha256).lower():
                         last_err = f"ffmpeg [{key}] bottle hash mismatch"
@@ -774,34 +771,53 @@ def _ensure_ffmpeg_macos(log, force):
                         ))
                         continue
 
+                    # [판정 위임] 메타데이터가 아니라 실제 실행으로 검증한다.
+                    # 원자 교체 이전에 스테이징에서 프로브하므로, 검증 실패 시
+                    # 기존 캐시가 파괴되지 않는다.
+                    staged = str(binaries["ffmpeg"])
+                    if os.name != "nt":
+                        try:
+                            os.chmod(staged, 0o755)
+                            subprocess.run(
+                                ["xattr", "-dr", "com.apple.quarantine", staged],
+                                capture_output=True, check=False,
+                            )
+                        except Exception:
+                            pass
+                    if not _verify_ffmpeg(staged):
+                        last_err = (
+                            f"ffmpeg [{key}] execution test failed (dyld incompatible)"
+                        )
+                        log(emit_error_warn(
+                            "DEPS", "FFMP", "binary incompatible",
+                            "trying next bottle (F12)",
+                        ))
+                        continue
+
                     bin_dir = _atomic_install(binaries, Path(dest))
-                    candidate = str(bin_dir / "ffmpeg")
-                    if _verify_ffmpeg(candidate):
-                        _wire_ffmpeg_path(str(bin_dir))
-                        log(_ffmpeg_done_event("ok"))
-                        return None
-                    last_err = (
-                        f"ffmpeg [{key}] not runnable at {candidate} on this macOS"
-                    )
-                    log(emit_error_warn(
-                        "DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)"
-                    ))
-                    continue
+                    _wire_ffmpeg_path(str(bin_dir))
+                    log(_ffmpeg_done_event(f"bottle [{key}] verified"))
+                    _record_provision_plan({
+                        "component": "ffmpeg",
+                        "version": data.get("versions", {}).get("stable", "latest"),
+                        "asset_name": f"bottle-{key}",
+                        "sha256": sha256,
+                        "platform": "darwin",
+                        "architecture": platform.machine(),
+                    }, str(bin_dir / "ffmpeg"))
+                    return None
             except Exception as e:  # noqa: BLE001 — 후보별 폴백
                 last_err = (
                     f"ffmpeg [{key}] install failed at {dest}: {type(e).__name__}: {e}"
                 )
                 continue
-        # bottle 전멸 — [v3.8.4] 정적 폴백 폐기.
-        # evermeet.cx는 Apple Silicon(arm64) 빌드를 제공하지 않으며 Homebrew
-        # bottle은 relocatable Cellar가 아니면 dyld: Library not loaded로 즉사한다.
-        # 따라서 대안 없는 Intel 바이너리 투입 대신 명시적 실패로 닫고, F12에
-        # 원인(binary incompatible)을 격리한다.
+        # 모든 Bottle 후보가 다운로드·해시·실행 검증에 실패한 뒤에만 종결한다.
+        # [v3.8.5] 무검증 정적 폴백은 여전히 금지 — 대신 원인을 정확히 보고한다.
         log(emit_error_standard(
             "DEPS", "FFMP",
-            "binary incompatible", "check dependencies (F12)",
+            "all bottles incompatible", "check dependencies (F12)",
         ))
-        return f"all mirrors exhausted: {last_err}"
+        return last_err or "no runnable bottle found"
     except Exception as e:
         log(emit_error_standard(
             "DEPS", "FFMP", "formula resolve failed", f"{type(e).__name__} (F12)",

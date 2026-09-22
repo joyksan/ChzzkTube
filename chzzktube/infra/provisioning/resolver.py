@@ -71,7 +71,7 @@ MIRROR_REGISTRY: dict[str, ComponentSpec] = {
         version_strategy="latest_stable",
         mirrors=(
             # [v3.8.4] 거버넌스 정합 — 검증 불가/타깃 아키텍처 미지원 공급원 배제.
-            # macOS는 Homebrew formulae bottle(relocatable+SHA-256),
+            # macOS는 Homebrew formulae bottle(SHA-256 + 실행 검증),
             # Windows/Linux는 BtbN 정적 GPL 아카이브를 components.py가 담당한다.
             Mirror("github_btb", "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", priority=0),
             Mirror("homebrew", "https://formulae.brew.sh/api/formula/ffmpeg.json", priority=1),
