@@ -192,6 +192,59 @@
 [03:17:25] DL   │ OK   │ YT   │ saved · video.mp4 (11.56MB)
 ```
 
+### 3.7 신규 기능 개발 시 로그 작성 및 추가 규약 (Logging Guidelines)
+
+신규 기능을 추가할 때 발생하는 모든 동작 로그는 반드시 아래 8가지 철칙을 준수해야 한다.
+
+#### 1. 로그 발행 단일 진입점 (Single Entry Point)
+* **`raw_log.raw()` 경유 필수**: 워커/서비스/UI 어디서든 모든 로그는 반드시 `chzzktube.core.raw_log.raw()` 단일 버스를 통해서만 발행한다.
+* **금지 사항**:
+  - `log_history.log()` 직접 호출 금지 (버스가 파일 기록을 자동 수행함)
+  - UI 위젯(`QTextEdit`)에 직접 `append()` 또는 스레드 간 UI 파이프라인 신설 금지
+  - 워커 스레드에 새로운 로그 전용 Qt Signal(`log_full`, `log_concise` 등) 추가 금지
+
+#### 2. 4컬럼 규격 및 상수 엄격 준수 (`LogEvent` SSOT)
+* **포맷**: `[HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG`
+* **STAGE (5자 고정)**: `SYS`, `DEPS`, `ANAL`, `DL`, `LIVE`, `MERG`, `BATCH`, `POT` 8종만 허용.
+* **STATUS (5자 고정)**: `READY`, `RUN`, `OK`, `DONE`, `SKIP`, `WARN`, `FAIL`, `ABORT`, `END` 9종만 허용. (비표준 값 `MISSING`, `?` 등 금지)
+* **SCOPE (5자 고정)**:
+  - 외부 엔진: `YTDL`, `STRE`, `FFMP`, `NODE`, `POT`
+  - 미디어 플랫폼: `YT`, `CHZ`, `TW`, `TIKT`, `IG`, `X`, `BILI`, `AFTV`
+  - 시스템 도메인: `MAIN`, `RAW`, `QUEUE`, `DISK`
+* **SPEC 컬럼 폐지**: 미디어 코덱/해상도/버전 등 사양 정보는 `SPEC` 컬럼으로 전달하지 않고 `MSG` 전두부 태그(`[1080p60]`, `[v3.8.5]`)로 위임한다.
+
+#### 3. TUI vs F12 채널 격리 (`to_tui` 플래그)
+* **TUI 메인 콘솔 (`to_tui=True`)**:
+  - 사용자 관점의 핵심 상태 변화, 마일스톤 완료(`OK`/`DONE`), 진행률 틱(`RUN`), 치명적 오류(`FAIL`)에만 사용한다.
+  - TUI 콘솔 폭 보호를 위해 `MSG`는 영문 소문자 중심 최대 **55자 내외**로 작성한다.
+* **F12 상세 로그 / 히스토리 (`to_tui=False`)**:
+  - 백그라운드 프리웜, 디버그 파싱, 원문 CLI 덤프, 분리 수급 임시 파일(`*.f399.mp4`) 로그 등은 무조건 `to_tui=False`로 발행하여 메인 화면 오염을 차단한다. (F12 및 파일 로그는 `to_tui` 여부와 관계없이 전량 기록됨)
+
+#### 4. 1타임스탬프 1정보 (Single Information per Line)
+* 한 줄의 로그에 여러 상태나 콤마로 연결된 긴 배열을 한꺼번에 찍지 않는다. (예: `stale updates: a, b, c` ❌ ➔ 라벨별 개별 줄 발행 ⭕)
+* 진행률 바 나열 시 직렬 연결 금지 — 갱신형 진행률 기능을 활용한다.
+
+#### 5. 제자리 갱신형 및 다중 컴포넌트 로그 (`is_status`, `component_id`, `is_progress`)
+* **반복 상태 틱 (Single-Line In-Place Status)**:
+  - 다운로드 퍼센트, 속도 측정 등 지속적으로 발생하는 진행 로그는 반드시 `is_status=True`로 호출하여 콘솔 바닥 한 줄에서 제자리 덮어쓰기 되도록 한다.
+* **다중 컴포넌트 갱신형 (`component_id` &amp; `is_progress`)**:
+  - DEPS 수급이나 POT 빌드처럼 여러 백그라운드 작업이 동시 진행될 때는 `component_id="ffmpeg"` 및 `is_progress=True`로 전달하여 F12/TUI에서 해당 작업 블록만 갱신되도록 한다. (완료 시 `is_progress=False`로 전환해 히스토리로 확정)
+
+#### 6. 에러 로그 표준 규격 (`emit_error_standard` / `emit_error_warn`)
+* 에러 로그 발행 시 임의 문자열 대신 `chzzktube.core.log_emitter`의 표준 헬퍼를 사용한다.
+* **포맷**: `[HH:MM:SS] STAGE │ STATUS │ SCOPE │ &lt;간결 원인&gt; → &lt;진행/액션&gt;`
+  - 예시: `[03:07:29] DEPS │ WARN │ FFMP │ binary incompatible → retry mirror (1/3)`
+  - 예시: `[03:07:49] SYS  │ FAIL │ MAIN │ all mirrors exhausted → check network (F12)`
+* **원문 격리**: C/Python 저수준 예외(dyld, URLError, Stack Trace)는 TUI에 직접 출현시키지 않고 F12 상세 로그 및 히스토리 버퍼로 전량 격리한다.
+
+#### 7. 워커 스레드 타입 가드 (`safe_log_msg`)
+* `UpdateWorker`나 파이프라인에서 수신한 `LogEvent` 객체의 메시지를 다시 로깅하거나 파싱할 때 `log.lower()`를 직접 호출하면 `'LogEvent' object has no attribute 'lower'` 크래시가 유발된다.
+* 반드시 `chzzktube.core.log_event.safe_log_msg(obj)` 헬퍼를 경유하여 안전하게 `str`로 변환 후 다룬다.
+
+#### 8. 실패 및 마감 로그 단일 발행 원칙
+* 배치 작업 실행 중 개별 실패 내역은 워커 내부 루프에서 즉시 `to_tui=True`로 다중 발행하지 않는다.
+* `failed_targets` 목록에 수집해 두었다가 **`finalizer.finalize()` 단 한 곳에서 마감 요약과 함께 단일 발행**하여 콘솔에 중복 FAIL 라인이 연속으로 찍히는 촌극을 방지한다.
+
 ### 4. 팝업/다이얼로그 규격 및 설정창 아키텍처 (v3.5.1+)
 
 #### 4.1 다이얼로그 규격 단일 진실 (SSOT)

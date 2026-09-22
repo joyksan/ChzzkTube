@@ -98,12 +98,19 @@ class ConciseLogConsole:
         프리포맷)은 True, 큐 호환용 bare 문자열은 False다.
         """
         self._sync_budget()  # 현재 뷰포트/폰트 기준 예산 보장 — 자동랩 침범 방지
-        
+
         # 진행률 갱신형: 기존 라인 갱신
         if component_id and is_progress:
             self._update_progress_line(component_id, msg, is_error, fg_color, no_wrap)
             return
-        
+
+        # 진행률 완료: component_id가 있고 is_progress=False면 진행 라인을 히스토리로 확정.
+        # Single-Line In-Place Status 계약 — 블록을 새 줄로 늘리지 않고 기존 라인만 잠금한다.
+        if component_id and not is_progress and component_id in self._progress_lines:
+            idx = self._progress_lines.pop(component_id)
+            if 0 <= idx < len(self._buffer):
+                self._buffer[idx]["is_progress"] = False
+
         # [리플로우 대비] 원본 로그를 버퍼에 보관 (렌더 시점 절단을 위해 잘리지 않음)
         self._buffer.append(
             {"msg": msg, "is_status": is_status, "is_error": is_error,

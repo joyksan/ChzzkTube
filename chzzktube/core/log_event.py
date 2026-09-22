@@ -38,6 +38,9 @@ class LogEvent:
     # msg가 이미 표시 완성형(컬럼 포맷·원문)일 때 True — 뷰는 재포맷하지 않는다
     rendered: bool = False
     timestamp: str = field(default_factory=lambda: time.strftime("[%H:%M:%S]"))
+    # 갱신형 로그의 소유 컴포넌트와 진행 중/마감 상태를 운반한다.
+    component_id: str | None = None
+    is_progress: bool = False
 
 
 def safe_log_msg(obj) -> str:

@@ -29,6 +29,7 @@ from chzzktube.infra.provisioning.verifier import Verifier
 from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_emitter import emit_component, emit_progress
+from chzzktube.core.log_event import LogEvent  # _emit_via_log 타이ppo 어노테이션용
 
 
 @dataclass
@@ -65,10 +66,33 @@ class ProvisioningManager:
         self._downloader = ParallelDownloader(progress_cb=self._on_progress)
         self._active_progress: dict[str, dict] = {}  # component -> {downloaded, total, speed, eta}
 
-    def _emit(self, stage, status, scope, msg, is_status=False, is_error=False):
+    def _emit(self, stage, status, scope, msg, is_status=False, is_error=False,
+              component_id: str | None = None, is_progress: bool = False):
         """raw_log 버스 단일 경유 — 발행자만 raw_log.raw() 호출 (이중 적재 방지)."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
-        raw_log.raw("provisioning", evt, to_tui=is_status, is_error=is_error)
+        evt.component_id = component_id
+        evt.is_progress = is_progress
+        raw_log.raw(
+            "provisioning", evt, to_tui=is_status, is_error=is_error,
+            component_id=component_id, is_progress=is_progress,
+        )
+
+    def _emit_via_log(self, event: LogEvent) -> bool:
+        """Progress event를 기존 log_func 계약으로 한 번만 중계한다."""
+        if self.log is None:
+            return False
+        try:
+            self.log(
+                event,
+                is_status=event.is_status,
+                is_error=event.is_error,
+                component_id=event.component_id,
+                is_progress=event.is_progress,
+            )
+        except TypeError:
+            # 기존 동기 브리지처럼 LogEvent 하나만 받는 콜백과 호환
+            self.log(event)
+        return True
 
     async def _on_progress(self, component: str, downloaded: int, total: int, speed_bps: float = 0.0, eta_sec: float = 0.0):
         """다운로드 진행률 하트비트 — TUI: 컴포넌트별 개별 갱신형 라인, F12: 개별 누적."""
@@ -97,29 +121,22 @@ class ProvisioningManager:
         if eta_str:
             progress_msg += f" ETA {eta_str}"
 
-        # 1. TUI: 컴포넌트별 갱신형 라인 (component_id로 추적, is_progress=True)
-        tui_msg = self._fmt_progress(pct, speed_str, progress_msg)
-        self.log(
-            emit_component("DEPS", "RUN", component.upper(), tui_msg),
-            is_status=False,
-            is_error=False,
-            component_id=f"deps_{component}",
-            is_progress=True,
-        )
-
-        # 2. F12: 개별 진행 (누적, 타임스탬프 포함) — 동일 포맷
-        event = emit_progress(
-            stage="DEPS",
-            status="RUN",
-            scope=component.upper(),
-            msg=self._fmt_progress(pct, speed_str, progress_msg),
-            speed=speed_str,
-            pct=pct,
-            bar_frac=pct / 100.0,
-            is_status=False,  # F12에 누적
+        # TUI/F12가 같은 LogEvent의 원문과 component_id를 각각 렌더링한다.
+        # is_status=True는 F12의 기존 갱신형 append 경로를 열고,
+        # is_progress=True는 TUI의 다중 컴포넌트 갱신 경로를 선택한다.
+        event = emit_component(
+            "DEPS", "RUN", component.upper(),
+            self._fmt_progress(pct, speed_str, progress_msg),
+            is_status=True,
             is_error=False,
         )
-        raw_log.raw("provisioning", event, to_tui=False, is_error=False)
+        event.component_id = f"deps_{component}"
+        event.is_progress = True
+        if not self._emit_via_log(event):
+            raw_log.raw(
+                "provisioning", event, to_tui=True,
+                component_id=event.component_id, is_progress=True,
+            )
 
     @staticmethod
     def _format_speed(bps: float) -> str:
@@ -163,11 +180,18 @@ class ProvisioningManager:
             speed=speed,
             pct=pct,
             bar_frac=pct / 100.0,
-            is_status=True,  # F12 갱신형 (각각 별도 줄)
+            is_status=True,
             is_error=(state == "failed"),
+            component_id=f"deps_{component}",
+            is_progress=False,
         )
-        # F12에만 보냄 (to_tui=False로 TUI 상태 줄 보호)
-        raw_log.raw("provisioning", event, to_tui=False, is_error=(state == "failed"))
+        # 이 헬퍼는 호환용이며 호출 시 F12 갱신 이벤트를 한 번만 발행한다.
+        raw_log.raw(
+            "provisioning", event, to_tui=False,
+            is_error=(state == "failed"),
+            component_id=event.component_id,
+            is_progress=False,
+        )
 
     def _emit_f12_summary(self, total: int, ok: int, failed: int):
         """F12 마지막 줄: 완료/실패 요약 (갱신형, component_id로 추적)."""
@@ -184,11 +208,17 @@ class ProvisioningManager:
             speed="",
             pct=100,
             bar_frac=1.0,
-            is_status=True,  # F12 갱신형 (component_id로 같은 줄 갱신)
+            is_status=True,
             is_error=(failed > 0),
+            component_id="deps_SUMMARY",
+            is_progress=False,
         )
-        # component_id로 같은 줄 갱신
-        raw_log.raw("provisioning", event, to_tui=False, is_error=(failed > 0))
+        raw_log.raw(
+            "provisioning", event, to_tui=False,
+            is_error=(failed > 0),
+            component_id=event.component_id,
+            is_progress=False,
+        )
 
     # ── 1. Resolve ──────────────────────────────────────────────
     async def resolve(self, stale_only: bool = False, channel: str = "stable") -> list[ProvisionPlan]:
@@ -202,7 +232,10 @@ class ProvisioningManager:
             
             latest_ver, latest_url, sha256, mirror_name, archive_type = await self._fetch_latest(spec)
             if not latest_ver or not latest_url:
-                self._emit("DEPS", "WARN", name.upper(), f"no mirror resolved")
+                self._emit(
+                    "DEPS", "WARN", name.upper(), "no mirror resolved",
+                    component_id=f"deps_{name}", is_progress=False,
+                )
                 continue
             
             if stale_only and not self.manifest.is_stale(name, latest_ver):
@@ -410,8 +443,11 @@ class ProvisioningManager:
             if not dl_result.success:
                 # 다운로드 실패: TUI 진행 라인 실패로 마무리, F12 실패 출력
                 self._finalize_progress_line(plan.component, False, f"download failed: {dl_result.error[:50]}")
-                self._emit_f12_progress(plan.component, 0, "failed", msg=f"download failed: {dl_result.error[:50]}")
-                self._emit("DEPS", "FAIL", plan.component.upper(), f"download failed: {dl_result.error[:100]}")
+                self._emit(
+                    "DEPS", "FAIL", plan.component.upper(),
+                    f"download failed: {dl_result.error[:100]}",
+                    component_id=f"deps_{plan.component}", is_progress=False,
+                )
                 fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"download failed: {dl_result.error}"
@@ -423,8 +459,11 @@ class ProvisioningManager:
             if isinstance(installed_path, str):
                 # 설치 실패
                 self._finalize_progress_line(plan.component, False, f"install failed: {installed_path[:50]}")
-                self._emit_f12_progress(plan.component, 0, "failed", msg=f"install failed: {installed_path[:50]}")
-                self._emit("DEPS", "FAIL", plan.component.upper(), f"install failed: {installed_path}")
+                self._emit(
+                    "DEPS", "FAIL", plan.component.upper(),
+                    f"install failed: {installed_path}",
+                    component_id=f"deps_{plan.component}", is_progress=False,
+                )
                 fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"install failed: {installed_path}"
@@ -435,8 +474,11 @@ class ProvisioningManager:
             if not verify_result.success:
                 # 검증 실패
                 self._finalize_progress_line(plan.component, False, f"verification failed: {verify_result.error[:50]}")
-                self._emit_f12_progress(plan.component, 0, "failed", msg=f"verification failed: {verify_result.error[:50]}")
-                self._emit("DEPS", "FAIL", plan.component.upper(), f"verification failed: {verify_result.error}")
+                self._emit(
+                    "DEPS", "FAIL", plan.component.upper(),
+                    f"verification failed: {verify_result.error}",
+                    component_id=f"deps_{plan.component}", is_progress=False,
+                )
                 fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"verification failed: {verify_result.error}"
@@ -445,8 +487,11 @@ class ProvisioningManager:
 
             # 성공: TUI 진행 라인 100% 완료로 마무리, F12 완료 출력
             self._finalize_progress_line(plan.component, True, f"→ {verify_result.version}")
-            self._emit_f12_progress(plan.component, 100, "completed", msg=f"→ {verify_result.version}")
-            self._emit("DEPS", "OK", plan.component.upper(), f"{plan.component} {'updated' if plan.is_update else 'installed'} → {verify_result.version}")
+            self._emit(
+                "DEPS", "OK", plan.component.upper(),
+                f"{plan.component} {'updated' if plan.is_update else 'installed'} → {verify_result.version}",
+                component_id=f"deps_{plan.component}", is_progress=False,
+            )
             ok_count += 1
             final_results.append(ProvisionResult(
                 plan.component, True, version=verify_result.version,
@@ -460,21 +505,23 @@ class ProvisioningManager:
         return final_results
 
     def _finalize_progress_line(self, component: str, success: bool, msg: str):
-        """TUI 진행 라인을 완료/실패 상태로 마무리 (is_progress=False로 히스토리 확정)."""
+        """TUI/F12의 같은 진행 라인을 완료/실패 상태로 한 번에 마감한다."""
         pct = 100 if success else 0
-        bar = "█" * 10 if success else "░" * 10
         status = "completed" if success else "failed"
-        tui_msg = self._fmt_progress(pct, "", f"{status} {msg}")
-        
-        # is_progress=False로 호출하면 진행 라인 확정 (히스토리로 남음)
-        self.log(
-            emit_component("DEPS", "OK" if success else "FAIL", component.upper(), tui_msg),
-            is_status=False,
+        event = emit_component(
+            "DEPS", "OK" if success else "FAIL", component.upper(),
+            self._fmt_progress(pct, "", f"{status} {msg}"),
+            is_status=True,
             is_error=not success,
-            component_id=f"deps_{component}",
-            is_progress=False,  # 진행 라인 확정
         )
-        # 진행 라인 추적에서 제거
+        event.component_id = f"deps_{component}"
+        event.is_progress = False
+        if not self._emit_via_log(event):
+            raw_log.raw(
+                "provisioning", event, to_tui=True,
+                is_error=not success,
+                component_id=event.component_id, is_progress=False,
+            )
         self._active_progress.pop(component, None)
 
     def _ensure_nodejs_npm_links(self, node_dir: Path):
@@ -614,9 +661,15 @@ class ProvisioningManager:
         try:
             from chzzktube.infra.pylib_bootstrap import bootstrap
             path = bootstrap(clear_caches=True)
-            self._emit("DEPS", "OK", "PY", f"overlay refreshed: {path}")
+            self._emit(
+                "DEPS", "OK", "PY", f"overlay refreshed: {path}",
+                component_id="deps_PY", is_progress=False,
+            )
         except Exception as e:
-            self._emit("DEPS", "WARN", "PY", f"overlay refresh failed: {e}")
+            self._emit(
+                "DEPS", "WARN", "PY", f"overlay refresh failed: {e}",
+                component_id="deps_PY", is_progress=False,
+            )
 
     def _refresh_path(self):
         """PATH에 검증된 binary 디렉토리 추가."""
@@ -640,7 +693,10 @@ class ProvisioningManager:
         """전체 프로비저닝: resolve → download → verify → commit."""
         plans = await self.resolve(stale_only=stale_only, channel=channel)
         if not plans:
-            self._emit("DEPS", "SKIP", "DEPS", "all components up-to-date")
+            self._emit(
+                "DEPS", "SKIP", "DEPS", "all components up-to-date",
+                component_id="deps_SUMMARY", is_progress=False,
+            )
             return []
         
         results = await self.provision(plans)
@@ -649,8 +705,14 @@ class ProvisioningManager:
         ok_count = sum(1 for r in results if r.success)
         fail_count = len(results) - ok_count
         if fail_count == 0:
-            self._emit("DEPS", "DONE", "DEPS", f"provisioned {ok_count} components")
+            self._emit(
+                "DEPS", "DONE", "DEPS", f"provisioned {ok_count} components",
+                component_id="deps_SUMMARY", is_progress=False,
+            )
         else:
-            self._emit("DEPS", "WARN", "DEPS", f"{ok_count} ok, {fail_count} failed")
+            self._emit(
+                "DEPS", "WARN", "DEPS", f"{ok_count} ok, {fail_count} failed",
+                component_id="deps_SUMMARY", is_progress=False,
+            )
         
         return results

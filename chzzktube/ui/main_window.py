@@ -1216,32 +1216,82 @@ class MainWindow(QMainWindow):
         if hasattr(self, "console"):
             self.console.on_resize()
 
+    def _finalize_concise_progress(self, line, is_status, is_error, component_id):
+        """component_id로 추적 중인 TUI 진행 라인을 마감 이벤트로 확정한다."""
+        if not component_id:
+            return False
+        console = getattr(self, "console", None)
+        progress_lines = getattr(console, "_progress_lines", None)
+        buffer = getattr(console, "_buffer", None)
+        if not isinstance(progress_lines, dict) or buffer is None:
+            return False
+
+        index = progress_lines.get(component_id)
+        if not isinstance(index, int) or not (0 <= index < len(buffer)):
+            progress_lines.pop(component_id, None)
+            return False
+
+        entry = dict(buffer[index])
+        entry.update({
+            "msg": line,
+            "is_status": bool(is_status),
+            "is_error": bool(is_error),
+            "component_id": component_id,
+            "is_progress": False,
+        })
+        buffer[index] = entry
+        progress_lines.pop(component_id, None)
+        reflow = getattr(console, "reflow", None)
+        if callable(reflow):
+            reflow()
+        return True
+
     def _render_concise(self, event, is_status=False, is_error=False):
         if isinstance(event, LogEvent):
             line = log_emitter.format_log_line_for_event(event)
             no_wrap = True
+            component_id = getattr(event, "component_id", None)
+            is_progress = bool(getattr(event, "is_progress", False))
         else:
             line = str(event)
             no_wrap = False
+            component_id = None
+            is_progress = False
         if len(line) > 4096:
             line = line[:4096] + "…"
-        self.console.append(line, is_status, is_error, no_wrap=no_wrap)
+        if component_id and not is_progress and self._finalize_concise_progress(
+            line, is_status, is_error, component_id
+        ):
+            return
+        try:
+            self.console.append(
+                line, is_status, is_error, no_wrap=no_wrap,
+                component_id=component_id, is_progress=is_progress,
+            )
+        except TypeError:
+            # 하위 호환: component_id/is_progress 인자 없는 구버전 console 호출
+            self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
         if isinstance(event, LogEvent):
             line = event.msg if event.msg else ""
             self._last_full_event = event  # component_id 추출용 저장
-            component_id = getattr(event, 'component_id', None) or getattr(event, 'scope', None)
+            component_id = getattr(event, "component_id", None)
+            is_progress = bool(getattr(event, "is_progress", False))
         else:
             line = str(event)
             component_id = None
-        if is_status:
+            is_progress = False
+        # F12의 갱신 여부는 기존 append(is_status, component_id) 계약으로 처리한다.
+        # 진행 메타데이터만 있고 is_status가 빠진 구 발행 이벤트도 갱신한다.
+        f12_is_status = bool(is_status or is_progress)
+        if f12_is_status:
             self._last_status_line = line
         try:
-            self._mirror_full_log(line, is_status, component_id=component_id)
+            self._mirror_full_log(line, f12_is_status, component_id=component_id)
         except TypeError:
             # 하위 호환: component_id 인자 없는 구버전 mock 호출
-            self._mirror_full_log(line, is_status)
+            self._mirror_full_log(line, f12_is_status)
 
     def _mirror_full_log(self, line, is_status=False, component_id: str = None):
         msg = str(line)
