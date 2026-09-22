@@ -70,9 +70,11 @@ MIRROR_REGISTRY: dict[str, ComponentSpec] = {
         type=ComponentType.BINARY,
         version_strategy="latest_stable",
         mirrors=(
-            Mirror("github_gyan", "https://api.github.com/repos/GyanD/codexffmpeg/releases/latest", priority=0),
-            Mirror("github_btb", "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", priority=1),
-            Mirror("evermeet", "https://evermeet.cx/ffmpeg/getrelease/zip", priority=2),
+            # [v3.8.4] 거버넌스 정합 — 검증 불가/타깃 아키텍처 미지원 공급원 배제.
+            # macOS는 Homebrew formulae bottle(relocatable+SHA-256),
+            # Windows/Linux는 BtbN 정적 GPL 아카이브를 components.py가 담당한다.
+            Mirror("github_btb", "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", priority=0),
+            Mirror("homebrew", "https://formulae.brew.sh/api/formula/ffmpeg.json", priority=1),
         ),
         verify_cmd=("ffmpeg", "-version"),
         install_rel_path="ffmpeg/bin/ffmpeg",
@@ -123,11 +125,12 @@ def get_platform_asset_filters() -> tuple[str, ...]:
         return ("linux", "x86_64", "amd64")
 
 
-# [stdlib-only] zipfile로 해제 불가능한 아카이브 — 수급 후보에서 완전 배제.
+# [stdlib-only] 표준 라이브러리로 해제 불가능한 아카이브 — 수급 후보에서 배제.
 # py7zr 등 외부 의존성을 수급 계층(L0)에 들이지 않기 위한 명시적 경계.
-ARCHIVE_UNSUPPORTED_EXT = (".7z", ".rar", ".xz", ".tar.zst", ".zst")
-# 선호 순위: 앞일수록 우선. .zip 최우선, 확장자 없음(원시 바이너리) 차선.
-ARCHIVE_PREFERRED_EXT = (".zip", "")
+# .tar.xz/.tar.gz는 tarfile로 해제 가능하므로 배제 대상이 아니다.
+ARCHIVE_UNSUPPORTED_EXT = (".7z", ".rar", ".tar.zst", ".zst")
+# 선호 순위: 앞일수록 우선. .zip/.tar.xz 최우선, 확장자 없음(원시 바이너리) 차선.
+ARCHIVE_PREFERRED_EXT = (".zip", ".tar.xz", ".tar.gz", "")
 
 
 def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:

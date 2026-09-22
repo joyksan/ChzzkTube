@@ -86,7 +86,8 @@ class UpdateWorker(QThread):
         self.deps_failed.emit([label for label, status, _ in results if status == "FAIL"])
         self.check_done.emit(stale)
 
-    def _provision_cb(self, msg, is_status=False, is_error=False):
+    def _provision_cb(self, msg, is_status=False, is_error=False,
+                      component_id=None, is_progress=False):
         if isinstance(msg, LogEvent):
             event = msg
             if is_status:
@@ -100,10 +101,20 @@ class UpdateWorker(QThread):
                 scope="DEPS", msg=str(msg),
                 is_status=is_status, is_error=is_error,
             )
-        show = bool(event.is_status or event.is_error
+        if component_id is not None:
+            event.component_id = component_id
+        if is_progress:
+            event.is_progress = True
+
+        component_id = getattr(event, "component_id", component_id)
+        is_progress = bool(getattr(event, "is_progress", is_progress))
+        show = bool(event.is_status or event.is_error or is_progress
                     or event.status in ("FAIL", "WARN", "ABORT"))
         self._tick(event)
-        raw_log.raw("deps", event, to_tui=show)
+        raw_log.raw(
+            "deps", event, to_tui=show,
+            component_id=component_id, is_progress=is_progress,
+        )
 
     @staticmethod
     def _had_action(tui_line):
@@ -121,9 +132,13 @@ class UpdateWorker(QThread):
         import asyncio
         from chzzktube.infra.provisioning import ProvisioningManager
 
-        mgr = ProvisioningManager(log_func=lambda evt: self._provision_cb(evt,
-            is_status=getattr(evt, 'is_status', False),
-            is_error=getattr(evt, 'is_error', False)))
+        mgr = ProvisioningManager(log_func=lambda evt, **kwargs: self._provision_cb(
+            evt,
+            is_status=kwargs.get("is_status", getattr(evt, "is_status", False)),
+            is_error=kwargs.get("is_error", getattr(evt, "is_error", False)),
+            component_id=kwargs.get("component_id", getattr(evt, "component_id", None)),
+            is_progress=kwargs.get("is_progress", getattr(evt, "is_progress", False)),
+        ))
 
         try:
             results = asyncio.run(mgr.ensure_all(stale_only=False, channel=self.channel))

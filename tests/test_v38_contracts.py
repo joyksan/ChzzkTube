@@ -8,9 +8,15 @@
 3. Hyper-Minimalist TUI: 중간 임시 스트림(.fNNN) 은닉 + 최종 결과물 1줄 (Task 5-2).
 4. FAIL 단일 출력: target_downloader는 즉시 TUI 발행하지 않는다 (Task 4-3).
 """
+import asyncio
+import hashlib
+import io
+import json
 import os
 import re
 import sys
+import tarfile
+from types import SimpleNamespace
 
 import chzzktube.core.client_opts as client_opts
 import chzzktube.infra.components as components
@@ -102,6 +108,105 @@ class TestEnvironmentIsolation:
         import chzzktube.core.config as config
         monkeypatch.setattr(config, "writable_base", lambda: str(tmp_path / "empty"))
         assert components.ffmpeg_exe() is None
+
+    def test_macos_bottle_binaries_are_normalized_to_cache_root(self, tmp_path):
+        extracted = tmp_path / "bottle" / "opt" / "homebrew" / "bin"
+        extracted.mkdir(parents=True)
+        (extracted / "ffmpeg").write_bytes(b"ffmpeg")
+        (extracted / "ffprobe").write_bytes(b"ffprobe")
+        cache = tmp_path / "ffmpeg"
+
+        ffmpeg = components._normalize_bottle_binaries(tmp_path / "bottle", cache)
+
+        assert ffmpeg == cache / "bin" / "ffmpeg"
+        assert (cache / "bin" / "ffmpeg").read_bytes() == b"ffmpeg"
+        assert (cache / "bin" / "ffprobe").read_bytes() == b"ffprobe"
+        assert os.access(ffmpeg, os.X_OK)
+
+    def test_macos_bottle_contract_matches_live_formulae_shape(self, monkeypatch, tmp_path):
+        """실제 formulae 응답 형태 → Bottle 다운로드 → 격리 캐시 설치 전 과정.
+
+        [v3.8.4 계약] tar 서브프로세스가 아니라 stdlib tarfile + filter="data"를
+        사용하고, relocatable bottle(:any_skip_relocation)만 채택하며, SHA-256을
+        반드시 검증한다.
+        """
+        import chzzktube.core.config as config
+
+        bottle_root = tmp_path / "bottle"
+        bin_dir = bottle_root / "opt" / "homebrew" / "Cellar" / "ffmpeg" / "9.0" / "bin"
+        bin_dir.mkdir(parents=True)
+        (bin_dir / "ffmpeg").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (bin_dir / "ffprobe").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        tar_path = tmp_path / "ffmpeg.tar.gz"
+        with tarfile.open(tar_path, "w:gz") as archive:
+            archive.add(bin_dir, arcname="opt/homebrew/Cellar/ffmpeg/9.0/bin")
+
+        bottle_url = "https://ghcr.io/v2/homebrew/core/ffmpeg/blobs/sha256:test"
+        tar_bytes = tar_path.read_bytes()
+        formulae = {
+            "bottle": {"stable": {"files": {
+                "arm64_linux": {"url": "https://ghcr.io/linux", "sha256": "0" * 64},
+                "arm64_sequoia": {
+                    "url": bottle_url,
+                    "sha256": hashlib.sha256(tar_bytes).hexdigest(),
+                    "cellar": ":any_skip_relocation",
+                },
+                "arm64_tahoe": {"url": "https://ghcr.io/tahoe", "sha256": "1" * 64},
+            }}},
+        }
+
+        class _FormulaResponse:
+            """urllib 컨텍스트 매니저 + 소진형 read 응답 스텁."""
+
+            def __init__(self, payload):
+                self._payload = payload
+                self._offset = 0
+                self.headers = {"Content-Length": str(len(payload))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, size=-1):
+                # 실제 소켓처럼 EOF에서 빈 바이트를 반환해야 다운로드 루프가
+                # 종료된다 (무한 쓰기 → No space left on device 방지).
+                if size is None or size < 0:
+                    chunk = self._payload[self._offset:]
+                    self._offset = len(self._payload)
+                    return chunk
+                chunk = self._payload[self._offset:self._offset + size]
+                self._offset += len(chunk)
+                return chunk
+
+            def close(self):
+                return None
+
+            def __iter__(self):
+                return iter(self._payload.splitlines(keepends=True))
+
+        def fake_urlopen(url, timeout=0):
+            if url == components._FFMPEG_BREW_API:
+                payload = json.dumps(formulae).encode("utf-8")
+            else:
+                payload = tar_bytes
+            return _FormulaResponse(payload)
+
+        monkeypatch.setattr(components.urllib.request, "urlopen", fake_urlopen)
+        monkeypatch.setattr(components, "_http_get", lambda url, timeout=0: fake_urlopen(url))
+        monkeypatch.setattr(components, "_verify_ffmpeg", lambda _path: True)
+        monkeypatch.setattr(components.platform, "machine", lambda: "arm64")
+        monkeypatch.setattr(components.platform, "release", lambda: "24.0.0")
+        monkeypatch.setattr(config, "writable_base", lambda: str(tmp_path))
+
+        log = []
+        result = components._ensure_ffmpeg_macos(log.append, force=True)
+
+        assert result is None, f"_ensure_ffmpeg_macos failed: {result}; log={log}"
+        ffmpeg_bin_dir = tmp_path / "ffmpeg" / "bin"
+        assert (ffmpeg_bin_dir / "ffmpeg").is_file(), list(tmp_path.iterdir())
+        assert (ffmpeg_bin_dir / "ffprobe").is_file(), list(ffmpeg_bin_dir.iterdir())
 
     def test_apply_ffmpeg_opts_uses_isolated_resolver(self, monkeypatch):
         monkeypatch.setattr(components, "ffmpeg_exe", lambda: "/iso/ffmpeg")

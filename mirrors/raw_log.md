@@ -163,8 +163,9 @@ def subscribe_full(fn):
     _dispatcher.subscribe_full(fn)
 
 
-def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
-    """단일 진입점 — 앱의 모든 행동은 여기로 수신된다."""
+def raw(tag, msg, is_status=False, is_error=False, to_tui=False,
+        component_id: str | None = None, is_progress: bool = False):
+    """단일 진입점 — 앱의 모든 행동과 갱신형 메타데이터는 여기로 수신된다."""
     if not isinstance(msg, LogEvent):
         msg = LogEvent(
             stage="SYS",
@@ -180,6 +181,10 @@ def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
             msg.is_status = True
         if is_error:
             msg.is_error = True
+    if component_id is not None:
+        msg.component_id = component_id
+    if is_progress:
+        msg.is_progress = True
     _dispatcher.publish(msg, to_tui)
 
 

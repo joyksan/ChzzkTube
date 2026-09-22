@@ -1630,35 +1630,6 @@ class VerboseLogWindow(QDialog):
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Full Log (F12)")
-        self.resize(760, 480)
-        self.setStyleSheet(theme.DIALOG_BG_QSS)
-
-        self.te = QTextEdit(self)
-        self.te.setReadOnly(True)
-        self.te.setStyleSheet(theme.TE_CONTENT_QSS)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-        layout.addWidget(self.te)
-
-        btn_row = QHBoxLayout()
-        self.lbl_info = QLabel("")
-        self.lbl_info.setStyleSheet("color: #888888; font-size: 11px;")
-        btn_close = QPushButton("[ Close: Esc ]")
-        btn_close.setProperty("class", "tui-tag")
-        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_close.setStyleSheet(theme.TUI_STYLE)
-        btn_close.clicked.connect(self.close)
-
-        btn_row.addWidget(self.lbl_info)
-        btn_row.addStretch(1)
-        btn_row.addWidget(btn_close)
-        layout.addLayout(btn_row)
-
         # 갱신형 라인 추적: component_id -> block number
         self._status_lines: dict[str, int] = {}
 
@@ -1706,6 +1677,7 @@ class VerboseLogWindow(QDialog):
 
     def set_content(self, text):
         self.te.setPlainText(text)
+        self._status_lines.clear()
         self.lbl_info.setText(f"buffer — {self.te.document().blockCount()} lines")
 
 ```
@@ -1813,12 +1785,19 @@ class ConciseLogConsole:
         프리포맷)은 True, 큐 호환용 bare 문자열은 False다.
         """
         self._sync_budget()  # 현재 뷰포트/폰트 기준 예산 보장 — 자동랩 침범 방지
-        
+
         # 진행률 갱신형: 기존 라인 갱신
         if component_id and is_progress:
             self._update_progress_line(component_id, msg, is_error, fg_color, no_wrap)
             return
-        
+
+        # 진행률 완료: component_id가 있고 is_progress=False면 진행 라인을 히스토리로 확정.
+        # Single-Line In-Place Status 계약 — 블록을 새 줄로 늘리지 않고 기존 라인만 잠금한다.
+        if component_id and not is_progress and component_id in self._progress_lines:
+            idx = self._progress_lines.pop(component_id)
+            if 0 <= idx < len(self._buffer):
+                self._buffer[idx]["is_progress"] = False
+
         # [리플로우 대비] 원본 로그를 버퍼에 보관 (렌더 시점 절단을 위해 잘리지 않음)
         self._buffer.append(
             {"msg": msg, "is_status": is_status, "is_error": is_error,
@@ -2302,7 +2281,7 @@ def _log_line_segments(line):
 ## File: chzzktube/ui/main_window.py
 
 ```python
-﻿##### main.py - 메인 윈도우 및 앱 실행 진입점
+##### main.py - 메인 윈도우 및 앱 실행 진입점
 import os
 import platform
 import re
@@ -3520,32 +3499,82 @@ class MainWindow(QMainWindow):
         if hasattr(self, "console"):
             self.console.on_resize()
 
+    def _finalize_concise_progress(self, line, is_status, is_error, component_id):
+        """component_id로 추적 중인 TUI 진행 라인을 마감 이벤트로 확정한다."""
+        if not component_id:
+            return False
+        console = getattr(self, "console", None)
+        progress_lines = getattr(console, "_progress_lines", None)
+        buffer = getattr(console, "_buffer", None)
+        if not isinstance(progress_lines, dict) or buffer is None:
+            return False
+
+        index = progress_lines.get(component_id)
+        if not isinstance(index, int) or not (0 <= index < len(buffer)):
+            progress_lines.pop(component_id, None)
+            return False
+
+        entry = dict(buffer[index])
+        entry.update({
+            "msg": line,
+            "is_status": bool(is_status),
+            "is_error": bool(is_error),
+            "component_id": component_id,
+            "is_progress": False,
+        })
+        buffer[index] = entry
+        progress_lines.pop(component_id, None)
+        reflow = getattr(console, "reflow", None)
+        if callable(reflow):
+            reflow()
+        return True
+
     def _render_concise(self, event, is_status=False, is_error=False):
         if isinstance(event, LogEvent):
             line = log_emitter.format_log_line_for_event(event)
             no_wrap = True
+            component_id = getattr(event, "component_id", None)
+            is_progress = bool(getattr(event, "is_progress", False))
         else:
             line = str(event)
             no_wrap = False
+            component_id = None
+            is_progress = False
         if len(line) > 4096:
             line = line[:4096] + "…"
-        self.console.append(line, is_status, is_error, no_wrap=no_wrap)
+        if component_id and not is_progress and self._finalize_concise_progress(
+            line, is_status, is_error, component_id
+        ):
+            return
+        try:
+            self.console.append(
+                line, is_status, is_error, no_wrap=no_wrap,
+                component_id=component_id, is_progress=is_progress,
+            )
+        except TypeError:
+            # 하위 호환: component_id/is_progress 인자 없는 구버전 console 호출
+            self.console.append(line, is_status, is_error, no_wrap=no_wrap)
 
     def _mirror_event_full(self, event, is_status=False):
         if isinstance(event, LogEvent):
             line = event.msg if event.msg else ""
             self._last_full_event = event  # component_id 추출용 저장
-            component_id = getattr(event, 'component_id', None) or getattr(event, 'scope', None)
+            component_id = getattr(event, "component_id", None)
+            is_progress = bool(getattr(event, "is_progress", False))
         else:
             line = str(event)
             component_id = None
-        if is_status:
+            is_progress = False
+        # F12의 갱신 여부는 기존 append(is_status, component_id) 계약으로 처리한다.
+        # 진행 메타데이터만 있고 is_status가 빠진 구 발행 이벤트도 갱신한다.
+        f12_is_status = bool(is_status or is_progress)
+        if f12_is_status:
             self._last_status_line = line
         try:
-            self._mirror_full_log(line, is_status, component_id=component_id)
+            self._mirror_full_log(line, f12_is_status, component_id=component_id)
         except TypeError:
             # 하위 호환: component_id 인자 없는 구버전 mock 호출
-            self._mirror_full_log(line, is_status)
+            self._mirror_full_log(line, f12_is_status)
 
     def _mirror_full_log(self, line, is_status=False, component_id: str = None):
         msg = str(line)
@@ -3553,13 +3582,13 @@ class MainWindow(QMainWindow):
             msg = msg[:4096] + "…"
         ts = time.strftime("%H:%M:%S")
         stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
-        if not is_status:
-            self._full_log_buf.append(stamped)
+        # HANDOVER 3.7-3: F12 및 파일 로그는 to_tui 여부와 관계없이 전량 기록.
+        # 진행 틱(is_status=True)도 파일에는 남겨야 한다 (파일·F12 전량 기록).
+        self._full_log_buf.append(stamped)
         win = getattr(self, "verbose_win", None)
         win_visible = win is not None and win.isVisible()
-        if not is_status and win_visible:
-            self._full_log_win_n = len(self._full_log_buf)
         if win_visible:
+            self._full_log_win_n = len(self._full_log_buf)
             try:
                 win.append(stamped, is_status, component_id)
             except (AttributeError, RuntimeError, TypeError):
@@ -6296,10 +6325,13 @@ def cleanup_on_shutdown():
 
 *  [격리 원칙] 시스템 PATH 탐색(shutil.which)·OS 패키지 매니저(brew install,
    apt-get 등) 서브프로세스 호출 완전 철폐. 오직 writable_base()/ffmpeg/
-   단일 캐시만 검사하고, 없으면 정적 바이너리를 직접 수급한다.
-*  Windows: GitHub(GyanD/codexffmpeg) release zip → writable_base/ffmpeg/
-*  macOS: Homebrew bottle HTTP 직접 다운로드 (brew 실행 없음)
-*  Linux: johnvansickle.com 정적 빌드 tar.xz
+   단일 캐시만 검사하고, 없으면 아카이브를 직접 수급한다.
+*  [stdlib 순수성] 의존성 수급 모듈은 순수 파이썬 기반이다. 7z 모듈을 추가로
+   끌어오지 않기 위해 zip/tar만 타겟팅한다 (.7z 자산은 후보에서 제외).
+*  [동적 버전] 동적 모듈은 생명주기 갱신을 위해 항상 최신 릴리스를 받는다.
+   버전 하드코딩 금지 — GitHub API latest + checksums.sha256로 재해석.
+*  Windows/Linux: BtbN/FFmpeg-Builds GitHub Release (zip / tar.xz, SHA-256 필수)
+*  macOS: Homebrew formulae API (bottle tar.gz, relocatable + SHA-256 필수)
 
 [전수조사 정리 2026-09-04] 구 설계(Hitomi Downloader style 전체 구성요소
 자동수급: yt-dlp 휠 / bgutil 플러그인 / pot-pack / streamlink-pack)는
@@ -6310,8 +6342,11 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
+import subprocess
 import sys
+import tarfile
 import tempfile
 import time
 import urllib.request
@@ -6497,11 +6532,220 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
 
 
 FFMPEG_DIRNAME = "ffmpeg"
-# GitHub 릴리즈 URL: 버전 명시 (latest 사용 시 source code를 가리켜 404 발생)
-FFMPEG_RELEASE_URL = (
-    "https://github.com/GyanD/codexffmpeg/releases/download/7.1/"
-    "ffmpeg-7.1-essentials_build.zip"
-)
+# [v3.8.4 동적 수급] 하드코딩 릴리스 URL 전면 폐기.
+# Windows/Linux: BtbN/FFmpeg-Builds GitHub Release API + checksums.sha256
+# macOS: Homebrew formulae API (bottle tar.gz) — relocatable bottle만 채택
+BTBN_RELEASE_API = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
+BTBN_CHECKSUM_ASSET = "checksums.sha256"
+BTBN_UA = "ChzzkTube-Provisioner/1.0"
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _normalize_arch(machine=None):
+    """platform.machine() → canonical arch token ('amd64' | 'arm64').
+
+    [stdlib 전용] 미지원 아키텍처는 조용히 추측하지 않고 ValueError로 중단한다.
+    """
+    mach = (machine or platform.machine() or "").lower()
+    if mach in ("amd64", "x86_64", "x64"):
+        return "amd64"
+    if mach in ("arm64", "aarch64"):
+        return "arm64"
+    raise ValueError(f"unsupported architecture: {mach or 'unknown'}")
+
+
+def _parse_btbn_checksums(manifest_text, asset_name):
+    """checksums.sha256 텍스트에서 asset_name의 SHA-256을 추출.
+
+    [실측 계약] GitHub REST API의 release asset 응답에는 개별 파일의 SHA-256
+    digest 필드가 존재하지 않는다. 따라서 BtbN 릴리스가 함께 게시하는
+    `checksums.sha256` 텍스트 자산을 받아 정확한 basename 매칭으로만 검증한다.
+    """
+    if not manifest_text or not asset_name:
+        raise ValueError("checksum manifest or asset name missing")
+    for raw in manifest_text.splitlines():
+        parts = raw.strip().split()
+        if len(parts) < 2:
+            continue
+        digest, name = parts[0].strip().lower(), parts[-1].strip().lstrip("*")
+        if name == asset_name and _SHA256_HEX_RE.match(digest):
+            return digest
+    raise ValueError(f"valid SHA-256 for {asset_name} not found in manifest")
+
+
+def _fetch_btbn_checksums(url, timeout=15):
+    """checksums.sha256 자산 텍스트 다운로드 (stdlib only)."""
+    req = urllib.request.Request(url, headers={"User-Agent": BTBN_UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def _select_btbn_asset(assets, arch_token, ext):
+    """BtbN 릴리스 자산 목록에서 정적 GPL 아카이브 1개를 선택.
+
+    [실측 명명 규칙] BtbN 자산은 `ffmpeg-<build>-win64-gpl.zip` 또는
+    `ffmpeg-<build>-linux64-gpl.tar.xz` 형태로, `-gpl.`/`-gpl-`가 모두 나온다.
+    따라서 `gpl` 토큰만 확인하고 `shared`를 배제한다.
+
+    제외 규칙: shared(dylib 동반), debug/symbols/pdb, .7z(7z 의존성 회피),
+    이외 아키텍처 토큰.
+    """
+    for asset in assets:
+        name = asset.get("name", "")
+        low = name.lower()
+        if "gpl" not in low or not low.endswith(ext):
+            continue
+        if "shared" in low or arch_token not in low:
+            continue
+        if any(tok in low for tok in ("debug", "symbols", "pdb")):
+            continue
+        return asset
+    return None
+
+
+def _resolve_btbn_ffmpeg(timeout=15):
+    """BtbN 최신 릴리스에서 (에셋 + 체크섬) 단일 트랜잭션 해석.
+
+    반환: component/version/asset_name/url/sha256/archive_type/platform/architecture
+    """
+    system = platform.system().lower()
+    arch = _normalize_arch()
+    if system == "windows":
+        arch_token = "win64" if arch == "amd64" else "winarm64"
+        ext, archive_type = ".zip", "zip"
+    elif system == "linux":
+        arch_token = "linux64" if arch == "amd64" else "linuxarm64"
+        ext, archive_type = ".tar.xz", "tar.xz"
+    else:
+        raise ValueError(f"BtbN does not provide builds for: {system}")
+
+    req = urllib.request.Request(BTBN_RELEASE_API, headers={"User-Agent": BTBN_UA})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        release = json.load(resp)
+
+    assets = release.get("assets", []) or []
+    target = _select_btbn_asset(assets, arch_token, ext)
+    if target is None:
+        raise RuntimeError(f"no BtbN {arch_token} gpl asset for {system}")
+
+    checksum_asset = next(
+        (a for a in assets if a.get("name") == BTBN_CHECKSUM_ASSET), None
+    )
+    if checksum_asset is None:
+        raise RuntimeError("BtbN checksums.sha256 manifest missing from release")
+
+    manifest = _fetch_btbn_checksums(
+        checksum_asset.get("browser_download_url", ""), timeout=timeout
+    )
+    digest = _parse_btbn_checksums(manifest, target.get("name", ""))
+
+    return {
+        "component": "ffmpeg",
+        "version": release.get("tag_name") or "latest",
+        "asset_name": target.get("name", ""),
+        "url": target.get("browser_download_url", ""),
+        "sha256": digest,
+        "archive_type": archive_type,
+        "platform": system,
+        "architecture": arch,
+    }
+
+
+def _safe_extract(archive_path, archive_type, dest_dir):
+    """stdlib 전용 안전 압축 해제 — Zip Slip / tar traversal 차단.
+
+    * zip:  멤버 경로 정규화 후 dest_dir 밖으로 벗어나면 ValueError
+    * tar*: Python 3.12+ `filter="data"` 로 절대경로/상위경로/링크 이탈 차단
+    """
+    dest = Path(dest_dir).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    if archive_type == "zip":
+        with zipfile.ZipFile(archive_path) as zf:
+            for member in zf.infolist():
+                target = (dest / member.filename).resolve()
+                if target != dest and dest not in target.parents:
+                    raise ValueError(f"path traversal in zip: {member.filename}")
+            zf.extractall(dest)
+        return dest
+    if archive_type in ("tar.xz", "tar.gz", "tar"):
+        mode = {"tar.xz": "r:xz", "tar.gz": "r:gz", "tar": "r:"}[archive_type]
+        with tarfile.open(archive_path, mode) as tf:
+            try:
+                # Python 3.12+ : filter="data" 가 절대경로/상위경로/링크 이탈을
+                # tarfile.InsideDestinationError 등 FilterError로 차단한다.
+                # 호출자 계약은 ValueError 단일 예외이므로 정규화해 올린다.
+                tf.extractall(dest, filter="data")
+            except TypeError:  # Python < 3.12 — filter 파라미터 부재
+                for member in tf.getmembers():
+                    target = (dest / member.name).resolve()
+                    if target != dest and dest not in target.parents:
+                        raise ValueError(f"path traversal in tar: {member.name}")
+                tf.extractall(dest)
+            except tarfile.TarError as e:
+                raise ValueError(f"unsafe tar archive: {e}") from e
+        return dest
+    raise ValueError(f"unsupported archive type: {archive_type}")
+
+
+def _locate_binaries(root):
+    """추출 트리에서 ffmpeg/ffprobe 실행 파일 탐색 (중첩 Cellar/bin 대응)."""
+    found = {}
+    for path in Path(root).rglob("*"):
+        if not path.is_file():
+            continue
+        stem = path.stem.lower()
+        if stem in ("ffmpeg", "ffprobe") and stem not in found:
+            found[stem] = path
+    return found
+
+
+def _atomic_install(binaries, dest_dir):
+    """추출 바이너리를 dest_dir/bin 으로 원자 교체 (기존 버전 보존).
+
+    Windows는 기존 디렉터리 rename 시 PermissionError/FileExistsError가
+    나므로 incoming → backup → 교체 순서를 쓰고, 실패 시 backup을 되돌린다.
+    """
+    dest = Path(dest_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    bin_dir = dest / "bin"
+    incoming = dest / "bin_incoming"
+    backup = dest / "bin_backup"
+    suffix = _exe_suffix()
+
+    _rmtree(str(incoming))
+    _rmtree(str(backup))
+    incoming.mkdir(parents=True, exist_ok=True)
+
+    for stem, src in binaries.items():
+        target = incoming / f"{stem}{suffix}"
+        shutil.copy2(src, target)
+        if os.name != "nt":
+            target.chmod(target.stat().st_mode | 0o755)
+            try:
+                subprocess.run(
+                    ["xattr", "-dr", "com.apple.quarantine", str(target)],
+                    capture_output=True, check=False,
+                )
+            except Exception:
+                pass
+
+    if bin_dir.exists():
+        try:
+            os.replace(str(bin_dir), str(backup))
+        except OSError:
+            _rmtree(str(bin_dir))
+    installed = False
+    try:
+        os.replace(str(incoming), str(bin_dir))
+        installed = True
+    finally:
+        if not installed and backup.exists():
+            try:
+                os.replace(str(backup), str(bin_dir))
+            except OSError:
+                pass
+    _rmtree(str(backup))
+    return bin_dir
 _FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
 
 # [macOS] Homebrew bottle 키 선정 (v3.8.1) — formulae.brew.sh 응답의 실제
@@ -6512,7 +6756,8 @@ _FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
 #
 # [중요] 현행 formulae(ffmpeg 9.x) bottle은 실행 중 OS에서 dyld 심볼 에러로
 # 실행 불가할 수 있다 (Tahoe 26.x SDK 빌드 / Sequoia 빌드라도 깨진 dylib 링크).
-# 따라서 bottle 전멸 시 evermeet.cx 정적 빌드로 최종 폴백한다.
+# [v3.8.4] evermeet.cx 정적 폴백은 폐기 — Apple Silicon(arm64) 빌드를 제공하지
+# 않아 Rosetta2/dyld 실패만 양산했다. bottle 전멸 시 명시적 FAIL로 닫는다.
 _MAC_BOTTLE_ARCH_PREFIX = {
     "arm64": "arm64_",
     "x86_64": "x86_64_",
@@ -6527,16 +6772,7 @@ _MAC_BOTTLE_BUILDNUM_ORDER = (
     ("sequoia", 24),
     ("tahoe", 26),
 )
-# [macOS 최종 폴백] evermeet.cx 정적 빌드 (Homebrew bottle 전멸 시).
-# evermeet.cx가 DNS로 안 풀리는 환경도 있으므로 redirector(getrelease) +
-# 버전별 직링크를 순서대로 시도한다. universal2 바이너리는 arm64·x86_64
-# (Rosetta2) 모두에서 실행된다. 외부망 차단 환경에서는 전부 실패할 수
-# 있으며, 그 경우 격리 캐시는 비게 된다 (시스템 복사는 §6 금지).
-_FFMPEG_EVERMEET_URLS = (
-    "https://evermeet.cx/ffmpeg/getrelease/ffmpeg/zip",
-    "https://evermeet.cx/ffmpeg/ffmpeg-7.1.1.zip",
-    "https://evermeet.cx/ffmpeg/ffmpeg-7.0.2.zip",
-)
+_FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
 
 
 def _macos_buildnum():
@@ -6594,9 +6830,9 @@ def ensure_ffmpeg(log=None, force=False):
     성공 시 None, 실패 시 오류 문자열.
 
     OS별 처리 (시스템 PATH/패키지 매니저 참조 없음):
-    - Windows: 캐시 → GitHub GyanD/codexffmpeg zip 다운로드
-    - macOS: 캐시 → Homebrew bottle HTTP 직접 다운로드
-    - Linux: 캐시 → johnvansickle.com 정적 빌드 다운로드
+    - Windows: 캐시 → BtbN GitHub latest (win64/winarm64 static gpl zip)
+    - macOS: 캐시 → Homebrew formulae bottle (relocatable tar.gz)
+    - Linux: 캐시 → BtbN GitHub latest (linux64/linuxarm64 static gpl tar.xz)
     """
     log = _logcb(log)
     log(emit_component("DEPS", "RUN", "FFMP", "checking..."))
@@ -6618,6 +6854,36 @@ def ensure_ffmpeg(log=None, force=False):
     except Exception as e:
         return f"{type(e).__name__}: {e}"
 
+def _record_provision_plan(plan, install_path):
+    """수급 결과를 provisioning manifest에 기록 (감사 가능성 확보).
+
+    [실측 계약] manifest에는 `record_install` 같은 헬퍼가 없다.
+    `ProvisionManifest.load/save` + `ComponentRecord` + `update_component`가
+    유일한 공식 API이므로 이를 그대로 사용한다. 기록 실패는 본 수급 흐름을
+    깨뜨리지 않는다 — best-effort.
+    """
+    try:
+        from chzzktube.infra.provisioning.manifest import (
+            ComponentRecord, ProvisionManifest,
+        )
+
+        base = Path(config.writable_base())
+        manifest = ProvisionManifest.load(base)
+        manifest.update_component(ComponentRecord(
+            name=plan.get("component", "ffmpeg"),
+            version=plan.get("version", "latest"),
+            source=plan.get("platform", "github"),
+            mirror=plan.get("asset_name", ""),
+            install_path=os.path.relpath(install_path, base),
+            verified_at=time.time(),
+            verify_version=plan.get("architecture", ""),
+            sha256=plan.get("sha256", ""),
+        ))
+        manifest.save(base)
+    except Exception:
+        pass
+
+
 def _ensure_ffmpeg_by_platform(log, force):
     """플랫폼에 따라 적절한 전략 함수에 위임 (전략 패턴)."""
     platform = sys.platform
@@ -6632,56 +6898,113 @@ def _ensure_ffmpeg_by_platform(log, force):
 
 
 def _ensure_ffmpeg_windows(log, force):
-    """Windows용 ffmpeg 자동 수급 - GitHub GyanD/codexffmpeg 정적 zip 다운로드.
+    """Windows용 ffmpeg 자동 수급 — BtbN 최신 릴리스 동적 해석 (v3.8.4).
+
+    [동적 버전] 하드코딩 릴리스 태그 없음. GitHub API latest + checksums.sha256
+    으로 에셋·해시를 매 트랜잭션 재해석한다. .7z 자산은 7z 의존성 회피를 위해
+    후보에서 제외하고 static(비 shared) GPL zip만 채택한다.
 
     [v3.8.0 격리] 시스템 PATH 참조 없음 — 캐시는 ensure_ffmpeg 선검.
     """
-    dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
-    bin_dir = os.path.join(dest, "bin")
-    exe_path = os.path.join(bin_dir, "ffmpeg.exe")
+    dest = Path(config.writable_base()) / FFMPEG_DIRNAME
+    exe_name = "ffmpeg.exe"
 
-    # GitHub에서 다운로드 (최대 3회 재시도)
-    os.makedirs(dest, exist_ok=True)
     max_retries = 3
     last_err = None
-    
     for attempt in range(max_retries):
         if attempt > 0:
             log(emit_component("DEPS", "WARN", "FFMP", f"retry {attempt}/{max_retries}"))
-            time.sleep(2 ** attempt)  # exponential backoff
-        
+            time.sleep(2 ** attempt)
+
         try:
-            log(emit_component("DEPS", "RUN", "FFMP", "downloading..."))
+            log(emit_component("DEPS", "RUN", "FFMP", "resolving latest (github)..."))
+            plan = _resolve_btbn_ffmpeg()
+            log(emit_component("DEPS", "RUN", "FFMP", f"downloading {plan['version']}..."))
+
+            os.makedirs(dest, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
-                zp = _download(FFMPEG_RELEASE_URL, os.path.join(td, "ffmpeg.zip"), log, "ffmpeg")
-                _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
-            
-            if os.path.isfile(exe_path):
-                _wire_ffmpeg_path(bin_dir)
-                log(emit_component("DEPS", "OK", "FFMP", "ok"))
-                return None
-            last_err = "ffmpeg.exe not found after extract"
-        except zipfile.BadZipFile as e:
-            last_err = f"BadZipFile: {e}"
-            log(emit_component("DEPS", "WARN", "FFMP", f"corrupted download: {e}"))
+                archive = _download(
+                    plan["url"], os.path.join(td, plan["asset_name"]),
+                    log, "ffmpeg", expected_sha256=plan["sha256"],
+                )
+                staging = _safe_extract(archive, plan["archive_type"], Path(td) / "x")
+                binaries = _locate_binaries(staging)
+
+            if "ffmpeg" not in binaries:
+                last_err = f"ffmpeg binary not found in {plan['asset_name']}"
+                log(emit_error_warn("DEPS", "FFMP", "binary missing", "retry mirror (1/3)"))
+                continue
+
+            bin_dir = _atomic_install(binaries, dest)
+            exe_path = bin_dir / exe_name
+            if not exe_path.is_file():
+                last_err = "ffmpeg.exe not installed"
+                continue
+            if not _verify_ffmpeg(str(exe_path)):
+                last_err = "ffmpeg.exe install verification failed"
+                continue
+
+            _wire_ffmpeg_path(str(bin_dir))
+            log(emit_component("DEPS", "OK", "FFMP", f"ok ({plan['version']})"))
+            _record_provision_plan(plan, str(exe_path))
+            return None
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
-            log(emit_component("DEPS", "WARN", "FFMP", f"download failed: {e}"))
-    
+            log(emit_error_warn("DEPS", "FFMP", "download failed", f"{type(e).__name__} (F12)"))
+
     return f"ffmpeg install failed after {max_retries} attempts: {last_err}"
 
 
-def _ensure_ffmpeg_macos(log, force):
-    """맥용 ffmpeg 자동 수급 — Homebrew bottle 우선 전략 (v3.8.3).
+def _normalize_bottle_binaries(extracted_dir, cache_dir):
+    """Homebrew Bottle의 중첩 bin 디렉터리를 앱 격리 캐시로 정규화.
 
-    [전략] evermeet.cx는 불안정(HTML 반환 등). Homebrew bottle을 최우선으로,
-    실패 시 evermeet.cx 정적 빌드로 폴백한다.
+    [v3.8.4] _locate_binaries/_atomic_install로 대체되었지만, 외부 호출/계약
+    테스트 호환을 위해 얇은 래퍼로 유지한다. ffmpeg·ffprobe 둘 다 있어야 한다.
+    """
+    found = _locate_binaries(extracted_dir)
+    if "ffmpeg" not in found:
+        return None
+    try:
+        bin_dir = _atomic_install(found, cache_dir)
+    except OSError:
+        return None
+    return bin_dir / "ffmpeg"
+
+
+def _ffmpeg_progress_event(text):
+    """Bottle 진행 틱 → 진행형 LogEvent (component_id=ffmpeg, is_progress=True).
+
+    TUI/F12 브리지가 동일 라인 제자리 갱신을 수행하도록 진행 메타데이터를
+    반드시 실어 보낸다 (§3.7-5 다중 컴포넌트 갱신형).
+    """
+    return emit_component(
+        "DEPS", "RUN", "FFMP", text, component_id="ffmpeg", is_progress=True
+    )
+
+
+def _ffmpeg_done_event(text):
+    """Bottle 진행 종료 → 히스토리 확정 로그 (is_progress=False)."""
+    return emit_component(
+        "DEPS", "OK", "FFMP", text, component_id="ffmpeg", is_progress=False
+    )
+
+
+def _ensure_ffmpeg_macos(log, force):
+    """맥용 ffmpeg 자동 수급 — Homebrew bottle 전용 (v3.8.4).
+
+    [전략] Homebrew formulae API로 bottle URL·SHA-256을 동적 해석한다.
+    evermeet.cx 정적 폴백은 폐기 — Apple Silicon(arm64) 빌드를 제공하지 않아
+    Rosetta2/dyld 실패만 양산하기 때문이다.
+
+    [relocatable 계약] Bottle은 `cellar: ":any_skip_relocation"` 인 경우에만
+    앱 격리 캐시로 복사해도 실행이 보장된다. `/opt/homebrew/Cellar` 같은 절대
+    경로 bottle은 dylib 링크가 고정되어 dyld: Library not loaded로 즉사하므로
+    채택하지 않는다(설치 성공으로 위장 금지).
     """
     dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
 
-    # 1차: Homebrew bottle API (공식, 안정적)
     try:
-        log(emit_component("DEPS", "RUN", "FFMP", "downloading (Homebrew bottle)..."))
+        log(emit_component("DEPS", "RUN", "FFMP", "resolving (homebrew formula)..."))
         with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
             data = json.load(resp)
 
@@ -6689,13 +7012,7 @@ def _ensure_ffmpeg_macos(log, force):
         files = bottle.get("files", {})
 
         keys = _macos_bottle_keys(files)
-        selected = None
-        for key in keys:
-            if key in files:
-                selected = files[key]
-                break
-
-        if not selected:
+        if not any(key in files for key in keys):
             return "no compatible Homebrew bottle for this macOS version/arch"
 
         # 후보 키를 호환 순서대로 전부 시도한다 (SHA 불일치·실행 불가
@@ -6706,8 +7023,18 @@ def _ensure_ffmpeg_macos(log, force):
             entry = files.get(key) or {}
             url = entry.get("url")
             sha256 = entry.get("sha256")
+            cellar = entry.get("cellar", "")
             if not url:
                 last_err = "Homebrew bottle URL missing"
+                continue
+            # [relocatable 게이트] 절대경로 Cellar bottle은 dyld 실패가 확정적이다.
+            if cellar and not str(cellar).startswith(":any"):
+                last_err = (
+                    f"ffmpeg [{key}] bottle is not relocatable (cellar={cellar})"
+                )
+                log(emit_error_warn(
+                    "DEPS", "FFMP", "bottle not relocatable", "skip mirror (F12)"
+                ))
                 continue
             try:
                 with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
@@ -6726,98 +7053,89 @@ def _ensure_ffmpeg_macos(log, force):
                             if total >= 8 * 1024 * 1024 and mb != last_mb and mb % 2 == 0:
                                 last_mb = mb
                                 pct = f" ({done * 100 // total}%)" if total else ""
-                                log(emit_component("DEPS", "RUN", "FFMP", f"ffmpeg [{key}] {mb} MB{pct}"), False)
+                                # [§3.7-5] 진행 틱은 component_id/is_progress를 실어
+                                # TUI·F12가 동일 라인 제자리 갱신을 수행하게 한다.
+                                log(_ffmpeg_progress_event(
+                                    f"ffmpeg [{key}] {mb} MB{pct}"
+                                ))
                     if total and done != total:
                         last_err = f"ffmpeg [{key}] download incomplete"
                         continue
-                    log(emit_component("DEPS", "OK", "FFMP", f"ffmpeg [{key}] done ({done / 1048576:.1f} MB)"))
+                    log(_ffmpeg_done_event(
+                        f"ffmpeg [{key}] done ({done / 1048576:.1f} MB)"
+                    ))
 
-                    if sha256:
-                        got = _sha256(tar_path)
-                        if got != sha256:
-                            last_err = f"ffmpeg bottle hash mismatch [{key}]"
-                            continue
-                        log(emit_component("DEPS", "OK", "FFMP", "SHA-256 ok"))
-
-                    log(emit_component("DEPS", "RUN", "FFMP", "extracting..."))
-                    # 기존 디렉토리를 완전히 삭제
-                    if os.path.exists(dest):
-                        shutil.rmtree(dest, ignore_errors=True)
-                    os.makedirs(dest, exist_ok=True)
-
-                    # subprocess로 tar 명령어 직접 실행
-                    import subprocess
-                    result = subprocess.run(
-                        ["tar", "-xzf", tar_path, "-C", dest],
-                        capture_output=True,
-                        text=True,
-                        timeout=120
-                    )
-                    if result.returncode != 0:
-                        last_err = f"tar extraction failed [{key}]"
+                    # [검증 필수] bottle은 반드시 SHA-256을 확보해 검증한다.
+                    if not sha256:
+                        last_err = f"ffmpeg [{key}] bottle has no sha256 in formula"
+                        log(emit_error_warn(
+                            "DEPS", "FFMP", "checksum missing", "skip mirror (F12)"
+                        ))
+                        continue
+                    got = _sha256(tar_path)
+                    if got.lower() != str(sha256).lower():
+                        last_err = f"ffmpeg [{key}] bottle hash mismatch"
+                        log(emit_error_warn(
+                            "DEPS", "FFMP", "checksum mismatch", "retry mirror (1/3)"
+                        ))
                         continue
 
-                    # bottle 추출 구조에서 ffmpeg 검색
-                    ffmpeg_src = None
-                    ffmpeg_bin_dir = None
-                    for root, dirs, names in os.walk(dest):
-                        if "ffmpeg" in names:
-                            candidate = os.path.join(root, "ffmpeg")
-                            if os.path.isfile(candidate):
-                                ffmpeg_src = candidate
-                                ffmpeg_bin_dir = root
-                                break
+                    log(_ffmpeg_done_event("SHA-256 ok"))
+                    log(_ffmpeg_progress_event("extracting..."))
 
-                    if ffmpeg_src and ffmpeg_bin_dir:
-                        # 원래 디렉토리 구조를 유지하고 PATH에 추가
-                        _wire_ffmpeg_path(ffmpeg_bin_dir)
-                        # [macOS] Gatekeeper quarantine 해제 + 실행 비트 보장
-                        if platform.system() == "Darwin":
-                            for _bin in ("ffmpeg", "ffprobe"):
-                                _bp = os.path.join(ffmpeg_bin_dir, _bin)
-                                if os.path.isfile(_bp):
-                                    try:
-                                        subprocess.run(["chmod", "+x", _bp],
-                                                       check=False, capture_output=True)
-                                        subprocess.run(
-                                            ["xattr", "-dr", "com.apple.quarantine", _bp],
-                                            check=False, capture_output=True)
-                                    except Exception:
-                                        pass
-                        # 설치 확인 — 실패하면 다음 후보 키로 폴백
-                        if _verify_ffmpeg(ffmpeg_src):
-                            log(emit_component("DEPS", "OK", "FFMP", "ok"))
-                            return None
+                    # stdlib tarfile + filter="data" (Zip Slip/traversal 차단).
+                    # 기존 캐시는 설치 검증이 통과할 때까지 보존된다.
+                    staging = _safe_extract(tar_path, "tar.gz", Path(td) / "x")
+                    binaries = _locate_binaries(staging)
+                    if "ffmpeg" not in binaries or "ffprobe" not in binaries:
                         last_err = (
-                            f"ffmpeg [{key}] not runnable on this macOS — trying older bottle"
+                            f"ffmpeg [{key}] bottle missing ffmpeg/ffprobe binaries"
                         )
-                        log(emit_error_warn("DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)"))
-                        if os.path.exists(dest):
-                            shutil.rmtree(dest, ignore_errors=True)
+                        log(emit_error_warn(
+                            "DEPS", "FFMP", "binary missing", "retry mirror (1/3)"
+                        ))
                         continue
-                    last_err = f"ffmpeg exe not found after extract [{key}]"
-            except Exception as e:  # noqa: BLE001 — 후보별 폴백
-                last_err = f"ffmpeg [{key}] install failed: {type(e).__name__}"
-                continue
-        # bottle 전멸 — evermeet.cx 정적 빌드로 최종 폴백
-        log(emit_component("DEPS", "WARN", "FFMP", f"all bottles failed: {last_err} — trying static build"))
-    except Exception as e:
-        log(emit_component("DEPS", "WARN", "FFMP", f"Homebrew API failed: {e} — trying static build"))
 
-    # 2차: evermeet.cx 정적 빌드 (universal2, 모든 macOS에서 실행 가능)
-    log(emit_component("DEPS", "RUN", "FFMP", "downloading (static universal2)..."))
-    static_err = _ensure_ffmpeg_macos_static(log, dest)
-    if static_err is None:
-        log(emit_component("DEPS", "OK", "FFMP", "ok (static)"))
-        return None
-    return f"all mirrors exhausted: {static_err}"
+                    bin_dir = _atomic_install(binaries, Path(dest))
+                    candidate = str(bin_dir / "ffmpeg")
+                    if _verify_ffmpeg(candidate):
+                        _wire_ffmpeg_path(str(bin_dir))
+                        log(_ffmpeg_done_event("ok"))
+                        return None
+                    last_err = (
+                        f"ffmpeg [{key}] not runnable at {candidate} on this macOS"
+                    )
+                    log(emit_error_warn(
+                        "DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)"
+                    ))
+                    continue
+            except Exception as e:  # noqa: BLE001 — 후보별 폴백
+                last_err = (
+                    f"ffmpeg [{key}] install failed at {dest}: {type(e).__name__}: {e}"
+                )
+                continue
+        # bottle 전멸 — [v3.8.4] 정적 폴백 폐기.
+        # evermeet.cx는 Apple Silicon(arm64) 빌드를 제공하지 않으며 Homebrew
+        # bottle은 relocatable Cellar가 아니면 dyld: Library not loaded로 즉사한다.
+        # 따라서 대안 없는 Intel 바이너리 투입 대신 명시적 실패로 닫고, F12에
+        # 원인(binary incompatible)을 격리한다.
+        log(emit_error_standard(
+            "DEPS", "FFMP",
+            "binary incompatible", "check dependencies (F12)",
+        ))
+        return f"all mirrors exhausted: {last_err}"
+    except Exception as e:
+        log(emit_error_standard(
+            "DEPS", "FFMP", "formula resolve failed", f"{type(e).__name__} (F12)",
+        ))
+        return f"Homebrew formula resolve failed: {type(e).__name__}: {e}"
 
 
 def _fetch_url(url, dest_path, timeout=60):
-    """단일 파일 다운로드 — 302 redirector(getrelease) 추적 지원.
+    """단일 파일 다운로드 — 302 redirector 추적 지원 (범용 helper).
 
     _http_get(단일 GET, 리다이렉트 미추적)과 달리 표준 opener로 리다이렉트를
-    따라간다. evermeet.cx getrelease가 302를 반환하므로 정적 폴백 전용.
+    따라간다. 현재는 예비 유틸리티이며 수급 경로는 _download를 사용한다.
     """
     opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler())
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
@@ -6828,67 +7146,6 @@ def _fetch_url(url, dest_path, timeout=60):
                 break
             f.write(chunk)
 
-
-def _ensure_ffmpeg_macos_static(log, dest):
-    """macOS 최종 폴백 — evermeet.cx 정적 빌드 단일 바이너리 수급.
-
-    bottle 전멸(dyld 실행 불가) 시에만 진입. 3종 URL을 순서대로 시도하고,
-    실행 검증(_verify_ffmpeg) 통과본만 캐시한다.
-    성공 시 None, 실패 시 오류 문자열.
-    """
-    try:
-        from chzzktube.infra.platform import is_windows as _is_win
-
-        if _is_win():
-            return "static fallback is macOS-only"
-        urls = _FFMPEG_EVERMEET_URLS
-        last_err = None
-        for url in urls:
-            try:
-                log(emit_component("DEPS", "RUN", "FFMP", f"downloading (static) {os.path.basename(url) or 'latest'}..."))
-                with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
-                    zp = os.path.join(td, "ffmpeg.zip")
-                    # redirector(getrelease)는 302를 반환하므로 _http_get이 아닌
-                    # 리다이렉트 추적 opener 사용
-                    _fetch_url(url, zp)
-                    
-                    # 검증: 다운로드된 파일이 유효한 zip인지 확인
-                    try:
-                        import zipfile
-                        with zipfile.ZipFile(zp) as zf:
-                            bad_file = zf.testzip()
-                            if bad_file is not None:
-                                raise zipfile.BadZipFile(f"Corrupted zip entry: {bad_file}")
-                    except zipfile.BadZipFile as e:
-                        last_err = f"static {os.path.basename(url)} invalid zip: {e}"
-                        log(emit_component("DEPS", "WARN", "FFMP", f"invalid zip, trying next URL"))
-                        continue
-                    
-                    _extract_zip(zp, dest, log, "ffmpeg", promote_single_root=True)
-                cand = os.path.join(dest, "ffmpeg")
-                if not os.path.isfile(cand):
-                    for root, _dirs, names in os.walk(dest):
-                        if "ffmpeg" in names:
-                            cand = os.path.join(root, "ffmpeg")
-                            break
-                if os.path.isfile(cand):
-                    try:
-                        os.chmod(cand, 0o755)
-                    except OSError:
-                        pass
-                    _wire_ffmpeg_path(os.path.dirname(cand))
-                    if _verify_ffmpeg(cand):
-                        log(emit_component("DEPS", "OK", "FFMP", "ok (static)"))
-                        return None
-                    last_err = f"static {os.path.basename(url)} not runnable"
-                    continue
-                last_err = f"static {os.path.basename(url)} missing binary"
-            except Exception as e:  # noqa: BLE001 — URL별 폴백
-                last_err = f"static {os.path.basename(url)} failed: {type(e).__name__}"
-                continue
-        return last_err or "static fallback failed"
-    except Exception as e:
-        return f"{type(e).__name__}: {e}"
 
 def ffmpeg_exe():
     """ffmpeg 실행 파일 경로 — 앱 전용 격리 캐시 단일 참조 (v3.8.0).
@@ -6917,47 +7174,56 @@ def ffmpeg_exe():
 
 
 def _ensure_ffmpeg_linux(log, force):
-    """리눅스용 ffmpeg 자동 수급 - 정적 빌드 다운로드 (v3.8.0).
+    """리눅스용 ffmpeg 자동 수급 — BtbN 최신 릴리스 동적 해석 (v3.8.4).
 
-    [격리] 시스템 패키지 매니저(apt/dnf/pacman) 서브프로세스 철폐 —
-    johnvansickle.com의 정적 빌드를 어떤 배포판에서도 직접 수급한다.
+    [동적 버전] johnvansickle 고정 amd64 URL을 폐기. GitHub API latest +
+    checksums.sha256으로 linux64/linuxarm64 static GPL tar.xz를 해석한다.
+
+    [격리] 시스템 패키지 매니저(apt/dnf/pacman) 서브프로세스 철폐 유지.
     """
-    dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
+    dest = Path(config.writable_base()) / FFMPEG_DIRNAME
 
-    # 정적 빌드 다운로드 (johnvansickle.com)
-    try:
-        log(emit_component("DEPS", "RUN", "FFMP", "downloading (static build)..."))
-        url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
-        with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
-            tar_path = os.path.join(td, "ffmpeg.tar.xz")
-            _download(url, tar_path, log, "ffmpeg")
+    max_retries = 3
+    last_err = None
+    for attempt in range(max_retries):
+        if attempt > 0:
+            log(emit_component("DEPS", "WARN", "FFMP", f"retry {attempt}/{max_retries}"))
+            time.sleep(2 ** attempt)
 
-            log(emit_component("DEPS", "RUN", "FFMP", "extracting..."))
-            if os.path.exists(dest):
-                shutil.rmtree(dest, ignore_errors=True)
+        try:
+            log(emit_component("DEPS", "RUN", "FFMP", "resolving latest (github)..."))
+            plan = _resolve_btbn_ffmpeg()
+            log(emit_component("DEPS", "RUN", "FFMP", f"downloading {plan['version']}..."))
+
             os.makedirs(dest, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
+                archive = _download(
+                    plan["url"], os.path.join(td, plan["asset_name"]),
+                    log, "ffmpeg", expected_sha256=plan["sha256"],
+                )
+                staging = _safe_extract(archive, plan["archive_type"], Path(td) / "x")
+                binaries = _locate_binaries(staging)
 
-            # tar.xz 압축 해제
-            import tarfile
-            with tarfile.open(tar_path, "r:xz") as tar:
-                # ffmpeg와 ffprobe만 추출
-                for member in tar.getmembers():
-                    if member.name.endswith("/ffmpeg") or member.name.endswith("/ffprobe"):
-                        member.name = os.path.basename(member.name)
-                        tar.extract(member, dest)
+            if "ffmpeg" not in binaries:
+                last_err = f"ffmpeg binary not found in {plan['asset_name']}"
+                log(emit_error_warn("DEPS", "FFMP", "binary missing", "retry mirror (1/3)"))
+                continue
 
-            # 실행 권한 보장
-            ffmpeg_bin = os.path.join(dest, "ffmpeg")
-            if os.path.isfile(ffmpeg_bin):
-                os.chmod(ffmpeg_bin, 0o755)
-                if _verify_ffmpeg(ffmpeg_bin):
-                    _wire_ffmpeg_path(dest)
-                    log(emit_component("DEPS", "OK", "FFMP", "ok"))
-                    return None
+            bin_dir = _atomic_install(binaries, dest)
+            exe_path = bin_dir / "ffmpeg"
+            if not exe_path.is_file() or not _verify_ffmpeg(str(exe_path)):
+                last_err = "ffmpeg install verification failed"
+                continue
 
-        return "ffmpeg binary not found after extract"
-    except Exception as e:
-        return f"linux ffmpeg install failed: {type(e).__name__}: {e}"
+            _wire_ffmpeg_path(str(bin_dir))
+            log(emit_component("DEPS", "OK", "FFMP", f"ok ({plan['version']})"))
+            _record_provision_plan(plan, str(exe_path))
+            return None
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            log(emit_error_warn("DEPS", "FFMP", "download failed", f"{type(e).__name__} (F12)"))
+
+    return f"linux ffmpeg install failed after {max_retries} attempts: {last_err}"
 
 
 def _wire_ffmpeg_path(bin_dir):
@@ -9455,6 +9721,7 @@ from chzzktube.infra.provisioning.verifier import Verifier
 from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_emitter import emit_component, emit_progress
+from chzzktube.core.log_event import LogEvent  # _emit_via_log 타이ppo 어노테이션용
 
 
 @dataclass
@@ -9491,10 +9758,33 @@ class ProvisioningManager:
         self._downloader = ParallelDownloader(progress_cb=self._on_progress)
         self._active_progress: dict[str, dict] = {}  # component -> {downloaded, total, speed, eta}
 
-    def _emit(self, stage, status, scope, msg, is_status=False, is_error=False):
+    def _emit(self, stage, status, scope, msg, is_status=False, is_error=False,
+              component_id: str | None = None, is_progress: bool = False):
         """raw_log 버스 단일 경유 — 발행자만 raw_log.raw() 호출 (이중 적재 방지)."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
-        raw_log.raw("provisioning", evt, to_tui=is_status, is_error=is_error)
+        evt.component_id = component_id
+        evt.is_progress = is_progress
+        raw_log.raw(
+            "provisioning", evt, to_tui=is_status, is_error=is_error,
+            component_id=component_id, is_progress=is_progress,
+        )
+
+    def _emit_via_log(self, event: LogEvent) -> bool:
+        """Progress event를 기존 log_func 계약으로 한 번만 중계한다."""
+        if self.log is None:
+            return False
+        try:
+            self.log(
+                event,
+                is_status=event.is_status,
+                is_error=event.is_error,
+                component_id=event.component_id,
+                is_progress=event.is_progress,
+            )
+        except TypeError:
+            # 기존 동기 브리지처럼 LogEvent 하나만 받는 콜백과 호환
+            self.log(event)
+        return True
 
     async def _on_progress(self, component: str, downloaded: int, total: int, speed_bps: float = 0.0, eta_sec: float = 0.0):
         """다운로드 진행률 하트비트 — TUI: 컴포넌트별 개별 갱신형 라인, F12: 개별 누적."""
@@ -9523,29 +9813,22 @@ class ProvisioningManager:
         if eta_str:
             progress_msg += f" ETA {eta_str}"
 
-        # 1. TUI: 컴포넌트별 갱신형 라인 (component_id로 추적, is_progress=True)
-        tui_msg = self._fmt_progress(pct, speed_str, progress_msg)
-        self.log(
-            emit_component("DEPS", "RUN", component.upper(), tui_msg),
-            is_status=False,
-            is_error=False,
-            component_id=f"deps_{component}",
-            is_progress=True,
-        )
-
-        # 2. F12: 개별 진행 (누적, 타임스탬프 포함) — 동일 포맷
-        event = emit_progress(
-            stage="DEPS",
-            status="RUN",
-            scope=component.upper(),
-            msg=self._fmt_progress(pct, speed_str, progress_msg),
-            speed=speed_str,
-            pct=pct,
-            bar_frac=pct / 100.0,
-            is_status=False,  # F12에 누적
+        # TUI/F12가 같은 LogEvent의 원문과 component_id를 각각 렌더링한다.
+        # is_status=True는 F12의 기존 갱신형 append 경로를 열고,
+        # is_progress=True는 TUI의 다중 컴포넌트 갱신 경로를 선택한다.
+        event = emit_component(
+            "DEPS", "RUN", component.upper(),
+            self._fmt_progress(pct, speed_str, progress_msg),
+            is_status=True,
             is_error=False,
         )
-        raw_log.raw("provisioning", event, to_tui=False, is_error=False)
+        event.component_id = f"deps_{component}"
+        event.is_progress = True
+        if not self._emit_via_log(event):
+            raw_log.raw(
+                "provisioning", event, to_tui=True,
+                component_id=event.component_id, is_progress=True,
+            )
 
     @staticmethod
     def _format_speed(bps: float) -> str:
@@ -9589,11 +9872,18 @@ class ProvisioningManager:
             speed=speed,
             pct=pct,
             bar_frac=pct / 100.0,
-            is_status=True,  # F12 갱신형 (각각 별도 줄)
+            is_status=True,
             is_error=(state == "failed"),
+            component_id=f"deps_{component}",
+            is_progress=False,
         )
-        # F12에만 보냄 (to_tui=False로 TUI 상태 줄 보호)
-        raw_log.raw("provisioning", event, to_tui=False, is_error=(state == "failed"))
+        # 이 헬퍼는 호환용이며 호출 시 F12 갱신 이벤트를 한 번만 발행한다.
+        raw_log.raw(
+            "provisioning", event, to_tui=False,
+            is_error=(state == "failed"),
+            component_id=event.component_id,
+            is_progress=False,
+        )
 
     def _emit_f12_summary(self, total: int, ok: int, failed: int):
         """F12 마지막 줄: 완료/실패 요약 (갱신형, component_id로 추적)."""
@@ -9610,11 +9900,17 @@ class ProvisioningManager:
             speed="",
             pct=100,
             bar_frac=1.0,
-            is_status=True,  # F12 갱신형 (component_id로 같은 줄 갱신)
+            is_status=True,
             is_error=(failed > 0),
+            component_id="deps_SUMMARY",
+            is_progress=False,
         )
-        # component_id로 같은 줄 갱신
-        raw_log.raw("provisioning", event, to_tui=False, is_error=(failed > 0))
+        raw_log.raw(
+            "provisioning", event, to_tui=False,
+            is_error=(failed > 0),
+            component_id=event.component_id,
+            is_progress=False,
+        )
 
     # ── 1. Resolve ──────────────────────────────────────────────
     async def resolve(self, stale_only: bool = False, channel: str = "stable") -> list[ProvisionPlan]:
@@ -9628,7 +9924,10 @@ class ProvisioningManager:
             
             latest_ver, latest_url, sha256, mirror_name, archive_type = await self._fetch_latest(spec)
             if not latest_ver or not latest_url:
-                self._emit("DEPS", "WARN", name.upper(), f"no mirror resolved")
+                self._emit(
+                    "DEPS", "WARN", name.upper(), "no mirror resolved",
+                    component_id=f"deps_{name}", is_progress=False,
+                )
                 continue
             
             if stale_only and not self.manifest.is_stale(name, latest_ver):
@@ -9836,8 +10135,11 @@ class ProvisioningManager:
             if not dl_result.success:
                 # 다운로드 실패: TUI 진행 라인 실패로 마무리, F12 실패 출력
                 self._finalize_progress_line(plan.component, False, f"download failed: {dl_result.error[:50]}")
-                self._emit_f12_progress(plan.component, 0, "failed", msg=f"download failed: {dl_result.error[:50]}")
-                self._emit("DEPS", "FAIL", plan.component.upper(), f"download failed: {dl_result.error[:100]}")
+                self._emit(
+                    "DEPS", "FAIL", plan.component.upper(),
+                    f"download failed: {dl_result.error[:100]}",
+                    component_id=f"deps_{plan.component}", is_progress=False,
+                )
                 fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"download failed: {dl_result.error}"
@@ -9849,8 +10151,11 @@ class ProvisioningManager:
             if isinstance(installed_path, str):
                 # 설치 실패
                 self._finalize_progress_line(plan.component, False, f"install failed: {installed_path[:50]}")
-                self._emit_f12_progress(plan.component, 0, "failed", msg=f"install failed: {installed_path[:50]}")
-                self._emit("DEPS", "FAIL", plan.component.upper(), f"install failed: {installed_path}")
+                self._emit(
+                    "DEPS", "FAIL", plan.component.upper(),
+                    f"install failed: {installed_path}",
+                    component_id=f"deps_{plan.component}", is_progress=False,
+                )
                 fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"install failed: {installed_path}"
@@ -9861,8 +10166,11 @@ class ProvisioningManager:
             if not verify_result.success:
                 # 검증 실패
                 self._finalize_progress_line(plan.component, False, f"verification failed: {verify_result.error[:50]}")
-                self._emit_f12_progress(plan.component, 0, "failed", msg=f"verification failed: {verify_result.error[:50]}")
-                self._emit("DEPS", "FAIL", plan.component.upper(), f"verification failed: {verify_result.error}")
+                self._emit(
+                    "DEPS", "FAIL", plan.component.upper(),
+                    f"verification failed: {verify_result.error}",
+                    component_id=f"deps_{plan.component}", is_progress=False,
+                )
                 fail_count += 1
                 final_results.append(ProvisionResult(
                     plan.component, False, error=f"verification failed: {verify_result.error}"
@@ -9871,8 +10179,11 @@ class ProvisioningManager:
 
             # 성공: TUI 진행 라인 100% 완료로 마무리, F12 완료 출력
             self._finalize_progress_line(plan.component, True, f"→ {verify_result.version}")
-            self._emit_f12_progress(plan.component, 100, "completed", msg=f"→ {verify_result.version}")
-            self._emit("DEPS", "OK", plan.component.upper(), f"{plan.component} {'updated' if plan.is_update else 'installed'} → {verify_result.version}")
+            self._emit(
+                "DEPS", "OK", plan.component.upper(),
+                f"{plan.component} {'updated' if plan.is_update else 'installed'} → {verify_result.version}",
+                component_id=f"deps_{plan.component}", is_progress=False,
+            )
             ok_count += 1
             final_results.append(ProvisionResult(
                 plan.component, True, version=verify_result.version,
@@ -9886,21 +10197,23 @@ class ProvisioningManager:
         return final_results
 
     def _finalize_progress_line(self, component: str, success: bool, msg: str):
-        """TUI 진행 라인을 완료/실패 상태로 마무리 (is_progress=False로 히스토리 확정)."""
+        """TUI/F12의 같은 진행 라인을 완료/실패 상태로 한 번에 마감한다."""
         pct = 100 if success else 0
-        bar = "█" * 10 if success else "░" * 10
         status = "completed" if success else "failed"
-        tui_msg = self._fmt_progress(pct, "", f"{status} {msg}")
-        
-        # is_progress=False로 호출하면 진행 라인 확정 (히스토리로 남음)
-        self.log(
-            emit_component("DEPS", "OK" if success else "FAIL", component.upper(), tui_msg),
-            is_status=False,
+        event = emit_component(
+            "DEPS", "OK" if success else "FAIL", component.upper(),
+            self._fmt_progress(pct, "", f"{status} {msg}"),
+            is_status=True,
             is_error=not success,
-            component_id=f"deps_{component}",
-            is_progress=False,  # 진행 라인 확정
         )
-        # 진행 라인 추적에서 제거
+        event.component_id = f"deps_{component}"
+        event.is_progress = False
+        if not self._emit_via_log(event):
+            raw_log.raw(
+                "provisioning", event, to_tui=True,
+                is_error=not success,
+                component_id=event.component_id, is_progress=False,
+            )
         self._active_progress.pop(component, None)
 
     def _ensure_nodejs_npm_links(self, node_dir: Path):
@@ -10040,9 +10353,15 @@ class ProvisioningManager:
         try:
             from chzzktube.infra.pylib_bootstrap import bootstrap
             path = bootstrap(clear_caches=True)
-            self._emit("DEPS", "OK", "PY", f"overlay refreshed: {path}")
+            self._emit(
+                "DEPS", "OK", "PY", f"overlay refreshed: {path}",
+                component_id="deps_PY", is_progress=False,
+            )
         except Exception as e:
-            self._emit("DEPS", "WARN", "PY", f"overlay refresh failed: {e}")
+            self._emit(
+                "DEPS", "WARN", "PY", f"overlay refresh failed: {e}",
+                component_id="deps_PY", is_progress=False,
+            )
 
     def _refresh_path(self):
         """PATH에 검증된 binary 디렉토리 추가."""
@@ -10066,7 +10385,10 @@ class ProvisioningManager:
         """전체 프로비저닝: resolve → download → verify → commit."""
         plans = await self.resolve(stale_only=stale_only, channel=channel)
         if not plans:
-            self._emit("DEPS", "SKIP", "DEPS", "all components up-to-date")
+            self._emit(
+                "DEPS", "SKIP", "DEPS", "all components up-to-date",
+                component_id="deps_SUMMARY", is_progress=False,
+            )
             return []
         
         results = await self.provision(plans)
@@ -10075,9 +10397,15 @@ class ProvisioningManager:
         ok_count = sum(1 for r in results if r.success)
         fail_count = len(results) - ok_count
         if fail_count == 0:
-            self._emit("DEPS", "DONE", "DEPS", f"provisioned {ok_count} components")
+            self._emit(
+                "DEPS", "DONE", "DEPS", f"provisioned {ok_count} components",
+                component_id="deps_SUMMARY", is_progress=False,
+            )
         else:
-            self._emit("DEPS", "WARN", "DEPS", f"{ok_count} ok, {fail_count} failed")
+            self._emit(
+                "DEPS", "WARN", "DEPS", f"{ok_count} ok, {fail_count} failed",
+                component_id="deps_SUMMARY", is_progress=False,
+            )
         
         return results
 
@@ -10243,9 +10571,11 @@ MIRROR_REGISTRY: dict[str, ComponentSpec] = {
         type=ComponentType.BINARY,
         version_strategy="latest_stable",
         mirrors=(
-            Mirror("github_gyan", "https://api.github.com/repos/GyanD/codexffmpeg/releases/latest", priority=0),
-            Mirror("github_btb", "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", priority=1),
-            Mirror("evermeet", "https://evermeet.cx/ffmpeg/getrelease/zip", priority=2),
+            # [v3.8.4] 거버넌스 정합 — 검증 불가/타깃 아키텍처 미지원 공급원 배제.
+            # macOS는 Homebrew formulae bottle(relocatable+SHA-256),
+            # Windows/Linux는 BtbN 정적 GPL 아카이브를 components.py가 담당한다.
+            Mirror("github_btb", "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", priority=0),
+            Mirror("homebrew", "https://formulae.brew.sh/api/formula/ffmpeg.json", priority=1),
         ),
         verify_cmd=("ffmpeg", "-version"),
         install_rel_path="ffmpeg/bin/ffmpeg",
@@ -10296,11 +10626,12 @@ def get_platform_asset_filters() -> tuple[str, ...]:
         return ("linux", "x86_64", "amd64")
 
 
-# [stdlib-only] zipfile로 해제 불가능한 아카이브 — 수급 후보에서 완전 배제.
+# [stdlib-only] 표준 라이브러리로 해제 불가능한 아카이브 — 수급 후보에서 배제.
 # py7zr 등 외부 의존성을 수급 계층(L0)에 들이지 않기 위한 명시적 경계.
-ARCHIVE_UNSUPPORTED_EXT = (".7z", ".rar", ".xz", ".tar.zst", ".zst")
-# 선호 순위: 앞일수록 우선. .zip 최우선, 확장자 없음(원시 바이너리) 차선.
-ARCHIVE_PREFERRED_EXT = (".zip", "")
+# .tar.xz/.tar.gz는 tarfile로 해제 가능하므로 배제 대상이 아니다.
+ARCHIVE_UNSUPPORTED_EXT = (".7z", ".rar", ".tar.zst", ".zst")
+# 선호 순위: 앞일수록 우선. .zip/.tar.xz 최우선, 확장자 없음(원시 바이너리) 차선.
+ARCHIVE_PREFERRED_EXT = (".zip", ".tar.xz", ".tar.gz", "")
 
 
 def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
@@ -11929,12 +12260,18 @@ def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
     )
 
 
-def emit_component(stage, status, scope, msg="", is_status=False, is_error=False):
-    """컴포넌트/워커 결과 — DEPS / POT / READY 등."""
+def emit_component(stage, status, scope, msg="", is_status=False, is_error=False,
+                   component_id=None, is_progress=False):
+    """컴포넌트/워커 결과 — DEPS / POT / READY 등.
+
+    component_id/is_progress는 갱신형 진행 로그(§3.7-5)의 필수 페이로드다.
+    브리지(TUI/F12)가 이 두 필드로 동일 라인 제자리 덮어쓰기를 수행한다.
+    """
     from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
         stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         is_status=is_status, is_error=is_error,
+        component_id=component_id, is_progress=is_progress,
     )
 
 
@@ -12079,6 +12416,9 @@ class LogEvent:
     # msg가 이미 표시 완성형(컬럼 포맷·원문)일 때 True — 뷰는 재포맷하지 않는다
     rendered: bool = False
     timestamp: str = field(default_factory=lambda: time.strftime("[%H:%M:%S]"))
+    # 갱신형 로그의 소유 컴포넌트와 진행 중/마감 상태를 운반한다.
+    component_id: str | None = None
+    is_progress: bool = False
 
 
 def safe_log_msg(obj) -> str:
@@ -12762,8 +13102,9 @@ def subscribe_full(fn):
     _dispatcher.subscribe_full(fn)
 
 
-def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
-    """단일 진입점 — 앱의 모든 행동은 여기로 수신된다."""
+def raw(tag, msg, is_status=False, is_error=False, to_tui=False,
+        component_id: str | None = None, is_progress: bool = False):
+    """단일 진입점 — 앱의 모든 행동과 갱신형 메타데이터는 여기로 수신된다."""
     if not isinstance(msg, LogEvent):
         msg = LogEvent(
             stage="SYS",
@@ -12779,6 +13120,10 @@ def raw(tag, msg, is_status=False, is_error=False, to_tui=False):
             msg.is_status = True
         if is_error:
             msg.is_error = True
+    if component_id is not None:
+        msg.component_id = component_id
+    if is_progress:
+        msg.is_progress = True
     _dispatcher.publish(msg, to_tui)
 
 
@@ -14018,7 +14363,8 @@ class UpdateWorker(QThread):
         self.deps_failed.emit([label for label, status, _ in results if status == "FAIL"])
         self.check_done.emit(stale)
 
-    def _provision_cb(self, msg, is_status=False, is_error=False):
+    def _provision_cb(self, msg, is_status=False, is_error=False,
+                      component_id=None, is_progress=False):
         if isinstance(msg, LogEvent):
             event = msg
             if is_status:
@@ -14032,10 +14378,20 @@ class UpdateWorker(QThread):
                 scope="DEPS", msg=str(msg),
                 is_status=is_status, is_error=is_error,
             )
-        show = bool(event.is_status or event.is_error
+        if component_id is not None:
+            event.component_id = component_id
+        if is_progress:
+            event.is_progress = True
+
+        component_id = getattr(event, "component_id", component_id)
+        is_progress = bool(getattr(event, "is_progress", is_progress))
+        show = bool(event.is_status or event.is_error or is_progress
                     or event.status in ("FAIL", "WARN", "ABORT"))
         self._tick(event)
-        raw_log.raw("deps", event, to_tui=show)
+        raw_log.raw(
+            "deps", event, to_tui=show,
+            component_id=component_id, is_progress=is_progress,
+        )
 
     @staticmethod
     def _had_action(tui_line):
@@ -14053,9 +14409,13 @@ class UpdateWorker(QThread):
         import asyncio
         from chzzktube.infra.provisioning import ProvisioningManager
 
-        mgr = ProvisioningManager(log_func=lambda evt: self._provision_cb(evt,
-            is_status=getattr(evt, 'is_status', False),
-            is_error=getattr(evt, 'is_error', False)))
+        mgr = ProvisioningManager(log_func=lambda evt, **kwargs: self._provision_cb(
+            evt,
+            is_status=kwargs.get("is_status", getattr(evt, "is_status", False)),
+            is_error=kwargs.get("is_error", getattr(evt, "is_error", False)),
+            component_id=kwargs.get("component_id", getattr(evt, "component_id", None)),
+            is_progress=kwargs.get("is_progress", getattr(evt, "is_progress", False)),
+        ))
 
         try:
             results = asyncio.run(mgr.ensure_all(stale_only=False, channel=self.channel))

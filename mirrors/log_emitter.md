@@ -352,12 +352,18 @@ def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
     )
 
 
-def emit_component(stage, status, scope, msg="", is_status=False, is_error=False):
-    """컴포넌트/워커 결과 — DEPS / POT / READY 등."""
+def emit_component(stage, status, scope, msg="", is_status=False, is_error=False,
+                   component_id=None, is_progress=False):
+    """컴포넌트/워커 결과 — DEPS / POT / READY 등.
+
+    component_id/is_progress는 갱신형 진행 로그(§3.7-5)의 필수 페이로드다.
+    브리지(TUI/F12)가 이 두 필드로 동일 라인 제자리 덮어쓰기를 수행한다.
+    """
     from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
         stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         is_status=is_status, is_error=is_error,
+        component_id=component_id, is_progress=is_progress,
     )
 
 

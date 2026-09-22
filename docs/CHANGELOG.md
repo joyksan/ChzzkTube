@@ -1,3 +1,41 @@
+### 2026-09-23 — v3.8.4 : FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·relocatable Bottle (patch)
+
+#### 배경 (v3.8.3 → v3.8.4)
+- **버전 하드코딩**: Windows는 FFmpeg 7.1 직링크, Linux는 `ffmpeg-release-amd64-static.tar.xz` 고정 — 동적 모듈인데도 생명주기 갱신이 불가능했다.
+- **아키텍처 무시**: Linux ARM64에서도 amd64 바이너리를 내려받아 실행 즉시 실패.
+- **무검증 수급**: 대부분 경로가 SHA-256 없이 캐시에 진입. `evermeet.cx` 폴백은 Apple Silicon 네이티브 빌드를 제공하지 않는데도 universal2로 위장되어 Rosetta2/dyld 실패를 양산.
+- **dyld 시한폭탄**: Homebrew Bottle의 `ffmpeg`는 정적 바이너리가 아니다. `/opt/homebrew/Cellar` 절대경로로 링크된 bottle은 앱 격리 캐시로 복사하면 `dyld: Library not loaded`로 즉사한다.
+- **비stdlib 의존 위험**: `.7z` 자산을 낚아채면 `py7zr`류 외부 의존을 수급 계층(L0)에 끌어들여야 했다.
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `infra/components.py` | 하드코딩 URL 전면 폐기. `_normalize_arch`(amd64/arm64 정규화), `_select_btbn_asset`(static GPL만, shared/debug/7z 배제), `_parse_btbn_checksums`(정확한 basename 매칭 + 64자리 hex 검증), `_resolve_btbn_ffmpeg`(API latest + checksums 단일 트랜잭션) 신설. `_safe_extract`(ZIP 경로 정규화 검사, tar `filter="data"`, `TarError`→`ValueError` 정규화), `_locate_binaries`(중첩 Cellar/bin 탐색), `_atomic_install`(incoming→backup→rename rollback) 추가. macOS는 formulae `cellar`가 `:any` 계열일 때만 채택하고 SHA-256 필수화. `_ensure_ffmpeg_macos_static`·`_FFMPEG_EVERMEET_URLS`·`FFMPEG_RELEASE_URL` 삭제. |
+| `infra/provisioning/resolver.py` | ffmpeg 미러에서 `github_gyan`/`evermeet` 제거 → `github_btb`(priority 0) + `homebrew`(priority 1). `ARCHIVE_UNSUPPORTED_EXT`에서 `.xz` 제거(BtbN Linux 자산이 `.tar.xz`), `ARCHIVE_PREFERRED_EXT`에 `.tar.xz`/`.tar.gz` 추가. |
+| `core/log_emitter.py` | `emit_component`에 `component_id`/`is_progress` 파라미터 추가 — §3.7-5 갱신형 계약이 브리지까지 도달하도록 페이로드 관통. |
+| `infra/provisioning/manifest.py` (기존 API 사용) | 수급 결과를 `ProvisionManifest.load/save` + `ComponentRecord` + `update_component`로 감사 기록(`_record_provision_plan`). |
+
+#### 신규 테스트
+| 파일 | 내용 |
+|------|------|
+| `tests/test_ffmpeg_resolver_contract.py` (신규) | 4건: Windows static GPL 선택 및 GitHub `digest` 무시, Linux ARM64 → `linuxarm64` 매핑, checksum 파서 정확 매칭·형식 거부, 미지원 아키텍처 ValueError. |
+| `tests/test_ffmpeg_archive_contract.py` (신규) | 6건: ZIP/tar path traversal 차단, 중첩 `Cellar/.../bin` 보존, 비relocatable cellar 거부, evermeet 폴백 부재(심볼 미존재 검증), SHA-256 부재 bottle 거부. |
+| `tests/test_v38_contracts.py` (보수) | bottle 계약 테스트를 subprocess tar → stdlib tarfile + relocatable + SHA-256 계약으로 재작성. 소진형 응답 스텁으로 다운로드 루프 종료 보장. |
+
+#### 거버넌스 정합
+- HANDOVER §5-27 "수급 무결성 및 무검증 레거시 폴백 절대 금지 (v3.8.5)" 및 §6의 evermeet/미검증 폴백 금지 조항과 구현을 일치시켰다.
+- 실패는 은폐하지 않고 표준 `DEPS │ FAIL │ FFMP │ <원인> → <액션>` 으로 닫고 F12에 격리한다.
+
+#### 검증
+- 전체 pytest **340 passed**
+- `python -m py_compile` 통과 (`components.py`, `log_emitter.py`, `resolver.py`)
+- `python sync_mirrors.py --check` 변경 0건/누락 0건
+- `git diff --check` clean
+- 잔여 `johnvansickle`/`codexffmpeg`/`evermeet` 수급 참조 0건 (주석·문서 설명 제외)
+
+---
+
 ### 2026-09-22 — v3.8.3 : 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률 (patch)
 
 #### 배경 (v3.8.2 → v3.8.3)

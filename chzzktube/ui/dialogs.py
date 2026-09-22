@@ -892,35 +892,6 @@ class VerboseLogWindow(QDialog):
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Full Log (F12)")
-        self.resize(760, 480)
-        self.setStyleSheet(theme.DIALOG_BG_QSS)
-
-        self.te = QTextEdit(self)
-        self.te.setReadOnly(True)
-        self.te.setStyleSheet(theme.TE_CONTENT_QSS)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-        layout.addWidget(self.te)
-
-        btn_row = QHBoxLayout()
-        self.lbl_info = QLabel("")
-        self.lbl_info.setStyleSheet("color: #888888; font-size: 11px;")
-        btn_close = QPushButton("[ Close: Esc ]")
-        btn_close.setProperty("class", "tui-tag")
-        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_close.setStyleSheet(theme.TUI_STYLE)
-        btn_close.clicked.connect(self.close)
-
-        btn_row.addWidget(self.lbl_info)
-        btn_row.addStretch(1)
-        btn_row.addWidget(btn_close)
-        layout.addLayout(btn_row)
-
         # 갱신형 라인 추적: component_id -> block number
         self._status_lines: dict[str, int] = {}
 
@@ -968,4 +939,5 @@ class VerboseLogWindow(QDialog):
 
     def set_content(self, text):
         self.te.setPlainText(text)
+        self._status_lines.clear()
         self.lbl_info.setText(f"buffer — {self.te.document().blockCount()} lines")

@@ -106,6 +106,16 @@ def test_verbose_log_window_f12_updates_by_component_id():
     assert win.te.document().blockCount() == 2
 
 
+def test_verbose_log_window_set_content_resets_component_blocks():
+    from chzzktube.ui.dialogs import VerboseLogWindow
+    win = VerboseLogWindow()
+    win.append("ffmpeg 10%", is_status=True, component_id="deps_ffmpeg")
+    win.set_content("plain history")
+    assert win._status_lines == {}
+    win.append("ffmpeg 50%", is_status=True, component_id="deps_ffmpeg")
+    assert win.te.toPlainText().splitlines() == ["plain history", "ffmpeg 50%"]
+
+
 def test_provisioning_manager_emits_component_id_on_progress():
     import asyncio
     from chzzktube.infra.provisioning.manager import ProvisioningManager

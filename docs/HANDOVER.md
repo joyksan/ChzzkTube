@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-22 - v3.8.3 — 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률 (patch)
+> 마지막 갱신: 2026-09-23 - v3.8.4 — FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·relocatable Bottle (patch)
 
 ---
 
@@ -78,12 +78,14 @@
 
 | 경로 | 소유/용도 |
 |---|---|
-| `ffmpeg/` | `components.py`의 ffmpeg 수급·검증 캐시. 실제 실행 파일은 하위 `bin/` 등에서 탐색 |
+| `ffmpeg/bin/` | `components.py`의 ffmpeg 수급·검증 캐시. `ffmpeg`·`ffprobe`를 함께 배치한다 (동일 디렉터리 계약) |
+| `ffmpeg/bin_incoming`, `ffmpeg/bin_backup` | 원자 교체용 임시/백업 디렉터리. 교체 성공·실패 후 반드시 제거된다 |
 | `node/` | `node_provider.py`의 Node.js 22+ 포터블 런타임과 npm 무결성 관리 |
 | `bgutil-ytdlp-pot-provider/` | `pot_server.server_home()`의 PO 서버 소스/빌드. `server/.version`으로 설치 버전 판정 |
 | `bgutil_server.log` | PO 서버 기동/빌드 진단 로그 |
 | `.prewarm.lock` | PO 서버 프리웜 상호배제 락. 죽은 PID + 30분 초과 시 stale 회수 |
 | `yt_dlp_plugins/` | 구 PO 플러그인 잔재 제거 대상. 현행 자체 Node 서버와는 별도 정리 경로 |
+| `provision_manifest.json` | 수급 감사 기록. `ProvisioningManager`가 `ProvisionManifest.load/save`로 관리 |
 
 - Node 런타임 다운로드 아카이브는 일시적으로 `writable_base()/node_portable.zip` 또는 `node_portable.tar.gz`에 저장한 뒤 전개한다.
 - PO 서버 소스 갱신은 `tempfile.mkdtemp(prefix="chzzktube_bgutil_")`의 임시 디렉터리에서 수행하고, 완료 후 `server_home()`으로 원자적으로 반영한다.
@@ -356,6 +358,21 @@ LAYER 0: Domain / Helpers / Infra (Leaf)
   루트: main.py(씬 런처) · smoke_test.py · sync_mirrors.py · bump_version.py
 ```
 
+### log_console.py (ConciseLogConsole)
+- **책임**: TUI 규격에 맞춘 메인 콘솔의 **순수 렌더링 엔진**.
+- **로직 특성**:
+  - **Single-Line In-Place Status**: `is_status=True`인 진행률/상태 로그는 매번 새 줄을 만들지 않고 커서 제어를 통해 직전 줄을 제자리에서 덮어쓴다 (지터링 방지).
+  - **NoWrap과 Pixel-perfect Clamp**: `QTextEdit`의 자체 자동 줄바꿈을 끄고(`NoWrap`), `fontMetrics().horizontalAdvance()`를 사용해 실제 픽셀 폭 단위로 예산을 측정, 창 폭을 넘어가면 `…`으로 정밀하게 절단한다 (가로 스크롤 방지).
+  - 플래그 라우팅: 문자열 내용을 파싱해서(정규식 등) 줄바꿈을 결정하지 않고, 오직 발행자(`raw_log`)가 동봉한 `no_wrap` 플래그만 신뢰한다.
+  - **주의**: 이 모듈은 데이터(로그의 내용)를 결정하지 않는다. 오직 넘어온 데이터를 TUI 예산 내에서 "어떻게 예쁘게 그릴지"만 담당한다.
+
+### dialogs.py
+- **책임**: 앱 내에서 발생하는 모든 독립된 팝업 대화상자(Dialog)들의 컬렉션.
+- **로직 특성**:
+  - **SSOT (Single Source of Truth) 규격**: 모든 안내창은 `TuiNoticeDialog`(280x125, 중앙 정렬, 칠흑 배경, 플랫 버튼) 규격을 준수한다.
+  - **방어적 위임 패턴**: `SettingsDialog` 등은 부모 창(`MainWindow`)의 메서드(`save_cfg`)를 직접 강제 호출하지 않고, 존재 여부를 확인해 폴백(`config.save_config`)하도록 캡슐화되어 있다 (단독 단위 테스트 가능).
+  - **수명주기 분리**: 과거 버전처럼 백그라운드 워커(`UpdateWorker`)를 대화상자 모듈 안에 품고 있지 않는다. 오직 View(UI 렌더링 및 사용자 입력 수집)의 역할만 수행한다.
+
 ### 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.4.0 실측)
 
 ```
@@ -593,6 +610,26 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
       - `fallback`, `timeout` 등 내부 엔진 구현 용어 노출 금지
       - 원인만 명시하고 후속 진행/액션을 누락하는 단발성 실패 로그 금지
 
+27. **수급 무결성 및 무검증 레거시 폴백 절대 금지 (v3.8.5)**: 외부 의존성(FFmpeg, Node.js 등) 수급 시, 단일 출처의 SHA-256 무결성 검증을 통과하지 못하거나 타깃 아키텍처(Apple Silicon 등)를 네이티브로 지원하지 못하는 레거시 공급원(evermeet.cx, 비공식 미러 등)으로의 묵시적·단계적 폴백 체인 구성을 엄격히 금지한다. Primary 공급자(macOS Homebrew Bottle, Windows/Linux BtbN)의 수급 및 `_verify_ffmpeg` 실행 검증에 실패할 경우, 시스템을 오염시키는 임의 바이너리로 도망치지 말고 반드시 `emit_error_standard` 규격을 통한 **명시적 FAIL**로 즉시 파이프라인을 닫고 사용자 개입(F12 안내)을 대기해야 한다. '어떻게든 실행되게 만든다'는 명목의 무검증 우회는 시스템 무결성을 파괴하는 악성 퇴행이다.
+
+28. **FFmpeg 동적 수급 계약과 아키텍처 매핑 (v3.8.4)**: `components.py`의 FFmpeg 수급은 공급자 API를 매 트랜잭션 재해석한다 — 버전·URL을 하드코딩하지 않는다.
+
+    | 항목 | 계약 |
+    |---|---|
+    | Windows/Linux 공급자 | `BtbN/FFmpeg-Builds` `releases/latest` 단일 API |
+    | Windows 자산 | `<...>-win64-gpl.zip` / `-winarm64-gpl.zip` (static, non-shared) |
+    | Linux 자산 | `<...>-linux64-gpl.tar.xz` / `-linuxarm64-gpl.tar.xz` (static) |
+    | 아키텍처 매핑 | `_normalize_arch`: `x86_64`/`amd64` → `amd64`, `aarch64`/`arm64` → `arm64`, 그 외 `ValueError` |
+    | 무결성 | GitHub asset `digest` 필드는 **존재하지 않는다** — 별도 `checksums.sha256` 텍스트를 받아 정확한 basename 매칭으로만 SHA-256을 얻는다 |
+    | zip 배제 | `.7z`/`.rar`/`.zst`는 7z 의존 회피를 위해 후보에서 제외한다 (`py7zr`류 L0 유입 금지) |
+    | macOS 공급자 | `formulae.brew.sh` bottle. `cellar`가 `:any*`(relocatable)일 때만 채택하고 SHA-256은 필수 |
+    | macOS 정적 폴백 | **존재하지 않는다.** evermeet.cx는 Apple Silicon 빌드를 제공하지 않는다 |
+    | 전개 | ZIP은 정규화 경로 prefix 검사, tar는 `filter="data"`. `TarError`는 `ValueError`로 정규화 |
+    | 설치 | `bin_incoming` → `bin_backup` → `os.replace` 로 교체하고 실패 시 backup 복원. `ffmpeg`·`ffprobe` 둘 다 필요 |
+    | 기록 | `_record_provision_plan`이 `ProvisionManifest.load/save` + `ComponentRecord`로 감사 기록 (best-effort) |
+
+    진행 틱은 `_ffmpeg_progress_event`(`component_id="ffmpeg"`, `is_progress=True`)로, 마감은 `_ffmpeg_done_event`(`is_progress=False`)로 발행한다 — 이 두 플래그가 브리지(TUI/F12)의 동일 라인 제자리 갱신을 성립시킨다.
+
 ## 6. 하지 말 것 (회귀 방지)
 
 - ❌ `state/cfg` 딕셔너리를 복사해서 워커에 넘기는 것
@@ -610,6 +647,8 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 - ❌ `log_console.emit_event/format_log_line`을 거치지 않고 컬럼 로그 문자열(`[HH:MM:SS] STAGE │ ...`)을 직접 조립하는 것 — TUI 규격 단일 출처 위반
 - ❌ `.emit(..., is_status=..., is_error=...)` 키워드 인자 시그니처로 되돌리는 것 (커밋 전 `grep -n 'is_status=' '*.py'` 스팟체크)
 - ❌ 분석(경량) 결과의 v_list/a_list를 '실제 다운로드 가능 포맷'으로 간주해 다운로드 포맷 선택에 그대로 쓰는 것
+- ❌ **무검증·레거시 수급처(evermeet, SHA-256 미제공 소스 등)로의 폴백 체인 신설**: "실패 시 기존 정적 빌드 시도" 따위의 안일한 타협으로 검증되지 않은 바이너리나 Rosetta2 의존 바이너리를 앱 캐시에 유입시키는 행위 전면 금지. 실패는 숨겨야 할 흉측한 결함이 아니라, 격리하고 보고해야 할 시스템 계약이다.
+- ❌ **Homebrew Bottle 검증 실패 시 미검증 아카이브로 도피하는 것**: Bottle 실행 실패(dylib 불일치 등)가 발생했을 때 레거시 정적 빌드로 땜질하지 말고, 즉시 표준 에러 규격으로 실패 원인을 명시하고 프로세스를 중단할 것.
 
 ## 7. 검증 워크플로우 (수정 후 필수 3단계 + 플랫폼 후속)
 
