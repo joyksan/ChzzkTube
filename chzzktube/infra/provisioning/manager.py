@@ -12,6 +12,7 @@ from typing import Optional
 import asyncio
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -207,15 +208,17 @@ class ProvisioningManager:
 
     @staticmethod
     def _fmt_progress(pct: int, speed: str, msg: str = "") -> str:
-        """§3.5-3.6 규격 엄수: PCT(3자리) · SPEED(10자리 고정) [GAUGE 10블록] · msg"""
+        """TUI §3.5 규격 칼정렬: strip() 무시 정렬 포맷"""
         bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-        
-        # 속도가 있든 없든 정확히 10자리의 폭을 강제하여 [GAUGE]의 시작 위치를 완벽하게 세로 정렬!
-        speed_padded = f"{speed:>10}" if speed else " " * 10
-        speed_str = f" · {speed_padded}"
-        
+
+        pct_val = min(max(pct, 0), 100)
+        pct_str = f"{pct_val:>3d}%".replace(" ", "\u00a0")
+
+        speed_raw = f"{speed:>10}" if speed else " " * 10
+        speed_padded = speed_raw.replace(" ", "\u00a0")
+
         msg_str = f" · {msg}" if msg else ""
-        return f"{pct:3d}%{speed_str} [{bar}]{msg_str}"
+        return f"{pct_str} · {speed_padded} [{bar}]{msg_str}"
 
     def _emit_f12_progress(self, component: str, pct: int, state: str, msg: str = "", speed: str = ""):
         """F12에 개별 진행/완료/실패 상태 갱신형 출력 (각각 별도 줄)."""
@@ -559,7 +562,7 @@ class ProvisioningManager:
     def _finalize_progress_line(self, component: str, success: bool, msg: str):
         """TUI/F12의 같은 진행 라인을 완료/실패 상태로 한 번에 마감한다."""
         pct = 100 if success else 0
-        status = "completed" if success else "failed"
+        status = "completed" if success else ""
         event = emit_component(
             "DEPS", "OK" if success else "FAIL", component.upper(),
             self._fmt_progress(pct, "", f"{status} {msg}"),
@@ -610,7 +613,18 @@ class ProvisioningManager:
 
     async def _extract_and_install(self, plan: ProvisionPlan, archive: Path, sha256: str) -> Path:
         """아카이브 추출/설치 수행."""
-        # stdlib-only: zip/tar.gz/tar.xz/whl/server만 지원, 7z 등 외부 의존성 차단
+        # [macOS FFmpeg 특화] macOS Bottle은 components.ensure_ffmpeg 단일 경로에 전권 위임
+        if plan.component == "ffmpeg" and sys.platform == "darwin":
+            from chzzktube.infra.components import ensure_ffmpeg, ffmpeg_exe
+            err = await asyncio.to_thread(ensure_ffmpeg, self.log, force=True)
+            if err:
+                return f"ffmpeg ensure failed: {err}"
+            exe = ffmpeg_exe()
+            if not exe:
+                return "ffmpeg executable not found after ensure"
+            return Path(exe).parent.parent  # ~/.chzzktube/ffmpeg 반환
+
+        # stdlib-only: zip/tar.gz/tar.xz/whl/server만 지원
         if plan.archive_type not in ("zip", "tar.gz", "tar.xz", "whl", "server"):
             return f"unsupported archive type: {plan.archive_type} — stdlib-only"
 

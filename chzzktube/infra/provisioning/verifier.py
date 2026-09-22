@@ -141,13 +141,41 @@ class Verifier:
         """스펙 타입에 따라 적절한 검증 메서드 디스패치."""
         if spec.type == ComponentType.PYTHON_PKG:
             return cls.verify_python_pkg(spec, install_path)
+            
         elif spec.type == ComponentType.BINARY:
-            # 바이너리 경로 계산 - install_rel_path 사용 (예: "node/bin/node", "ffmpeg/bin/ffmpeg")
-            if install_path.is_dir() and spec.install_rel_path:
-                binary_path = install_path.parent / spec.install_rel_path
-            else:
-                binary_path = install_path
+            # [지능형 리졸버] 단일 수식의 환상을 버리고 실측 다중 후보를 검증
+            binary_path = install_path
+
+            if install_path.is_dir():
+                target_name = spec.name + (".exe" if sys.platform == "win32" else "")
+                
+                # 1. 우선순위 후보군 구성 (승격된 bin/ 우선, 루트 폴백, 상대경로 조합)
+                candidates = [
+                    install_path / "bin" / target_name,
+                    install_path / target_name,
+                ]
+                if spec.install_rel_path:
+                    candidates.append(install_path.parent / spec.install_rel_path)
+                    candidates.append(install_path / spec.install_rel_path)
+
+                # 존재하는 첫 번째 정규 파일 채택
+                found = None
+                for cand in candidates:
+                    if cand.is_file():
+                        found = cand
+                        break
+
+                # 2. 최후의 보루: 디렉터리 내부 재귀 탐색 (Homebrew Bottle 심층 격리 대응)
+                if not found:
+                    for p in install_path.rglob(target_name):
+                        if p.is_file():
+                            found = p
+                            break
+
+                binary_path = found if found else (install_path / "bin" / target_name)
+
             return cls.verify_binary(spec, binary_path)
+
         elif spec.type == ComponentType.SERVER:
             return cls.verify_bgutil(spec, install_path)
         else:
