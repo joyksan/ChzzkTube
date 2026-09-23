@@ -18,6 +18,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -44,7 +45,6 @@ from chzzktube.core.utils import _open_windows_explorer
 from chzzktube.core.watchdog import (
     ANALYSIS_TIMEOUT_SEC,
     FALLBACK_GRACE_SEC,
-    FALLBACK_TIMEOUT_SEC,
     GATE_TIMEOUT_SEC,
     LivenessWatchdog,
 )
@@ -567,7 +567,7 @@ class MainWindow(QMainWindow):
     def pick_txt_from_path(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+                lines = [raw.strip() for raw in f if raw.strip() and not raw.strip().startswith("#")]
             if lines:
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
@@ -760,15 +760,6 @@ class MainWindow(QMainWindow):
             or ""
         )
         title = info.get("title") or data.get("title") or ""
-        meta = " · ".join(x for x in (uploader, title) if x)
-
-        v_first = v_list[0] if v_list else {}
-        res = ""
-        if isinstance(v_first, dict):
-            h = v_first.get("height") or v_first.get("v_height") or 0
-            fps = v_first.get("fps") or v_first.get("v_fps") or 0
-            if h:
-                res = f"{h}p{fps}" if fps else f"{h}p"
 
         # [v3.8.0 Hyper-Minimalist TUI] ANAL 마감 정갈 명세:
         #   1) RUN  complete 라인            — analyzing complete!
@@ -1294,14 +1285,26 @@ class MainWindow(QMainWindow):
             self._mirror_full_log(line, f12_is_status)
 
     def _mirror_full_log(self, line, is_status=False, component_id: str = None):
+        """F12 전체 로그 버퍼 적재 및 활성 다이얼로그 제자리 갱신 관통 (SSOT)."""
         msg = str(line)
         if len(msg) > 4096:
             msg = msg[:4096] + "…"
         ts = time.strftime("%H:%M:%S")
-        stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
-        # HANDOVER 3.7-3: F12 및 파일 로그는 to_tui 여부와 관계없이 전량 기록.
-        # 진행 틱(is_status=True)도 파일에는 남겨야 한다 (파일·F12 전량 기록).
-        self._full_log_buf.append(stamped)
+        stamped = "\n".join(f"[{ts}] {line}" if line else f"[{ts}]" for line in msg.split("\n"))
+
+        # [버퍼 지터링 차단] 
+        # 진행 틱(is_status=True 또는 component_id 존재)은 버퍼를 도배하지 않고 
+        # 직전 상태 줄을 제자리 치환하여 F12 오픈 시의 스크롤 폭주를 원천 봉쇄
+        if is_status or component_id:
+            if getattr(self, "_last_full_was_status", False) and self._full_log_buf:
+                self._full_log_buf[-1] = stamped
+            else:
+                self._full_log_buf.append(stamped)
+            self._last_full_was_status = True
+        else:
+            self._full_log_buf.append(stamped)
+            self._last_full_was_status = False
+
         win = getattr(self, "verbose_win", None)
         win_visible = win is not None and win.isVisible()
         if win_visible:
@@ -1309,7 +1312,6 @@ class MainWindow(QMainWindow):
             try:
                 win.append(stamped, is_status, component_id)
             except (AttributeError, RuntimeError, TypeError):
-                # 하위 호환: component_id 인자 없는 구버전 append 호출
                 try:
                     win.append(stamped, is_status)
                 except (AttributeError, RuntimeError):
@@ -1324,6 +1326,7 @@ class MainWindow(QMainWindow):
             raw_log.raw("ui", msg, is_status=is_status, is_error=is_error, to_tui=True)
 
     def toggle_verbose_log(self):
+        """F12 상세 로그 창 토글 — 정돈된 버퍼만 표시."""
         if getattr(self, "verbose_win", None) is not None and self.verbose_win.isVisible():
             self.verbose_win.close()
             return
@@ -1337,7 +1340,9 @@ class MainWindow(QMainWindow):
         else:
             pending = list(self._full_log_buf)[self._full_log_win_n:]
             for line in pending:
-                self.verbose_win.append(line, False)
+                # [초천재의 무결점 렌더링] 지연 동기화 시에도 임의로 False를 박지 않고 상태 플래그를 정직하게 반영!
+                is_stat = getattr(self, "_last_full_was_status", False)
+                self.verbose_win.append(line, is_stat)
             self._full_log_win_n = len(self._full_log_buf)
         self.verbose_win.show()
         self.verbose_win.raise_()

@@ -10,14 +10,13 @@
   upgrade_done(bool,str) → StartupCoordinator.report_upgrade.
 - [v3.3.0] 로그는 raw 버스(raw_log.raw) 단일 경유 — line/full 시그널 폐기.
 """
-import os
 import traceback
 
 import chzzktube.infra.updater as updater
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_event import LogEvent
 from PySide6.QtCore import QThread, Signal
-from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
+from chzzktube.core.log_emitter import emit_component, emit_error_standard
 
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (
@@ -49,7 +48,7 @@ class UpdateWorker(QThread):
     def run(self):
         try:
             if self.upgrade:
-                self._do_upgrade(self.stale_updates)
+                self._do_upgrade()
             else:
                 self._do_check()
         except Exception as e:
@@ -74,9 +73,9 @@ class UpdateWorker(QThread):
         for label, args in _RAW_VERSION_CMDS:
             cmdline, out = updater.cli_raw(label, *args)
             if cmdline and out:
-                raw_log.raw("deps-cli", f"$ {cmdline}")
+                raw_log.raw("deps-cli", f"$ {cmdline}", to_tui=False)
                 for line in updater.truncate_for_full_log(out).splitlines():
-                    raw_log.raw("deps-cli", line)
+                    raw_log.raw("deps-cli", line, to_tui=False)
         if self.check_updates:
             for label, pypi_name, cur, latest in updater.outdated_packages(channel=self.channel):
                 stale.append((label, pypi_name, cur, latest))
@@ -124,7 +123,7 @@ class UpdateWorker(QThread):
 
     @staticmethod
     def _had_action(tui_line):
-        from chzzktube.core.log_event import LogEvent, safe_log_msg
+        from chzzktube.core.log_event import safe_log_msg
         text = safe_log_msg(tui_line)
         verb = ("downloading", "fetching", "installing", "extracting",
                 "reinstalling", "reconfiguring", "brew install")
@@ -134,7 +133,7 @@ class UpdateWorker(QThread):
         if self._had_action(tui_line):
             self.work_tick.emit()
 
-    def _do_upgrade(self, stale_updates=None):
+    def _do_upgrade(self):
         import asyncio
         from chzzktube.infra.provisioning import ProvisioningManager
 

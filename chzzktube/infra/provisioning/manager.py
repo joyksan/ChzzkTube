@@ -212,10 +212,9 @@ class ProvisioningManager:
         bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
 
         pct_val = min(max(pct, 0), 100)
-        pct_str = f"{pct_val:>3d}%".replace(" ", "\u00a0")
+        pct_str = f"{pct_val:3d}%"
 
-        speed_raw = f"{speed:>10}" if speed else " " * 10
-        speed_padded = speed_raw.replace(" ", "\u00a0")
+        speed_padded = f"{speed:>10}" if speed else " " * 10
 
         msg_str = f" · {msg}" if msg else ""
         return f"{pct_str} · {speed_padded} [{bar}]{msg_str}"
@@ -562,10 +561,10 @@ class ProvisioningManager:
     def _finalize_progress_line(self, component: str, success: bool, msg: str):
         """TUI/F12의 같은 진행 라인을 완료/실패 상태로 한 번에 마감한다."""
         pct = 100 if success else 0
-        status = "completed" if success else ""
+        final_msg = f"completed {msg}" if success else msg
         event = emit_component(
             "DEPS", "OK" if success else "FAIL", component.upper(),
-            self._fmt_progress(pct, "", f"{status} {msg}"),
+            self._fmt_progress(pct, "", final_msg),
             is_status=False,            # ← True에서 False로 교정하여 삭제 방지
             is_error=not success,
         )
@@ -725,20 +724,20 @@ class ProvisioningManager:
             )
 
     def _refresh_path(self):
-        """PATH에 검증된 binary 디렉토리 추가."""
+        """PATH에 검증된 binary 디렉토리 추가 (SSOT)."""
         try:
-            import os
             for name, rec in self.manifest.components.items():
                 if name in ("ffmpeg", "node"):
-                    spec = MIRROR_REGISTRY.get(name)
-                    if spec and spec.type == ComponentType.BINARY:
-                        bin_path = self.base_dir / rec.install_path
-                        bin_dir = bin_path.parent if bin_path.is_file() else bin_path
-                        if bin_dir.is_dir():
-                            path_env = os.environ.get("PATH", "")
-                            parts = path_env.split(os.pathsep) if path_env else []
-                            if str(bin_dir) not in parts:
-                                os.environ["PATH"] = os.pathsep.join([str(bin_dir)] + parts)
+                    target_path = self.base_dir / rec.install_path
+                    # 파일 경로가 지정된 스펙이면 무조건 상위 bin 디렉터리를 단일 타깃으로 삼는다
+                    bin_dir = target_path.parent if target_path.suffix or target_path.name in ("ffmpeg", "node") else target_path
+                    
+                    if bin_dir.is_dir():
+                        path_env = os.environ.get("PATH", "")
+                        parts = path_env.split(os.pathsep) if path_env else []
+                        bin_str = str(bin_dir)
+                        if bin_str not in parts:
+                            os.environ["PATH"] = os.pathsep.join([bin_str] + parts)
         except Exception:
             pass
 

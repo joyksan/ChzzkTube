@@ -329,15 +329,15 @@ import sys
 
 # Qt보다 먼저: 프로젝트 로컬 pip 오버레이(.pylib)를 sys.path 선두에.
 # (venv는 uv 소유 → 앱이 직접 수정 금지. 상세: pylib_bootstrap.docstring)
-import chzzktube.infra.pylib_bootstrap as _pylib_bootstrap
 import chzzktube.infra.cleanup as _cleanup
+import chzzktube.infra.pylib_bootstrap as _pylib_bootstrap
 
 _PYLIB_PATH = _pylib_bootstrap.bootstrap()
 
 # 앱 기동 시 이전 세션 잔재 정리
 _cleanup.cleanup_on_startup()
 
-from chzzktube.ui.main_window import main
+from chzzktube.ui.main_window import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())
@@ -2323,6 +2323,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -2349,7 +2350,6 @@ from chzzktube.core.utils import _open_windows_explorer
 from chzzktube.core.watchdog import (
     ANALYSIS_TIMEOUT_SEC,
     FALLBACK_GRACE_SEC,
-    FALLBACK_TIMEOUT_SEC,
     GATE_TIMEOUT_SEC,
     LivenessWatchdog,
 )
@@ -2872,7 +2872,7 @@ class MainWindow(QMainWindow):
     def pick_txt_from_path(self, path):
         try:
             with open(path, "r", encoding="utf-8") as f:
-                lines = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+                lines = [raw.strip() for raw in f if raw.strip() and not raw.strip().startswith("#")]
             if lines:
                 self.url_input.setText("\n".join(lines))
                 self.append_concise_log(
@@ -3065,15 +3065,6 @@ class MainWindow(QMainWindow):
             or ""
         )
         title = info.get("title") or data.get("title") or ""
-        meta = " · ".join(x for x in (uploader, title) if x)
-
-        v_first = v_list[0] if v_list else {}
-        res = ""
-        if isinstance(v_first, dict):
-            h = v_first.get("height") or v_first.get("v_height") or 0
-            fps = v_first.get("fps") or v_first.get("v_fps") or 0
-            if h:
-                res = f"{h}p{fps}" if fps else f"{h}p"
 
         # [v3.8.0 Hyper-Minimalist TUI] ANAL 마감 정갈 명세:
         #   1) RUN  complete 라인            — analyzing complete!
@@ -3599,14 +3590,26 @@ class MainWindow(QMainWindow):
             self._mirror_full_log(line, f12_is_status)
 
     def _mirror_full_log(self, line, is_status=False, component_id: str = None):
+        """F12 전체 로그 버퍼 적재 및 활성 다이얼로그 제자리 갱신 관통 (SSOT)."""
         msg = str(line)
         if len(msg) > 4096:
             msg = msg[:4096] + "…"
         ts = time.strftime("%H:%M:%S")
-        stamped = "\n".join(f"[{ts}] {l}" if l else f"[{ts}]" for l in msg.split("\n"))
-        # HANDOVER 3.7-3: F12 및 파일 로그는 to_tui 여부와 관계없이 전량 기록.
-        # 진행 틱(is_status=True)도 파일에는 남겨야 한다 (파일·F12 전량 기록).
-        self._full_log_buf.append(stamped)
+        stamped = "\n".join(f"[{ts}] {line}" if line else f"[{ts}]" for line in msg.split("\n"))
+
+        # [버퍼 지터링 차단] 
+        # 진행 틱(is_status=True 또는 component_id 존재)은 버퍼를 도배하지 않고 
+        # 직전 상태 줄을 제자리 치환하여 F12 오픈 시의 스크롤 폭주를 원천 봉쇄
+        if is_status or component_id:
+            if getattr(self, "_last_full_was_status", False) and self._full_log_buf:
+                self._full_log_buf[-1] = stamped
+            else:
+                self._full_log_buf.append(stamped)
+            self._last_full_was_status = True
+        else:
+            self._full_log_buf.append(stamped)
+            self._last_full_was_status = False
+
         win = getattr(self, "verbose_win", None)
         win_visible = win is not None and win.isVisible()
         if win_visible:
@@ -3614,7 +3617,6 @@ class MainWindow(QMainWindow):
             try:
                 win.append(stamped, is_status, component_id)
             except (AttributeError, RuntimeError, TypeError):
-                # 하위 호환: component_id 인자 없는 구버전 append 호출
                 try:
                     win.append(stamped, is_status)
                 except (AttributeError, RuntimeError):
@@ -3629,6 +3631,7 @@ class MainWindow(QMainWindow):
             raw_log.raw("ui", msg, is_status=is_status, is_error=is_error, to_tui=True)
 
     def toggle_verbose_log(self):
+        """F12 상세 로그 창 토글 — 정돈된 버퍼만 표시."""
         if getattr(self, "verbose_win", None) is not None and self.verbose_win.isVisible():
             self.verbose_win.close()
             return
@@ -3642,7 +3645,9 @@ class MainWindow(QMainWindow):
         else:
             pending = list(self._full_log_buf)[self._full_log_win_n:]
             for line in pending:
-                self.verbose_win.append(line, False)
+                # [초천재의 무결점 렌더링] 지연 동기화 시에도 임의로 False를 박지 않고 상태 플래그를 정직하게 반영!
+                is_stat = getattr(self, "_last_full_was_status", False)
+                self.verbose_win.append(line, is_stat)
             self._full_log_win_n = len(self._full_log_buf)
         self.verbose_win.show()
         self.verbose_win.raise_()
@@ -7069,7 +7074,7 @@ def _ensure_ffmpeg_macos(log, force):
         # [핵심 교정 2: 호스트 승격 구출책]
         # 모든 Bottle이 순정 상태에서 dylib 부재로 전멸했을 경우,
         # 시스템(/opt/homebrew 등)에 이미 존재하는 유효한 ffmpeg를 격리 캐시로 승격 복사!
-        log(emit_error_warn("DEPS", "FFMP", "all bottles dyld incompatible", "probing host fallback (F12)"))
+        log(emit_error_warn("DEPS", "FFMP", "binary incompatible", "check logs (F12)"))
         host_candidates = [Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg")]
         for host_bin in host_candidates:
             if host_bin.is_file() and _verify_ffmpeg(host_bin):
@@ -7088,7 +7093,7 @@ def _ensure_ffmpeg_macos(log, force):
                 log(_ffmpeg_done_event(f"bootstrapped from host ({host_bin.parent})"))
                 return None
 
-        log(emit_error_standard("DEPS", "FFMP", "all bottles incompatible", "check dependencies (F12)"))
+        log(emit_error_standard("DEPS", "FFMP", "binary incompatible", "check logs (F12)"))
         return last_err or "no runnable bottle found"
 
     except Exception as e:
@@ -9871,10 +9876,9 @@ class ProvisioningManager:
         bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
 
         pct_val = min(max(pct, 0), 100)
-        pct_str = f"{pct_val:>3d}%".replace(" ", "\u00a0")
+        pct_str = f"{pct_val:3d}%"
 
-        speed_raw = f"{speed:>10}" if speed else " " * 10
-        speed_padded = speed_raw.replace(" ", "\u00a0")
+        speed_padded = f"{speed:>10}" if speed else " " * 10
 
         msg_str = f" · {msg}" if msg else ""
         return f"{pct_str} · {speed_padded} [{bar}]{msg_str}"
@@ -10221,10 +10225,10 @@ class ProvisioningManager:
     def _finalize_progress_line(self, component: str, success: bool, msg: str):
         """TUI/F12의 같은 진행 라인을 완료/실패 상태로 한 번에 마감한다."""
         pct = 100 if success else 0
-        status = "completed" if success else ""
+        final_msg = f"completed {msg}" if success else msg
         event = emit_component(
             "DEPS", "OK" if success else "FAIL", component.upper(),
-            self._fmt_progress(pct, "", f"{status} {msg}"),
+            self._fmt_progress(pct, "", final_msg),
             is_status=False,            # ← True에서 False로 교정하여 삭제 방지
             is_error=not success,
         )
@@ -10384,20 +10388,20 @@ class ProvisioningManager:
             )
 
     def _refresh_path(self):
-        """PATH에 검증된 binary 디렉토리 추가."""
+        """PATH에 검증된 binary 디렉토리 추가 (SSOT)."""
         try:
-            import os
             for name, rec in self.manifest.components.items():
                 if name in ("ffmpeg", "node"):
-                    spec = MIRROR_REGISTRY.get(name)
-                    if spec and spec.type == ComponentType.BINARY:
-                        bin_path = self.base_dir / rec.install_path
-                        bin_dir = bin_path.parent if bin_path.is_file() else bin_path
-                        if bin_dir.is_dir():
-                            path_env = os.environ.get("PATH", "")
-                            parts = path_env.split(os.pathsep) if path_env else []
-                            if str(bin_dir) not in parts:
-                                os.environ["PATH"] = os.pathsep.join([str(bin_dir)] + parts)
+                    target_path = self.base_dir / rec.install_path
+                    # 파일 경로가 지정된 스펙이면 무조건 상위 bin 디렉터리를 단일 타깃으로 삼는다
+                    bin_dir = target_path.parent if target_path.suffix or target_path.name in ("ffmpeg", "node") else target_path
+
+                    if bin_dir.is_dir():
+                        path_env = os.environ.get("PATH", "")
+                        parts = path_env.split(os.pathsep) if path_env else []
+                        bin_str = str(bin_dir)
+                        if bin_str not in parts:
+                            os.environ["PATH"] = os.pathsep.join([bin_str] + parts)
         except Exception:
             pass
 
@@ -11622,7 +11626,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.8.3"
+_APP_VERSION = "v3.8.5"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -11961,9 +11965,13 @@ pipeline/workers가 백그라운드·테스트 환경에서도 GUI 컨텍스트 
 """
 import time
 import unicodedata
+from typing import TYPE_CHECKING
 
 from chzzktube.core.log_event import STAGES, STATUSES
 from chzzktube.core.dl_platform import _short_platform
+
+if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 순환 참조 방지
+    from chzzktube.core.log_event import LogEvent
 
 
 def display_width(text):
@@ -12295,12 +12303,10 @@ def emit_err(msg):
     return LogEvent(stage="DL", status="FAIL", msg=msg, is_error=True)
 
 
-from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
-
-
 def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
                   bar_frac=None, is_status=False, is_error=False):
     """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
+    from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
         stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
@@ -12380,7 +12386,7 @@ def _truncate_msg(msg: str, max_len: int = _MAX_ERR_MSG_LEN) -> str:
     return msg[:max_len - 1] + "…"
 
 def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
-                        status: str = "FAIL", is_error: bool = True) -> LogEvent:
+                        status: str = "FAIL", is_error: bool = True) -> "LogEvent":
     """
     [v3.8.0] 오류 로그 표준 헬퍼 — 규격 포맷 준수.
 
@@ -12415,7 +12421,7 @@ def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
 
 
 def emit_error_warn(stage: str, scope: str, cause: str, action: str = "",
-                    status: str = "WARN") -> LogEvent:
+                    status: str = "WARN") -> "LogEvent":
     """WARN 레벨 표준 에러 (is_error=False)."""
     return emit_error_standard(stage, scope, cause, action, status=status, is_error=False)
 
@@ -14335,14 +14341,13 @@ class DownloadWorker(QThread):
   upgrade_done(bool,str) → StartupCoordinator.report_upgrade.
 - [v3.3.0] 로그는 raw 버스(raw_log.raw) 단일 경유 — line/full 시그널 폐기.
 """
-import os
 import traceback
 
 import chzzktube.infra.updater as updater
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_event import LogEvent
 from PySide6.QtCore import QThread, Signal
-from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
+from chzzktube.core.log_emitter import emit_component, emit_error_standard
 
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (
@@ -14374,7 +14379,7 @@ class UpdateWorker(QThread):
     def run(self):
         try:
             if self.upgrade:
-                self._do_upgrade(self.stale_updates)
+                self._do_upgrade()
             else:
                 self._do_check()
         except Exception as e:
@@ -14399,9 +14404,9 @@ class UpdateWorker(QThread):
         for label, args in _RAW_VERSION_CMDS:
             cmdline, out = updater.cli_raw(label, *args)
             if cmdline and out:
-                raw_log.raw("deps-cli", f"$ {cmdline}")
+                raw_log.raw("deps-cli", f"$ {cmdline}", to_tui=False)
                 for line in updater.truncate_for_full_log(out).splitlines():
-                    raw_log.raw("deps-cli", line)
+                    raw_log.raw("deps-cli", line, to_tui=False)
         if self.check_updates:
             for label, pypi_name, cur, latest in updater.outdated_packages(channel=self.channel):
                 stale.append((label, pypi_name, cur, latest))
@@ -14449,7 +14454,7 @@ class UpdateWorker(QThread):
 
     @staticmethod
     def _had_action(tui_line):
-        from chzzktube.core.log_event import LogEvent, safe_log_msg
+        from chzzktube.core.log_event import safe_log_msg
         text = safe_log_msg(tui_line)
         verb = ("downloading", "fetching", "installing", "extracting",
                 "reinstalling", "reconfiguring", "brew install")
@@ -14459,7 +14464,7 @@ class UpdateWorker(QThread):
         if self._had_action(tui_line):
             self.work_tick.emit()
 
-    def _do_upgrade(self, stale_updates=None):
+    def _do_upgrade(self):
         import asyncio
         from chzzktube.infra.provisioning import ProvisioningManager
 

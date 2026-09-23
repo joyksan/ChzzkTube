@@ -725,7 +725,7 @@ def _ensure_ffmpeg_macos(log, force):
         # [핵심 교정 2: 호스트 승격 구출책]
         # 모든 Bottle이 순정 상태에서 dylib 부재로 전멸했을 경우,
         # 시스템(/opt/homebrew 등)에 이미 존재하는 유효한 ffmpeg를 격리 캐시로 승격 복사!
-        log(emit_error_warn("DEPS", "FFMP", "all bottles dyld incompatible", "probing host fallback (F12)"))
+        log(emit_error_warn("DEPS", "FFMP", "binary incompatible", "check logs (F12)"))
         host_candidates = [Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg")]
         for host_bin in host_candidates:
             if host_bin.is_file() and _verify_ffmpeg(host_bin):
@@ -744,7 +744,7 @@ def _ensure_ffmpeg_macos(log, force):
                 log(_ffmpeg_done_event(f"bootstrapped from host ({host_bin.parent})"))
                 return None
 
-        log(emit_error_standard("DEPS", "FFMP", "all bottles incompatible", "check dependencies (F12)"))
+        log(emit_error_standard("DEPS", "FFMP", "binary incompatible", "check logs (F12)"))
         return last_err or "no runnable bottle found"
 
     except Exception as e:

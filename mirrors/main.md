@@ -10,15 +10,15 @@ import sys
 
 # Qt보다 먼저: 프로젝트 로컬 pip 오버레이(.pylib)를 sys.path 선두에.
 # (venv는 uv 소유 → 앱이 직접 수정 금지. 상세: pylib_bootstrap.docstring)
-import chzzktube.infra.pylib_bootstrap as _pylib_bootstrap
 import chzzktube.infra.cleanup as _cleanup
+import chzzktube.infra.pylib_bootstrap as _pylib_bootstrap
 
 _PYLIB_PATH = _pylib_bootstrap.bootstrap()
 
 # 앱 기동 시 이전 세션 잔재 정리
 _cleanup.cleanup_on_startup()
 
-from chzzktube.ui.main_window import main
+from chzzktube.ui.main_window import main  # noqa: E402
 
 if __name__ == "__main__":
     sys.exit(main())

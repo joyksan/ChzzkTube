@@ -5,9 +5,13 @@ pipeline/workers가 백그라운드·테스트 환경에서도 GUI 컨텍스트 
 """
 import time
 import unicodedata
+from typing import TYPE_CHECKING
 
 from chzzktube.core.log_event import STAGES, STATUSES
 from chzzktube.core.dl_platform import _short_platform
+
+if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 순환 참조 방지
+    from chzzktube.core.log_event import LogEvent
 
 
 def display_width(text):
@@ -339,12 +343,10 @@ def emit_err(msg):
     return LogEvent(stage="DL", status="FAIL", msg=msg, is_error=True)
 
 
-from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
-
-
 def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
                   bar_frac=None, is_status=False, is_error=False):
     """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
+    from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
         stage=stage, status=status, scope=scope, platform=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
@@ -424,7 +426,7 @@ def _truncate_msg(msg: str, max_len: int = _MAX_ERR_MSG_LEN) -> str:
     return msg[:max_len - 1] + "…"
 
 def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
-                        status: str = "FAIL", is_error: bool = True) -> LogEvent:
+                        status: str = "FAIL", is_error: bool = True) -> "LogEvent":
     """
     [v3.8.0] 오류 로그 표준 헬퍼 — 규격 포맷 준수.
     
@@ -459,6 +461,6 @@ def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
 
 
 def emit_error_warn(stage: str, scope: str, cause: str, action: str = "",
-                    status: str = "WARN") -> LogEvent:
+                    status: str = "WARN") -> "LogEvent":
     """WARN 레벨 표준 에러 (is_error=False)."""
     return emit_error_standard(stage, scope, cause, action, status=status, is_error=False)

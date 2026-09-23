@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-23 - v3.8.4 — FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·실행 판정 위임 Bottle (patch)
+> 마지막 갱신: 2026-09-23 - v3.8.5 — 수급 계층 런타임 구조 보존·TUI 마감 이벤트 복구·TUI 칼정렬 rstrip 적용·macOS 호스트 승격 구출 (patch)
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.8.3` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.8.3"` (최신: 2026-09-22 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률 (patch))
+- **버전**: `v3.8.5` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.8.5"` (최신: 2026-09-23 수급 계층 런타임 구조 보존·TUI 마감 이벤트 복구·TUI 칼정렬 rstrip 적용·macOS 호스트 승격 구출 (patch))
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.8.2`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.8.5`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -218,23 +218,27 @@
   - 시스템 도메인: `MAIN`, `RAW`, `QUEUE`, `DISK`
 * **SPEC 컬럼 폐지**: 미디어 코덱/해상도/버전 등 사양 정보는 `SPEC` 컬럼으로 전달하지 않고 `MSG` 전두부 태그(`[1080p60]`, `[v3.8.5]`)로 위임한다.
 
-#### 3. TUI vs F12 채널 격리 (`to_tui` 플래그)
-* **TUI 메인 콘솔 (`to_tui=True`)**:
-  - 사용자 관점의 핵심 상태 변화, 마일스톤 완료(`OK`/`DONE`), 진행률 틱(`RUN`), 치명적 오류(`FAIL`)에만 사용한다.
-  - TUI 콘솔 폭 보호를 위해 `MSG`는 영문 소문자 중심 최대 **55자 내외**로 작성한다.
-* **F12 상세 로그 / 히스토리 (`to_tui=False`)**:
-  - 백그라운드 프리웜, 디버그 파싱, 원문 CLI 덤프, 분리 수급 임시 파일(`*.f399.mp4`) 로그 등은 무조건 `to_tui=False`로 발행하여 메인 화면 오염을 차단한다. (F12 및 파일 로그는 `to_tui` 여부와 관계없이 전량 기록됨)
-  - F12 상세 로그 (to_tui=False): $ python -m yt_dlp --version, HTTP GET ..., tar -xzf ... 등 저수준 CLI 및 네트워크 수급 원문은 모조리 to_tui=False로 버스에 던진다.
+#### 3. TUI vs F12 채널 격리 및 전량 보존 계약 (Storage vs View)
+* **메인 TUI (`to_tui=True`)**:
+  - 사용자 중심의 핵심 상태 변화, 마일스톤 완료(`OK`/`DONE`), 제자리 갱신형 게이지 바(`RUN`), 치명적 오류(`FAIL`)만 통과.
+  - TUI 콘솔 폭 보호를 위해 영문 소문자 중심 최대 **55자 내외**로 제한.
+* **F12 상세 로그 및 디스크 파일 (전량 보존, SSOT)**:
+  - 저수준 CLI 실행문(`$ python -m yt_dlp --version`), HTTP 요청/응답 헤더, 아카이브 전개 및 검증 상세, 예외 트레이스백은 `to_tui=False`로 발행되어 메인 콘솔을 더럽히지 않고 F12와 파일 로그에 100% 영구 보존된다.
+* **[핵심 불변식] 저장 전량성(Storage)과 뷰 갱신(View)의 분리**:
+  - **영구 기록 (File/Storage)**: 모든 CLI 명령어와 결과, 네트워크 트랜잭션은 단 한 줄의 누락 없이 파일(`logs/chzzktube_*.log`)에 순차 append된다.
+  - **화면 표시 (GUI View)**: F12 창(`VerboseLogWindow`)과 내부 버퍼(`_full_log_buf`)는 '전량 기록'을 이유로 진행률 틱을 수천 줄의 새 줄로 개행하지 않는다. `component_id`가 부여된 진행 틱은 뷰 계층에서 반드시 **동일 라인 제자리 갱신(In-place Overwrite)**으로 처리하여 GUI 프리징과 스크롤 폭발을 원천 차단한다.
 
 #### 4. 1타임스탬프 1정보 (Single Information per Line)
 * 한 줄의 로그에 여러 상태나 콤마로 연결된 긴 배열을 한꺼번에 찍지 않는다. (예: `stale updates: a, b, c` ❌ ➔ 라벨별 개별 줄 발행 ⭕)
 * 진행률 바 나열 시 직렬 연결 금지 — 갱신형 진행률 기능을 활용한다.
 
 #### 5. 제자리 갱신형 및 다중 컴포넌트 로그 (`is_status`, `component_id`, `is_progress`)
-* **반복 상태 틱 (Single-Line In-Place Status)**:
-  - 다운로드 퍼센트, 속도 측정 등 지속적으로 발생하는 진행 로그는 반드시 `is_status=True`로 호출하여 콘솔 바닥 한 줄에서 제자리 덮어쓰기 되도록 한다.
-* **다중 컴포넌트 갱신형 (`component_id` &amp; `is_progress`)**:
-  - DEPS 수급이나 POT 빌드처럼 여러 백그라운드 작업이 동시 진행될 때는 `component_id="ffmpeg"` 및 `is_progress=True`로 전달하여 F12/TUI에서 해당 작업 블록만 갱신되도록 한다. (완료 시 `is_progress=False`로 전환해 히스토리로 확정)
+* **단일 틱 제자리 갱신 (Single-Line In-Place Status)**:
+  - 진행 퍼센트, 속도 측정 등 지속적으로 발생하는 틱은 `is_status=True`로 발행되어 뷰 렌더러의 최하단 줄을 덮어쓴다.
+* **다중 컴포넌트 갱신형 (`component_id` & `is_progress`)**:
+  - 여러 컴포넌트가 병렬로 진행될 때는 `component_id="deps_ffmpeg"`, `is_progress=True`로 발행하여 TUI/F12 양쪽 모두에서 해당 컴포넌트 블록만 제자리 갱신되도록 한다.
+* **마감 확정 (Commit)**:
+  - 작업 완료 시 반드시 `is_progress=False`, `is_status=False`, `status="OK"`로 마감하여 해당 진행 라인을 덮어쓰기 불가능한 영구 히스토리 라인으로 승격 확정한다.
 
 #### 6. 에러 로그 표준 규격 (`emit_error_standard` / `emit_error_warn`)
 * 에러 로그 발행 시 임의 문자열 대신 `chzzktube.core.log_emitter`의 표준 헬퍼를 사용한다.
@@ -649,6 +653,12 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
     - 2차: 최종 실패 시, 호스트 시스템(`/opt/homebrew/bin/ffmpeg` 등)에 이미 존재하는 '정상 실행 검증된 바이너리'를 앱 격리 저장소(`writable_base()/ffmpeg/bin/`)로 원자적 복사(승격)하여 앱 단독 자산화한다.
     - 호스트 바이너리 승격 시에도 `_verify_ffmpeg` 검증은 필수이며, 승격 실패 시에만 `emit_error_standard` 규격을 통한 명시적 FAIL로 파이프라인을 닫는다.
 
+33. **로그 저장 전량성과 뷰 제자리 갱신의 직교 분리 (v3.8.5)**: "F12/히스토리 전량 기록"과 "진행률 제자리 갱신"은 상호 배타적이지 않다.
+    - CLI 명령어 원문(`$ cmd`), HTTP 트랜잭션, 아카이브 전개, 검증 실패 원인 등 저수준 시스템 행위는 영구 스토리지에 무삭제 순차 기록되어야 한다.
+    - 그러나 GUI 뷰(`VerboseLogWindow`) 및 메모리 링 버퍼(`_full_log_buf`)에서 다운로드 진행률 틱(`is_status=True` 또는 `component_id` 보유)을 단순 개행으로 무차별 적재하는 행위는 엄격히 금지한다.
+    - F12 창이 열려 있을 때는 `win.append(..., component_id)`를 통한 실시간 제자리 치환을, 창이 닫혀 있을 때는 `_full_log_buf`의 상태 줄 스냅샷 치환을 강제하여 F12 오픈 시 수천 줄의 게이지 잔해가 덤프되는 뷰 폭발을 방지해야 한다.
+
+
 ## 6. 하지 말 것 (회귀 방지)
 
 - ❌ `state/cfg` 딕셔너리를 복사해서 워커에 넘기는 것
@@ -673,6 +683,8 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 - ❌ **TUI 이벤트 게이트에서 `OK`/`DONE` 상태 차단**: `_provision_cb` 등 로그 브리지에서 에러/상태 틱만 통과시키고 정작 완료 마감(`OK`) 이벤트를 드롭시켜 TUI에 미완료 게이지 바를 방치하는 것.
 - ❌ **`format_log_line`에서 무자비한 `.strip()`으로 좌측 패딩 제거**: 메시지 좌측 공백을 파괴하여 자릿수 고정(`  0%` vs `100%`)을 무너뜨리는 무신경한 문자열 정리 금지.
 - ❌ **표준 에러 헬퍼에 임의 문자열을 넘겨 `unknown error`로 뭉개는 것**: `emit_error_warn` 등에 정규화 규격에 없는 문장을 던져 TUI를 오염시키지 말고, 허용된 표준 키워드(`binary incompatible` 등)만 엄격히 사용할 것.
+- ❌ **'전량 기록'을 핑계로 F12 뷰에 수천 줄의 진행 틱을 개행 누적하는 것**: 디스크 파일 기록과 GUI 뷰 렌더링을 혼동하여 F12 창을 쓸모없는 게이지 바 폭포수로 마비시키는 행위 전면 금지.
+- ❌ **'제자리 갱신'을 핑계로 CLI/네트워크 감사 원문을 파일에서 누락하는 것**: 화면을 정돈하겠답시고 `$ cmd` 실행문이나 HTTP 요청 원문 자체를 발행 단계에서 드롭시키는 행위 금지.
 
 ## 7. 검증 워크플로우 (수정 후 필수 3단계 + 플랫폼 후속)
 
