@@ -279,7 +279,7 @@ def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None
     if bar_s:
         gauge = f"{gauge} {bar_s}" if gauge else bar_s
 
-    msg_clean = str(msg or "").strip()
+    msg_clean = str(msg or "").rstrip("\r\n ")
     head_parts = [p for p in (tag, gauge, msg_clean) if p]
     head = _log_ts() + " " + stage_s
     fixed = head + " │ " + " │ ".join((status_s, scope_s))

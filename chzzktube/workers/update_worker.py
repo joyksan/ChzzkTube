@@ -108,8 +108,14 @@ class UpdateWorker(QThread):
 
         component_id = getattr(event, "component_id", component_id)
         is_progress = bool(getattr(event, "is_progress", is_progress))
-        show = bool(event.is_status or event.is_error or is_progress
-                    or event.status in ("FAIL", "WARN", "ABORT"))
+
+        # [게이트 개방] OK와 DONE 상태를 버리지 않고 TUI로 반드시 통과
+        show = bool(
+            event.is_status
+            or event.is_error
+            or is_progress
+            or event.status in ("OK", "DONE", "FAIL", "WARN", "ABORT")
+        )
         self._tick(event)
         raw_log.raw(
             "deps", event, to_tui=show,
@@ -141,7 +147,8 @@ class UpdateWorker(QThread):
         ))
 
         try:
-            results = asyncio.run(mgr.ensure_all(stale_only=False, channel=self.channel))
+            # [대역폭 수호] stale_only=True로 이미 정상인 의존성의 불필요한 재수급 차단
+            results = asyncio.run(mgr.ensure_all(stale_only=True, channel=self.channel))
         except Exception as e:
             self.upgrade_done.emit(False, f"provisioning error: {e}")
             return

@@ -1,3 +1,29 @@
+### 2026-09-23 — v3.8.5 : 수급 계층 런타임 구조 보존·TUI 마감 이벤트 복구·TUI 칼정렬 rstrip 적용·macOS 호스트 승격 구출 (patch)
+
+#### 배경 (v3.8.4 → v3.8.5)
+- **Node.js NPM 런타임 참수**: 중첩 바이너리 평탄화 로직이 Node.js에 무차별 적용되어 `lib/node_modules/npm` 엔진이 누락, `npm --version` 실행 시 `Cannot find module '../lib/cli.js'` 크래시 유발.
+- **불필요한 전수 재수급 폭주**: `UpdateWorker`가 `stale_only=False`로 실행되어 정상 상태의 의존성까지 무차별 덮어쓰기 다운로드 수행.
+- **TUI 완료 로그 증발 및 게이지 박제**: `_provision_cb`의 TUI 노출 게이트가 `status in ("FAIL", "WARN", "ABORT")`만 통과시키고 정작 `OK`/`DONE` 마감 이벤트를 차단해 콘솔에 `RUN 100%` 틱이 굳어버림.
+- **진행률 게이지 정렬 파괴**: `log_emitter.py`의 `format_log_line` 내부 `str.strip()`이 좌측 정렬 공백(`"  0%"`)을 도륙해 `0%` 행의 게이지 바가 왼쪽으로 2칸 밀려나는 지터링 발생.
+- **macOS Homebrew Bottle dyld 불일치**: Bottle 바이너리의 절대경로 `LC_LOAD_DYLIB` 링크 한계로 실행 실패 시 탈출구가 없어 영구 FAIL에 갇힘.
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `infra/provisioning/manager.py` | `_extract_and_install`: `ffmpeg`만 바이너리 승격을 거치고, `node`는 `lib/node_modules` 계층을 통째로 보존하도록 분기. `_fmt_progress`: Non-Breaking Space(`\u00a0`) 및 자릿수 고정, 마감 메시지 중복 `failed` 말더듬이 제거. |
+| `workers/update_worker.py` | `_do_upgrade`: `mgr.ensure_all(stale_only=True)` 강제로 불필요한 재다운로드 차단. `_provision_cb`: TUI 노출 조건에 `event.status in ("OK", "DONE")` 추가하여 완료 라인 확정 보장. |
+| `core/log_emitter.py` | `format_log_line`: `msg_clean = str(msg).strip()`을 `.rstrip("\r\n ")`으로 교정하여 의도된 좌측 인덴트(`"  0%"`) 절대 사수. |
+| `infra/components.py` | `_ensure_ffmpeg_macos`: Bottle 내부 `lib/` 경로를 `DYLD_FALLBACK_LIBRARY_PATH`로 주입해 1차 검증, 전멸 시 `/opt/homebrew/bin/ffmpeg` 등 로컬 호스트 검증 바이너리를 앱 격리 저장소로 원자적 승격 복사. 규격 외 에러 문구를 `binary incompatible` 표준 키워드로 교정. |
+
+#### 검증
+- `python -m py_compile` 전 모듈 통과
+- `python sync_mirrors.py --check` 변경 0건 / 누락 0건
+- macOS 실기기 런타임: `node/bin/npm --version` 정상 작동, Homebrew Bottle dyld 실패 시 호스트 승격으로 `ffmpeg 9.0.2` 정상 안착 확인
+- TUI 렌더링 실측: `  0%`와 `100%`의 게이지 바 수직 칼정렬 완벽 유지, 완료 시 `OK completed` 라인 정상 박제 확인
+
+---
+
 ### 2026-09-23 — v3.8.4 : FFmpeg 동적 수급(BtbN)·아키텍처 매핑·검증 필수화·실행 판정 위임 Bottle (patch)
 
 #### 배경 (v3.8.3 → v3.8.4)

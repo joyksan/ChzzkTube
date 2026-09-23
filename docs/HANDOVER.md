@@ -46,7 +46,8 @@
    - `config._APP_VERSION == "v" + pyproject.toml version`
    - `uv.lock` 루트 프로젝트 버전이 `pyproject.toml`과 동일
    - `HANDOVER.md`, `CHANGELOG.md`, README의 현재 버전 표기가 동일
-   - `python sync_mirrors.py --check`가 변경 0건/누락 0건을 반환
+   - `python sync_mirrors.py --check`가 전체 등록 모듈(`MIRROR_MODULES`, `chzzktube.infra.provisioning.*` 포함) 기준으로 변경 0건/누락 0건을 반환
+   - 신규 `.py` 모듈은 반드시 `MIRROR_MODULES`에 등록한다. basename이 기존 미러와 충돌하면 `provisioning_<name>.md`처럼 패키지 접두사를 붙인다
 
 ### 1.1.3 `bump_version.py` 제한
 
@@ -223,6 +224,7 @@
   - TUI 콘솔 폭 보호를 위해 `MSG`는 영문 소문자 중심 최대 **55자 내외**로 작성한다.
 * **F12 상세 로그 / 히스토리 (`to_tui=False`)**:
   - 백그라운드 프리웜, 디버그 파싱, 원문 CLI 덤프, 분리 수급 임시 파일(`*.f399.mp4`) 로그 등은 무조건 `to_tui=False`로 발행하여 메인 화면 오염을 차단한다. (F12 및 파일 로그는 `to_tui` 여부와 관계없이 전량 기록됨)
+  - F12 상세 로그 (to_tui=False): $ python -m yt_dlp --version, HTTP GET ..., tar -xzf ... 등 저수준 CLI 및 네트워크 수급 원문은 모조리 to_tui=False로 버스에 던진다.
 
 #### 4. 1타임스탬프 1정보 (Single Information per Line)
 * 한 줄의 로그에 여러 상태나 콤마로 연결된 긴 배열을 한꺼번에 찍지 않는다. (예: `stale updates: a, b, c` ❌ ➔ 라벨별 개별 줄 발행 ⭕)
@@ -630,6 +632,23 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 
     진행 틱은 `_ffmpeg_progress_event`(`component_id="ffmpeg"`, `is_progress=True`)로, 마감은 `_ffmpeg_done_event`(`is_progress=False`)로 발행한다 — 이 두 플래그가 브리지(TUI/F12)의 동일 라인 제자리 갱신을 성립시킨다.
 
+29. **런타임 아카이브 전개 무결성 (Node.js/NPM 참수 금지) (v3.8.5)**: 외부 아카이브 전개 시 단일 실행 파일만 임의 색출해 승격시키는 행위는 의존 라이브러리(`lib/`)가 필요한 런타임에서 전면 금지된다. 
+    - `ffmpeg`는 중첩 디렉터리(`Cellar/.../bin`) 평탄화 승격 대상이지만, `node`는 실행 셸 스크립트(`bin/npm`)가 참조하는 내부 엔진(`lib/node_modules/npm/`)을 반드시 원본 계층 그대로 보존해야 한다.
+    - 런타임 모듈 전개 시 디렉터리 루트를 온전히 보존하지 않고 바이너리만 솎아내는 편의적 축약 전개는 엄격히 금지된다.
+
+30. **수급 워커 단일 조회 및 마감 이벤트 TUI 관통 보장 (v3.8.5)**: `UpdateWorker` 및 프로비저닝 파이프라인은 대역폭 낭비와 UI 상태 동결을 방지하기 위해 다음 두 규칙을 강제한다.
+    - `mgr.ensure_all()` 호출 시 반드시 `stale_only=True`를 강제한다. 정상 기동 중 검증 완료된 패키지를 무조건 전수 재다운로드(`stale_only=False`)하여 트래픽을 낭비하는 것을 금지한다.
+    - `_provision_cb`의 TUI 노출 판정(`show`) 조건에 `status in ("OK", "DONE")`을 반드시 포함한다. 성공/마감 이벤트를 오류 상태가 아니라는 이유로 필터링하여 TUI에 `100% RUN` 상태가 화석처럼 고착되는 렌더링 누수를 영구 차단한다.
+
+31. **TUI 칼정렬 인덴트 보존 (format_log_line rstrip 원칙) (v3.8.5)**: 콘솔 조판 레이어(`format_log_line`)는 사용자가 의도한 좌측 정렬 공백(예: `"  0%"`)을 임의로 훼손해서는 안 된다.
+    - `clean_msg = str(msg).strip()` 사용을 영구 금지하고, 반드시 우측 개행 및 공백만 제거하는 `clean_msg = str(msg).rstrip("\r\n ")`을 적용한다.
+    - 유니코드 표준 공백(`\u00a0` 포함)을 무차별 제거하여 `0%`와 `100%`의 게이지 시작 좌표가 어긋나는 시각적 지터링을 원천 방지한다.
+
+32. **macOS 격리 수급 호스트 승격(Bootstrap) 계약 (v3.8.5)**: Homebrew Bottle이 고정 경로 `LC_LOAD_DYLIB` 및 미설치 dylib 부재로 실행 검증(`_verify_ffmpeg`)에 전멸했을 때, 임의의 미검증 외부 아카이브로 도피하지 않는다.
+    - 1차: `DYLD_FALLBACK_LIBRARY_PATH`로 아카이브 내 동봉 `lib/`를 주입해 실행 프로브를 완수한다.
+    - 2차: 최종 실패 시, 호스트 시스템(`/opt/homebrew/bin/ffmpeg` 등)에 이미 존재하는 '정상 실행 검증된 바이너리'를 앱 격리 저장소(`writable_base()/ffmpeg/bin/`)로 원자적 복사(승격)하여 앱 단독 자산화한다.
+    - 호스트 바이너리 승격 시에도 `_verify_ffmpeg` 검증은 필수이며, 승격 실패 시에만 `emit_error_standard` 규격을 통한 명시적 FAIL로 파이프라인을 닫는다.
+
 ## 6. 하지 말 것 (회귀 방지)
 
 - ❌ `state/cfg` 딕셔너리를 복사해서 워커에 넘기는 것
@@ -649,6 +668,11 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 - ❌ 분석(경량) 결과의 v_list/a_list를 '실제 다운로드 가능 포맷'으로 간주해 다운로드 포맷 선택에 그대로 쓰는 것
 - ❌ **무검증·레거시 수급처(evermeet, SHA-256 미제공 소스 등)로의 폴백 체인 신설**: "실패 시 기존 정적 빌드 시도" 따위의 안일한 타협으로 검증되지 않은 바이너리나 Rosetta2 의존 바이너리를 앱 캐시에 유입시키는 행위 전면 금지. 실패는 숨겨야 할 흉측한 결함이 아니라, 격리하고 보고해야 할 시스템 계약이다.
 - ❌ **Homebrew Bottle 검증 실패 시 미검증 아카이브로 도피하는 것**: Bottle 실행 실패(dylib 불일치 등)가 발생했을 때 레거시 정적 빌드로 땜질하지 말고, 즉시 표준 에러 규격으로 실패 원인을 명시하고 프로세스를 중단할 것.
+- ❌ **Node.js 압축 해제 시 `lib/` 폴더를 유기하는 행위**: Node.js 아카이브를 `ffmpeg`와 동일하게 취급하여 `bin/`만 쏙 빼오고 `lib/node_modules/`를 소각해 `Cannot find module '../lib/cli.js'`를 유발하는 행위 전면 금지.
+- ❌ **의존성 정상 판정 후 전수 재다운로드 폭주(`stale_only=False`)**: 앞단 DEPS 검사가 통과했음에도 무조건 전체를 다시 받아 디스크와 대역폭을 낭비하는 게으른 호출 금지.
+- ❌ **TUI 이벤트 게이트에서 `OK`/`DONE` 상태 차단**: `_provision_cb` 등 로그 브리지에서 에러/상태 틱만 통과시키고 정작 완료 마감(`OK`) 이벤트를 드롭시켜 TUI에 미완료 게이지 바를 방치하는 것.
+- ❌ **`format_log_line`에서 무자비한 `.strip()`으로 좌측 패딩 제거**: 메시지 좌측 공백을 파괴하여 자릿수 고정(`  0%` vs `100%`)을 무너뜨리는 무신경한 문자열 정리 금지.
+- ❌ **표준 에러 헬퍼에 임의 문자열을 넘겨 `unknown error`로 뭉개는 것**: `emit_error_warn` 등에 정규화 규격에 없는 문장을 던져 TUI를 오염시키지 말고, 허용된 표준 키워드(`binary incompatible` 등)만 엄격히 사용할 것.
 
 ## 7. 검증 워크플로우 (수정 후 필수 3단계 + 플랫폼 후속)
 

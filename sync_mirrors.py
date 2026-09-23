@@ -70,6 +70,13 @@ MIRROR_MODULES = [
     "chzzktube.infra.pot_server",
     "chzzktube.infra.pylib_bootstrap",
     "chzzktube.infra.updater",
+    # chzzktube.infra.provisioning (flat basename 충돌 회피: provisioning_<name>.md)
+    "chzzktube.infra.provisioning.bridge",
+    "chzzktube.infra.provisioning.downloader",
+    "chzzktube.infra.provisioning.manager",
+    "chzzktube.infra.provisioning.manifest",
+    "chzzktube.infra.provisioning.resolver",
+    "chzzktube.infra.provisioning.verifier",
 ]
 
 
@@ -86,9 +93,16 @@ def sync_module(name: str, dry_run: bool = False) -> int:
     else:
         src = ROOT / f"{clean_name}.py"
 
-    # 미러 파일명은 flat 유지 — chzzktube/core/config.py → mirrors/config.md
-    # (기존 conventions 유지: HANDOVER 참조·미러 diff 시 basename 추적 용이)
-    dst = MIRRORS_DIR / f"{clean_name.split('.')[-1]}.md"
+    # 미러 파일명 결정:
+    # - chzzktube.<leaf> (단일 세그먼트, e.g. core/config.py) → <leaf>.md (기존 flat 규칙 유지)
+    # - chzzktube.infra.provisioning.<leaf> (프리미티브 충돌 회피) → provisioning_<leaf>.md
+    #   (e.g. chzzktube.workers.downloader ↔ chzzktube.infra.provisioning.downloader
+    #    같은 basename 충돌을 방지하기 위함)
+    basename = clean_name.split(".")[-1]
+    if clean_name.startswith("chzzktube.infra.provisioning."):
+        dst = MIRRORS_DIR / f"provisioning_{basename}.md"
+    else:
+        dst = MIRRORS_DIR / f"{basename}.md"
 
     if not src.exists():
         print(f"[skip] {src.name} missing - target mirror not found")
@@ -127,19 +141,26 @@ def build_codebase_bundle():
     }
 
     MIRRORS_DIR.mkdir(parents=True, exist_ok=True)
-    with open(bundle_path, "w", encoding="utf-8") as outfile:
-        outfile.write("# ChzzkTube Project Full Codebase\n\n")
-        for root, dirs, files in os.walk(ROOT):
-            dirs[:] = [d for d in dirs if d not in exclude_dirs]
-            for file in sorted(files):
-                if file.endswith(".py"):
-                    rel = os.path.relpath(os.path.join(root, file), ROOT)
-                    outfile.write(f"\n## File: {rel}\n\n```python\n")
-                    with open(
-                        os.path.join(root, file), "r", encoding="utf-8", errors="ignore"
-                    ) as infile:
-                        outfile.write(infile.read())
-                    outfile.write("\n```\n")
+    parts = ["# ChzzkTube Project Full Codebase\n\n"]
+    for root, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs if d not in exclude_dirs]
+        for file in sorted(files):
+            if file.endswith(".py"):
+                rel = os.path.relpath(os.path.join(root, file), ROOT)
+                with open(
+                    os.path.join(root, file), "r", encoding="utf-8",
+                    errors="ignore"
+                ) as infile:
+                    parts.append(f"\n## File: {rel}\n\n```python\n")
+                    parts.append(infile.read())
+                    parts.append("\n```\n")
+    bundle_text = "".join(parts)
+    # git diff --check passes: strip trailing whitespace from blank lines (bundle artifact)
+    bundle_text = "\n".join(
+        line.rstrip() if line.rstrip() == "" else line
+        for line in bundle_text.split("\n")
+    ).rstrip() + "\n"
+    bundle_path.write_text(bundle_text, encoding="utf-8")
     print(f"[created] mirrors/{bundle_path.name} bundle")
 
 

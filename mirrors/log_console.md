@@ -98,22 +98,28 @@ class ConciseLogConsole:
         프리포맷)은 True, 큐 호환용 bare 문자열은 False다.
         """
         self._sync_budget()  # 현재 뷰포트/폰트 기준 예산 보장 — 자동랩 침범 방지
+        clean_msg = str(msg)     # 인자로 들어온 msg를 함수 진입 즉시 안전한 문자열로 바인딩
 
         # 진행률 갱신형: 기존 라인 갱신
         if component_id and is_progress:
-            self._update_progress_line(component_id, msg, is_error, fg_color, no_wrap)
+            self._update_progress_line(component_id, clean_msg, is_error, fg_color, no_wrap)
             return
 
-        # 진행률 완료: component_id가 있고 is_progress=False면 진행 라인을 히스토리로 확정.
-        # Single-Line In-Place Status 계약 — 블록을 새 줄로 늘리지 않고 기존 라인만 잠금한다.
+        # 진행률 완료: 진행 중이던 기존 버퍼 엔트리의 is_progress를 False로 잠그고 제자리 확정
         if component_id and not is_progress and component_id in self._progress_lines:
             idx = self._progress_lines.pop(component_id)
             if 0 <= idx < len(self._buffer):
+                self._buffer[idx]["msg"] = clean_msg
                 self._buffer[idx]["is_progress"] = False
+                self._buffer[idx]["is_status"] = False
+                self._buffer[idx]["is_error"] = is_error
+            # 버퍼 제자리 라인을 완료 메시지로 갱신한 뒤 즉시 화면에 확정 박제!
+            self.reflow()
+            return
 
-        # [리플로우 대비] 원본 로그를 버퍼에 보관 (렌더 시점 절단을 위해 잘리지 않음)
+        # [리플로우 대비] 원본 로그를 버퍼에 보관
         self._buffer.append(
-            {"msg": msg, "is_status": is_status, "is_error": is_error,
+            {"msg": clean_msg, "is_status": is_status, "is_error": is_error,
              "fg_color": fg_color, "no_wrap": bool(no_wrap),
              "component_id": component_id, "is_progress": is_progress}
         )
@@ -141,9 +147,6 @@ class ConciseLogConsole:
         #    커서가 '보증된 여백' 빈 블록 위에 서 있으면 그 블록을 내용으로
         #    채우지 않고 한 줄 더 개행해 여백을 살린다.
         cursor.movePosition(QTextCursor.MoveOperation.End)
-        # [핵심] 상태 틱 종료/업데이트 → 빈 홈 블록 시작점으로 재사용(같은 줄)
-        #    상태 틱 재사용도 허용(not is_status 한정 X) — 퍼센트 업데이트가
-        #    매번 새 줄에 나오는 '붙어나오는 퍼센트 로그' 버그 예방.
         if self._just_removed_status and not doc.isEmpty() and not doc.lastBlock().text():
             cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
         on_kept_blank = (
@@ -167,8 +170,6 @@ class ConciseLogConsole:
         ):
             cursor.insertBlock()
         self._just_removed_status = False  # 플래그 소비
-
-        clean_msg = msg
 
         # 3. [핵심] 줄바꿈(\n) 사이에만 insertBlock()을 호출하여 문장 끝 불필요한 빈 줄 생성 완전 차단
         #    비트리 일반 라인(pip 출력 등)은 예산 폭을 넘기면 여기서 wrap한다 —
