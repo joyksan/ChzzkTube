@@ -582,7 +582,15 @@ MIRROR_MODULES = [
     "chzzktube.pipeline.finalizer",
     "chzzktube.pipeline.live_recorder",
     "chzzktube.pipeline.progress_emitter",
-    "chzzktube.pipeline.target_downloader",
+    # chzzktube.pipeline.target_downloader (package)
+    "chzzktube.pipeline.target_downloader.__init__",
+    "chzzktube.pipeline.target_downloader.chzzk",
+    "chzzktube.pipeline.target_downloader.dispatch",
+    "chzzktube.pipeline.target_downloader.flatten",
+    "chzzktube.pipeline.target_downloader.options",
+    "chzzktube.pipeline.target_downloader.utils",
+    "chzzktube.pipeline.target_downloader.youtube_live",
+    "chzzktube.pipeline.target_downloader.youtube_vod",
     # chzzktube.core
     "chzzktube.core.chzzk_api",
     "chzzktube.core.client_opts",
