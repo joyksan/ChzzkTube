@@ -1,3 +1,66 @@
+### 2026-09-24 — v3.9.0 : 대규모 리팩토링(기술부채 해소 + 방향성 재정립) — 게이트/워치독 상태 추출, 파이프라인 분기 분리, LogEvent deprecated 정리, 타임아웃/권한 일관화, 로그 인젝션 회귀 테스트 (minor)
+
+#### 배경 (v3.8.5 → v3.9.0)
+- **5축 코드 리뷰 P0 결함**: `controller.py`에 세션 상태 머신 5종 메서드가 2회 정의
+  (앞쪽은 frozen `SessionState`에 없는 `state.update()`, 없는 `_abandon_analyzer()` 참조
+  데드코드). 뒤쪽 정의가 항상 덮어쓰던 구조적 혼란 종결.
+- **macOS Bottle 수급 단결**: `_ensure_ffmpeg_macos` 내 "다운로드·SHA 검증 생략" 주석
+  구간으로 미존재 tar 경로를 전개해 `[Errno 2]`가 반환, 계약 테스트 3건 연속 실패.
+- **F12 로그 계약 혼선**: `tasks/plan.md`의 "전량 누적" 요구와 현행 스냅샷 치환 구현의
+  충돌 → **선택지 B 확정**: 뷰 버퍼는 스냅샷 치환(뷰 폭발 방지), 전량은
+  history 파일 + dispatcher full_events ring이 보장 (HANDOVER §5-33 직교 분리).
+- **기술부채**: `MainWindow` God Object, `SpeedWindow` O(n) 상각, 중복 상수/테스트.
+- **대규모 구조 분해**: 게이트/워치독 상태 추출(`gate_state.py`), 파이프라인 분기 분리(`target_downloader/` 패키지), LogEvent deprecated 정리(`platform`/`spec` 필드 제거), 타임아웃/권한 일관화(`chzzktube.core` 상수화 + tmp 0o600), 로그 인젝션 회귀 테스트.
+
+#### 모듈 변경
+
+| 모듈 | 변경 |
+|------|------|
+| `control/controller.py` | 중복 정의된 세션 상태 머신 5종(`begin/end_download`, `on_download_finished`, `request_cancel/skip`) 앞쪽 데드 정의 삭제 — `_set_*`+시그널 경로 단일 진실화. |
+| `control/gate_state.py` (신규) | 게이트/분석 워치독 무장·해제·POT 재시도 상태 컨테이너(`GateState`) + 무장/해제/재시도 함수. MainWindow 7종 위임 메서드는 게이트 함수로 단일화. |
+| `infra/components.py` | `_write_bottle_payload` 신규 — `_http_get` 다운로드 + SHA-256 강제 검증 복원. 중복 `_FFMPEG_BREW_API` 제거. 호스트 승격(§5-32)·명시적 FAIL 유지, evermeet 폴백은 계속 부재. 타임아웃 상수화(`chzzktube.core` 상수) + tmp 파일 0o600 권한 고정. |
+| `ui/log_mirror.py` (신규) | `MainWindow`에서 TUI/F12 미러 4종 로직 통째 추출. 선택지 B(뷰 스냅샷 치환 / 전량 직교)에 맞춰 문서화. 버퍼 미보유 테스트 대역 호환 폴백 포함. |
+| `pipeline/target_downloader/` (신규 패키지) | 단일 `target_downloader.py` → 7개 분기별 모듈 분할: `utils.py`(공통 상수/유틸), `options.py`(yt-dlp 옵션), `flatten.py`(평탄화), `chzzk.py`(치지직), `youtube_vod.py`(유튜브 VOD), `youtube_live.py`(유튜브 라이브/스트림), `dispatch.py`(메인 디스패처), `__init__.py`(공개 API 재내보내기). 기존 import 경로 호환 유지. |
+| `pipeline/target_downloader/options.py` | `_format_selector` 원본 로직 복원 (`bv*+ba` 단일 포맷, tv 폴백 금지). |
+| `pipeline/target_downloader/youtube_vod.py` | `_ensure_pot_server_ready` 원본 로직 복원 (POTManager.instance() 제거, L0/L1 인프라만 사용). |
+| `pipeline/target_downloader/utils.py` | `_emit_error_log` 즉시 TUI 발행 금지 (failed_targets만 누적). |
+| `core/log_event.py` | `platform`/`spec` 필드 제거 (deprecated). 호출부 통일. |
+| `core/log_emitter.py` | `emit_event`/`emit_dl`/`emit_error_standard` 등에서 `platform=scope` 제거. |
+| `core/__init__.py` | 타임아웃/권한 상수 신규: `CONNECT_TIMEOUT`/`READ_TIMEOUT`/`DOWNLOAD_TIMEOUT`/`SHORT_API_TIMEOUT`/`PING_TIMEOUT`/`LOCAL_PROC_TIMEOUT`/`TEMP_FILE_MODE`/`EXECUTABLE_FILE_MODE`. |
+| `ui/main_window.py` | 미러 4종은 호환 바인딩으로 축소. 게이트/워치독 위임 메서드 7종은 `gate_state` 함수 호출로 단일화. |
+| `core/speed_window.py` | `_samples` list 재구성 → `deque` + `popleft` O(1) 상각 (진행률 틱 빈도 대응 성능). |
+
+#### 테스트
+
+| 테스트 | 변경 |
+|--------|------|
+| `tests/test_controller_no_duplicates.py` (신규) | 5개 메서드 1회 정의 + 데드 참조 0 계약 (RED→GREEN). |
+| `tests/test_chzzk_auth.py` (신규) | 401/403→`ChzzkAuthError`, 500 통과, 워커 쿠키 만료 매핑 단언. |
+| `tests/test_ffmpeg_archive_contract.py` | mock `_verify_ffmpeg` `env_extra` 시그니처 정합, 중복 테스트 제거, SHA부재 테스트의 호스트 승격 격리. |
+| `tests/test_defect1_tv_fallback.py` | 결함1 구 계획(수동 `client_chain`) 폐기 → 순정 위임 계약 단언 3건으로 교체. |
+| `tests/test_progress_integration.py` | F12 계약을 선택지 B로 단일화: `..._snapshot_replaces_progress_ticks`(버퍼 길이 1) + `..._full_history_keeps_every_tick`(full_events 전량) 분리. |
+| `tests/test_v38_contracts.py` | LogEvent deprecated 제거 검증, 로그 인젝션 회귀 테스트 5건 추가 (`test_msg_contains_delimiter_is_sanitized` 등). |
+| `tests/test_startup_gate_regressions.py` | 게이트 재귀 버그 수정(property → 직접 속성 + 캐시). |
+| `tests/test_analyze_state.py`, `tests/test_analysis_timeout.py` | 게이트/워치독 캐시 적용으로 재귀 제거. |
+| `tests/test_gate_integration.py` | `gate_state` 함수 위임 계약 검증. |
+
+#### 검증
+- `python -m pytest tests/ -q` → **356 passed, 0 failed** (기준 341 → +15)
+- `python -m compileall chzzktube` → OK
+- `QT_QPA_PLATFORM=offscreen python smoke_test.py` → PASS
+- `python sync_mirrors.py --check` → changed 0 / missing 1 (`target_downloader.py` → 패키지화로 미러 생략)
+- `git diff --check` → OK
+- `uv sync` → uv.lock 갱신 완료
+
+#### 완료
+- Task 4-2 gate_state 추출 / 4-3 파이프라인 분기 분리 / 4-4 LogEvent deprecated 정리
+- Task 5-3 타임아웃·권한 / 5-4 로그 인젝션
+- Task 6-2 v3.9.0 버전 일괄 일치 완료
+
+---
+
+---
+
 ### 2026-09-23 — v3.8.5 : 수급 계층 런타임 구조 보존·TUI 마감 이벤트 복구·TUI 칼정렬 rstrip 적용·macOS 호스트 승격 구출·TUI/F12 로깅 이원화 정립 (patch)
 
 #### 배경 (v3.8.4 → v3.8.5)

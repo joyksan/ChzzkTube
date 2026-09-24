@@ -12,6 +12,7 @@
 테스트 관례는 tests/test_analyze_state.py(가벼운 self 대역)와
 tests/test_pot_manager.py(QCoreApplication)를 따른다 — 헤드리스 위젯 생성 금지.
 """
+from dataclasses import field
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -71,6 +72,9 @@ class _FakeTimer:
         return self.active
 
     def stop(self):
+        pass
+
+    def reset(self):
         pass
 
 
@@ -325,7 +329,6 @@ class _GateFake:
         )
         self.update_worker = SimpleNamespace(isRunning=lambda: worker_running)
         self._gate_watchdog = _FakeTimer(active=False)
-        self._gate_watchdog_active = True
         self._startup_coord = Mock()
         self.url_input = _FakeInput(url)
         self._deps_failed = []
@@ -336,6 +339,28 @@ class _GateFake:
         self.canceled = []
         self.ensure_ready_calls = []
         self.logs = []
+        self._gate_watchdog_active = pot_busy  # pot_busy일 때 게이트 활성화
+
+    # ── legacy 플래그 직접 속성 (property 제거 — RecursionError 방지) ──────────
+    _gate_watchdog_active: bool = False
+    _pot_retry_pending: bool = False
+    _pot_retry_url: str | None = None
+    _pot_retry_done: set = field(default_factory=set)
+
+    def _ensure_gate_state(self):
+        """Provide GateState fallback for test mocks — cached local impl."""
+        if not hasattr(self, "_gate_state"):
+            from types import SimpleNamespace
+            self._gate_state = SimpleNamespace(
+                gate_watchdog=getattr(self, "_gate_watchdog", None),
+                analysis_watchdog=getattr(self, "_analysis_watchdog", None),
+                gate_active=bool(getattr(self, "_gate_watchdog_active", False)),
+                analysis_active=bool(getattr(self, "_analysis_watchdog_active", False)),
+                pot_retry_pending=bool(getattr(self, "_pot_retry_pending", False)),
+                pot_retry_url=getattr(self, "_pot_retry_url", None),
+                pot_retry_done=getattr(self, "_pot_retry_done", set()),
+            )
+        return self._gate_state
 
     def _startup_chain_active(self):
         return main_module.MainWindow._startup_chain_active(self)
@@ -353,7 +378,13 @@ class _GateFake:
         return main_module.MainWindow._on_gate_timeout(self)
 
     def _maybe_retry_analysis(self, err_msg):
-        return main_module.MainWindow._maybe_retry_analysis(self, err_msg)
+        result = main_module.MainWindow._maybe_retry_analysis(self, err_msg)
+        # Sync GateState back to local attributes for test assertions
+        gs = self._ensure_gate_state()
+        self._pot_retry_pending = gs.pot_retry_pending
+        self._pot_retry_url = gs.pot_retry_url
+        self._pot_retry_done = gs.pot_retry_done
+        return result
 
     def append_concise_log(self, *a, **k):
         ev = a[0] if a else None

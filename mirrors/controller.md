@@ -217,40 +217,6 @@ class MediaController(QObject):
             targets = list(dict.fromkeys(targets))
         return targets
 
-    ### ── 세션 상태 머신 ────────────────────────────────────────
-    def begin_download(self):
-        self.state.update(
-            {"running": True, "canceled": False, "skip": False}
-        )
-
-    def end_download(self):
-        self.state.update(
-            {"running": False, "canceled": False, "skip": False}
-        )
-
-    def on_download_finished(self, success_count, fail_count):
-        """다운로드 완료 후 상태 정리 (View → Controller 이관).
-
-        View는 이 메서드를 호출만 하고, 실제 상태 초기화와 후처리는
-        Controller가 담당한다. 사운드 재생/폴더 열기는 UI 전용 로직이므로
-        View에서 유지한다.
-        """
-        self.end_download()
-
-        if success_count > 0:
-            # 분석 데이터 초기화 — 다음 URL 입력 시 깨끗한 상태로 시작
-            self.view.extracted_data = {"info": None, "v_list": [], "a_list": []}
-
-    def request_cancel(self):
-        if self.running:
-            self.state["canceled"] = True
-        elif self.analyzing:
-            self._abandon_analyzer()
-
-    def request_skip(self):
-        if self.running:
-            self.state["skip"] = True
-
     ### ── 다운로드 워커 생명주기 ─────────────────────────────────
     def spawn_worker(
         self,

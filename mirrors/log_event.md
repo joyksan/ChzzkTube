@@ -24,11 +24,7 @@ class LogEvent:
     """구조화된 로그 이벤트."""
     stage: str = "SYS"
     status: str = "OK"
-    # v3.4.0: platform → scope 개명. platform은 호환 별칭(읽기 전용 X, 쓰기 허용).
     scope: str = "-"
-    platform: str = field(default="-", repr=False, compare=False)  # deprecated
-    # v3.4.0 deprecated: SPEC 컬럼 폐지. 전달 시 [spec] 태그로 MSG 흡수된다.
-    spec: str = "-"
     speed: str = "-"
     pct: float = None
     bar_frac: float = None

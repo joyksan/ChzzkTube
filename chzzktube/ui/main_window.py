@@ -34,6 +34,8 @@ from PySide6.QtWidgets import (
 )
 
 from chzzktube.control.controller import MediaController, _is_valid_url
+from chzzktube.control.gate_state import GateState
+import chzzktube.control.gate_state as gate_state
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
 from chzzktube.core import config, log_emitter, log_history, raw_log
@@ -189,7 +191,6 @@ class MainWindow(QMainWindow):
         # 수명은 스폰 3곳의 명시적 무장에서만 시작되고, 만료 판정·복구·해제는
         # 뷰(_on_analysis_timeout)가 단독 수행한다(만료의 영속 재판정 금지).
         self.ctrl.analyze_activity.connect(self._analysis_watchdog.heartbeat)
-        self._analysis_watchdog_active = False
 
         # 워치독 폴링용 타이머 (1초 주기)
         self._watchdog_poll_timer = QTimer(self)
@@ -210,15 +211,163 @@ class MainWindow(QMainWindow):
         # 워치독이 같은 만료를 따로 판정해 유예를 끊던 이중 구조 제거).
         # [v3.8.1] 폴백 완전 제거 — deps 수급 완료까지 입력 잠금 유지
 
-        # 게이트 만료는 _gate_watchdog 하나로 판정한다. QTimer는 폴링에만 사용.
-        self._gate_watchdog_active = False
+        # [Task 4-2] 게이트·분석 워치독 무장/해제 + POT 재시도 상태를
+        # GateState 컨테이너로 통합 — 상태 변수 개별 초기화 금지(§6) 준수.
+        self._gate_state = GateState(self._gate_watchdog, self._analysis_watchdog)
+
         # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
         self._deps_failed = []
-        # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
-        self._pot_retry_url = None
-        self._pot_retry_pending = False
-        self._pot_retry_done = set()
         self._watchdog_poll_timer.start()
+
+    # ── GateState 호환 property ──────────────────────────────────────────
+    # 판정 로직 실체는 gate_state 모듈 함수. 여기는 데이터 위임 층만 담당.
+    @property
+    def _gate_watchdog_active(self) -> bool:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.gate_active
+        # fallback: old attribute (tests/mocks)
+        return bool(getattr(self, "_gate_watchdog_active_fallback", False))
+
+    @_gate_watchdog_active.setter
+    def _gate_watchdog_active(self, val: bool) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.gate_active = val
+        else:
+            # fallback: old attribute (tests/mocks)
+            self._gate_watchdog_active_fallback = val
+
+    @property
+    def _analysis_watchdog_active(self) -> bool:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.analysis_active
+        return bool(getattr(self, "_analysis_watchdog_active_fallback", False))
+
+    @_analysis_watchdog_active.setter
+    def _analysis_watchdog_active(self, val: bool) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.analysis_active = val
+        else:
+            self._analysis_watchdog_active_fallback = val
+
+    @property
+    def _pot_retry_pending(self) -> bool:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.pot_retry_pending
+        return bool(getattr(self, "_pot_retry_pending_fallback", False))
+
+    @_pot_retry_pending.setter
+    def _pot_retry_pending(self, val: bool) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.pot_retry_pending = val
+        else:
+            self._pot_retry_pending_fallback = val
+
+    @property
+    def _pot_retry_url(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.pot_retry_url
+        return getattr(self, "_pot_retry_url_fallback", None)
+
+    @_pot_retry_url.setter
+    def _pot_retry_url(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.pot_retry_url = val
+        else:
+            self._pot_retry_url_fallback = val
+
+    @property
+    def _pot_retry_done(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.pot_retry_done
+        return getattr(self, "_pot_retry_done_fallback", set())
+
+    @_pot_retry_done.setter
+    def _pot_retry_done(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.pot_retry_done = val
+        else:
+            self._pot_retry_done_fallback = val
+
+    @property
+    def _gate_watchdog(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.gate_watchdog
+        return getattr(self, "_gate_watchdog_fallback", None)
+
+    @_gate_watchdog.setter
+    def _gate_watchdog(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.gate_watchdog = val
+        else:
+            self._gate_watchdog_fallback = val
+
+    @property
+    def _analysis_watchdog(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.analysis_watchdog
+        return getattr(self, "_analysis_watchdog_fallback", None)
+
+    @_analysis_watchdog.setter
+    def _analysis_watchdog(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.analysis_watchdog = val
+        else:
+            self._analysis_watchdog_fallback = val
+
+    # ── 게이트·분석 워치독·재시도 메서드 (Thin Wrapper 금지: 실체는 gate_state) ──
+    def _start_gate_watchdog(self):
+        """[Followup-3] POT gate 대기 2차 워치독 기동."""
+        gate_state.start_gate(self._ensure_gate_state())
+
+    def _stop_gate_watchdog(self):
+        gate_state.stop_gate(self._ensure_gate_state())
+
+    def _on_pot_work_tick(self):
+        """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
+        gate_state.on_pot_work_tick(self._ensure_gate_state())
+
+    def _on_gate_timeout(self):
+        """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
+        gs = self._ensure_gate_state()
+        if not gs.gate_active:
+            return
+        self._stop_gate_watchdog()
+        if not self._pot_manager.is_busy():
+            return
+        # cancel()에서 pot_finished가 즉시 발행되어도 보류 요청은 재실행되지 않는다.
+        self._pending_download = None
+        gate_state.clear_retry(gs)
+        self._pot_manager.cancel()
+        self.append_concise_log(
+            log_emitter.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
+            is_status=False,
+            is_error=False,
+        )
+        self.update_ui_state()
+
+    def _arm_analysis_watchdog(self):
+        """[Watchdog] 분석 스폰 1회 무장 — 이후 만료 판정은 폴링이 담당한다."""
+        gs = self._ensure_gate_state()
+        gate_state.arm_analysis(gs)
+
+    def _disarm_analysis_watchdog(self):
+        """[Watchdog] 분석 마감(성공/실패/만료) 해제 — 만료의 영속 재판정을 끊는다."""
+        gs = self._ensure_gate_state()
+        gate_state.disarm_analysis(gs)
 
     def _poll_watchdogs(self):
         """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리.
@@ -226,18 +375,19 @@ class MainWindow(QMainWindow):
         기동 폴백은 여기서 판정하지 않는다 — 만료의 단일 기준은 _fallback_timer며,
         이중 판정은 Followup-4 유예(재무장 직후 폴링이 유예를 끊는 결함)를 낳았다.
         """
+        gs = self._ensure_gate_state()
         # 1) 게이트 워치독
-        if self._gate_watchdog_active and self._gate_watchdog.check_timeout():
+        if gs.gate_active and gs.gate_watchdog.check_timeout():
             self._on_gate_timeout()
             return
 
         # 2) 분석 워치독 — 워커의 activity 신호가 수명을 연장하고,
         #    만료 시 여기서 복구(워커 유기 + FAIL 마감)를 단독 수행한다.
-        if self._analysis_watchdog_active and self._analysis_watchdog.check_timeout():
+        if gs.analysis_active and gs.analysis_watchdog.check_timeout():
             self._on_analysis_timeout()
             return
 
-    def _platform_of_url(self) -> str:
+    def _on_analysis_timeout(self):
             """[결함 수리] stop_analysis_anim 호출 대비 URL 플랫폼 축약 기호 추출."""
             url = self.url_input.text().strip()
             return _short_platform(_dl_platform(url))
@@ -932,7 +1082,7 @@ class MainWindow(QMainWindow):
     def _on_pot_finished(self, ok: bool, msg: str):
         self._stop_gate_watchdog()
         # [Followup-6] 봇 체크 재시도가 대기 중이면 POT 준비와 함께 재분석한다.
-        if ok and self._pot_retry_pending:
+        if ok and self._ensure_gate_state().pot_retry_pending:
             self._run_pending_retry()
             return
         pending = getattr(self, "_pending_download", None)
@@ -946,30 +1096,73 @@ class MainWindow(QMainWindow):
         self._startup_completed = True
         self.update_ui_state()
 
+    def _ensure_gate_state(self):
+        """[Task 4-2] GateState 보장 — 기존 테스트 대역(SimpleNamespace)이
+        직접 플래그만 가질 때 자동으로 GateState를 구성해 호환성을 유지한다.
+        Thin Wrapper 금지(§6) 준수: gate_state 모듈 함수가 판정 로직의
+        단일 진실이며, 여기는 호출부 컨테이너 생성만 담당한다.
+        """
+        if getattr(self, "_gate_state", None) is not None:
+            return self._gate_state
+        # watchdog 인스턴스는 property일 수 있지만, 재귀 루프를 막기 위해
+        # property 내부가 또 _ensure_gate_state를 호출하기 전에 종료해야 한다.
+        # _gate_watchdog/_analysis_watchdog property는 자신의 _gate_state를
+        # 먼저 조회하므로, _gate_state가 없을 때만 인스턴스 dict로 폴백한다.
+        # _analysis_watchdog_raw 키도 함께 확인한다 (테스트 대역 Raw 저장용).
+        gs = GateState(
+            self.__dict__.get("_gate_watchdog", None),
+            self.__dict__.get("_analysis_watchdog",
+                              self.__dict__.get("_analysis_watchdog_raw", None)),
+        )
+        # 기존 플래그 값 마이그레이션 (설정자 우선, 없으면 기본 False)
+        # __dict__ 직접 조회 대신 getattr 사용 — 테스트 대역의 property getter가
+        # 다시 _ensure_gate_state()를 호출하는 순환(RecursionError)을 원천 차단한다.
+        # watchdog 인스턴스는 property일 수 있으므로 getattr 유지 (재귀 없음).
+        gs.gate_active = bool(getattr(self, "_gate_watchdog_active", False))
+        gs.analysis_active = bool(getattr(self, "_analysis_watchdog_active", False))
+        gs.pot_retry_pending = bool(getattr(self, "_pot_retry_pending", False))
+        gs.pot_retry_url = getattr(self, "_pot_retry_url", None)
+        gs.pot_retry_done = getattr(self, "_pot_retry_done", set())
+        self._gate_state = gs
+        return gs
+
+    def get_current_app_state(self) -> str:
+        """[P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
+        toggle_download의 큐잉(_pending_download)이 맡는다. is_busy를 STARTUP 사유로
+        두면 프리웜 진행 중 ENTER가 큐잉 분기에 도달하지 못하고 무반응으로 끝났다.
+        """
+        if not getattr(self, "_startup_completed", False):
+            return "STARTUP"
+        if self.ctrl.running:
+            return "RUNNING"
+        if self.ctrl.analyzing:
+            return "ANALYZING"
+        if self.ctrl.picking:
+            return "PICKING"
+        return "IDLE"
+
     def _start_gate_watchdog(self):
         """[Followup-3] POT gate 대기 2차 워치독 기동."""
-        self._gate_watchdog.reset()
-        self._gate_watchdog_active = True
+        gate_state.start_gate(self._ensure_gate_state())
 
     def _stop_gate_watchdog(self):
-        self._gate_watchdog_active = False
+        gate_state.stop_gate(self._ensure_gate_state())
 
     def _on_pot_work_tick(self):
         """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
-        if self._gate_watchdog_active:
-            self._gate_watchdog.heartbeat()
+        gate_state.on_pot_work_tick(self._ensure_gate_state())
 
     def _on_gate_timeout(self):
         """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
-        if not self._gate_watchdog_active:
+        gs = self._ensure_gate_state()
+        if not gs.gate_active:
             return
         self._stop_gate_watchdog()
         if not self._pot_manager.is_busy():
             return
         # cancel()에서 pot_finished가 즉시 발행되어도 보류 요청은 재실행되지 않는다.
         self._pending_download = None
-        self._pot_retry_pending = False
-        self._pot_retry_url = None
+        gate_state.clear_retry(gs)
         self._pot_manager.cancel()
         self.append_concise_log(
             log_emitter.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
@@ -980,12 +1173,11 @@ class MainWindow(QMainWindow):
 
     def _arm_analysis_watchdog(self):
         """[Watchdog] 분석 스폰 1회 무장 — 이후 만료 판정은 폴링이 담당한다."""
-        self._analysis_watchdog.reset()
-        self._analysis_watchdog_active = True
+        gate_state.arm_analysis(self._ensure_gate_state())
 
     def _disarm_analysis_watchdog(self):
         """[Watchdog] 분석 마감(성공/실패/만료) 해제 — 만료의 영속 재판정을 끊는다."""
-        self._analysis_watchdog_active = False
+        gate_state.disarm_analysis(self._ensure_gate_state())
 
     def _on_analysis_timeout(self):
         """[Watchdog] 분석 무응답 — 워커를 유기하고 FAIL로 마감한다.
@@ -1014,14 +1206,12 @@ class MainWindow(QMainWindow):
         """[Followup-6] 봇 체크 실패 시 POT 서버 기동 후 1회만 재분석을 큐잉한다."""
         if not _needs_pot_retry(err_msg):
             return False
-        if self._pot_retry_pending:
+        gs = self._ensure_gate_state()
+        if gs.pot_retry_pending:
             return False
         url = self.url_input.text().strip()
-        if not url or url in self._pot_retry_done:
+        if not gate_state.schedule_retry(gs, url):
             return False
-        self._pot_retry_done.add(url)
-        self._pot_retry_url = url
-        self._pot_retry_pending = True
         self.append_concise_log(
             log_emitter.emit_event("POT", "RUN", "POT",
                                    "bot-check detected — starting pot server, retrying once"),
@@ -1037,9 +1227,7 @@ class MainWindow(QMainWindow):
 
     def _run_pending_retry(self):
         """[Followup-6] POT 준비 완료 후 보류 URL을 명시적으로 재분석한다."""
-        url = self._pot_retry_url
-        self._pot_retry_pending = False
-        self._pot_retry_url = None
+        url = gate_state.consume_retry(self._ensure_gate_state())
         if not url:
             return
         self.url_input.setText(url)
@@ -1237,85 +1425,26 @@ class MainWindow(QMainWindow):
             reflow()
         return True
 
+    # [v3.9.0] 로그 미러는 ui/log_mirror.py로 이전 — 아래 4종은 호환 바인딩.
+    def _finalize_concise_progress(self, line, is_status, is_error, component_id):
+        from chzzktube.ui import log_mirror as _lm
+
+        return _lm.finalize_concise_progress(self, line, is_status, is_error, component_id)
+
     def _render_concise(self, event, is_status=False, is_error=False):
-        if isinstance(event, LogEvent):
-            line = log_emitter.format_log_line_for_event(event)
-            no_wrap = True
-            component_id = getattr(event, "component_id", None)
-            is_progress = bool(getattr(event, "is_progress", False))
-        else:
-            line = str(event)
-            no_wrap = False
-            component_id = None
-            is_progress = False
-        if len(line) > 4096:
-            line = line[:4096] + "…"
-        if component_id and not is_progress and self._finalize_concise_progress(
-            line, is_status, is_error, component_id
-        ):
-            return
-        try:
-            self.console.append(
-                line, is_status, is_error, no_wrap=no_wrap,
-                component_id=component_id, is_progress=is_progress,
-            )
-        except TypeError:
-            # 하위 호환: component_id/is_progress 인자 없는 구버전 console 호출
-            self.console.append(line, is_status, is_error, no_wrap=no_wrap)
+        from chzzktube.ui import log_mirror as _lm
+
+        return _lm.render_concise(self, event, is_status, is_error)
 
     def _mirror_event_full(self, event, is_status=False):
-        if isinstance(event, LogEvent):
-            line = event.msg if event.msg else ""
-            self._last_full_event = event  # component_id 추출용 저장
-            component_id = getattr(event, "component_id", None)
-            is_progress = bool(getattr(event, "is_progress", False))
-        else:
-            line = str(event)
-            component_id = None
-            is_progress = False
-        # F12의 갱신 여부는 기존 append(is_status, component_id) 계약으로 처리한다.
-        # 진행 메타데이터만 있고 is_status가 빠진 구 발행 이벤트도 갱신한다.
-        f12_is_status = bool(is_status or is_progress)
-        if f12_is_status:
-            self._last_status_line = line
-        try:
-            self._mirror_full_log(line, f12_is_status, component_id=component_id)
-        except TypeError:
-            # 하위 호환: component_id 인자 없는 구버전 mock 호출
-            self._mirror_full_log(line, f12_is_status)
+        from chzzktube.ui import log_mirror as _lm
+
+        return _lm.mirror_event_full(self, event, is_status)
 
     def _mirror_full_log(self, line, is_status=False, component_id: str = None):
-        """F12 전체 로그 버퍼 적재 및 활성 다이얼로그 제자리 갱신 관통 (SSOT)."""
-        msg = str(line)
-        if len(msg) > 4096:
-            msg = msg[:4096] + "…"
-        ts = time.strftime("%H:%M:%S")
-        stamped = "\n".join(f"[{ts}] {line}" if line else f"[{ts}]" for line in msg.split("\n"))
+        from chzzktube.ui import log_mirror as _lm
 
-        # [버퍼 지터링 차단] 
-        # 진행 틱(is_status=True 또는 component_id 존재)은 버퍼를 도배하지 않고 
-        # 직전 상태 줄을 제자리 치환하여 F12 오픈 시의 스크롤 폭주를 원천 봉쇄
-        if is_status or component_id:
-            if getattr(self, "_last_full_was_status", False) and self._full_log_buf:
-                self._full_log_buf[-1] = stamped
-            else:
-                self._full_log_buf.append(stamped)
-            self._last_full_was_status = True
-        else:
-            self._full_log_buf.append(stamped)
-            self._last_full_was_status = False
-
-        win = getattr(self, "verbose_win", None)
-        win_visible = win is not None and win.isVisible()
-        if win_visible:
-            self._full_log_win_n = len(self._full_log_buf)
-            try:
-                win.append(stamped, is_status, component_id)
-            except (AttributeError, RuntimeError, TypeError):
-                try:
-                    win.append(stamped, is_status)
-                except (AttributeError, RuntimeError):
-                    pass
+        return _lm.mirror_full_log(self, line, is_status, component_id)
 
     def append_concise_log(self, msg, is_status=False, is_error=False, fg_color=None):
         if isinstance(msg, LogEvent):

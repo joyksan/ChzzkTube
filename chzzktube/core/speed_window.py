@@ -5,6 +5,7 @@
 스트림 전환(비디오→오디오)·타겟 전환 시 reset()으로 윈도우를 비운다.
 """
 import time
+from collections import deque
 
 
 class SpeedWindow:
@@ -12,11 +13,12 @@ class SpeedWindow:
 
     add(총 바이트 누적값)를 계속 공급하면 speed()가 초당 바이트를 반환.
     내부적으로 (타임스탬프, 누적바이트) 표본을 10초 윈도우로 유지한다.
+    [v3.9.0] 리스트 재구성 → deque popleft O(1) 상각.
     """
 
     def __init__(self, window=10.0):
         self._window = float(window)
-        self._samples = []
+        self._samples = deque()
         self._last_total = 0
         self._last_t = 0.0
 
@@ -34,7 +36,8 @@ class SpeedWindow:
         self._samples.append((now, float(total_bytes)))
         cutoff = now - self._window
         if cutoff > 0:
-            self._samples = [(tt, b) for tt, b in self._samples if tt >= cutoff]
+            while self._samples and self._samples[0][0] < cutoff:
+                self._samples.popleft()
 
     def speed(self):
         """초당 바이트. 표본 2개 미만 또는 시간차 없으면 0.0."""

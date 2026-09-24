@@ -32,6 +32,14 @@ import zipfile
 from pathlib import Path
 
 import chzzktube.core.config as config
+from chzzktube.core import (
+    CONNECT_TIMEOUT,
+    READ_TIMEOUT,
+    DOWNLOAD_TIMEOUT,
+    SHORT_API_TIMEOUT,
+    TEMP_FILE_MODE,
+    EXECUTABLE_FILE_MODE,
+)
 from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
 from chzzktube.ui import ProgressBar
 
@@ -56,7 +64,7 @@ def _logcb(log):
     return log if callable(log) else (lambda *a, **k: None)
 
 
-def _http_get(url, timeout=30):
+def _http_get(url, timeout=READ_TIMEOUT):
     """HTTP GET 요청, ghcr.io는 토큰 인증 자동 처리."""
     headers = {"User-Agent": _UA}
     if "ghcr.io" in url:
@@ -72,7 +80,7 @@ def _http_get(url, timeout=30):
 def _ghcr_token(scope):
     """ghcr.io 익명 토큰 획득."""
     url = f"https://ghcr.io/token?scope={scope}"
-    with urllib.request.urlopen(url, timeout=15) as resp:
+    with urllib.request.urlopen(url, timeout=SHORT_API_TIMEOUT) as resp:
         data = json.load(resp)
     return data.get("token")
 
@@ -100,27 +108,29 @@ def _download(url, dest, log=None, label="", expected_sha256=None):
 
         hasher = hashlib.sha256() if expected_sha256 else None
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as f:
+            # 임시 파일을 0o600 권한으로 생성 (소유자만 읽기/쓰기)
+            with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp:
                 # Set per-read timeout
                 try:
                     sock = resp.fp.raw._sock
                     if sock is not None:
-                        sock.settimeout(30.0)
+                        sock.settimeout(READ_TIMEOUT)
                 except AttributeError:
                     pass
 
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
 
-                while True:
-                    chunk = resp.read(1024 * 512)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if hasher is not None:
-                        hasher.update(chunk)
-                    bar.update(downloaded, total)
+                with open(tmp, "wb", opener=lambda p, f: os.open(p, f, TEMP_FILE_MODE)) as f:
+                    while True:
+                        chunk = resp.read(1024 * 512)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if hasher is not None:
+                            hasher.update(chunk)
+                        bar.update(downloaded, total)
 
             # SHA-256 검증
             if hasher is not None:
@@ -251,7 +261,7 @@ def _parse_btbn_checksums(manifest_text, asset_name):
     raise ValueError(f"valid SHA-256 for {asset_name} not found in manifest")
 
 
-def _fetch_btbn_checksums(url, timeout=15):
+def _fetch_btbn_checksums(url, timeout=SHORT_API_TIMEOUT):
     """checksums.sha256 자산 텍스트 다운로드 (stdlib only)."""
     req = urllib.request.Request(url, headers={"User-Agent": BTBN_UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -281,7 +291,7 @@ def _select_btbn_asset(assets, arch_token, ext):
     return None
 
 
-def _resolve_btbn_ffmpeg(timeout=15):
+def _resolve_btbn_ffmpeg(timeout=SHORT_API_TIMEOUT):
     """BtbN 최신 릴리스에서 (에셋 + 체크섬) 단일 트랜잭션 해석.
 
     반환: component/version/asset_name/url/sha256/archive_type/platform/architecture
@@ -425,17 +435,6 @@ def _atomic_install(binaries, dest_dir):
     _rmtree(str(backup))
     return bin_dir
 _FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
-
-# [macOS] Homebrew bottle 키 선정 (v3.8.1) — formulae.brew.sh 응답의 실제
-# bottle 키에서 arch prefix 매치로 선택한다. 과거처럼 OS 버전→키 하드코딩
-# 테이블을 두면 신형 macOS(15.x Tahoe/Sequoia 등) 키가 누락되어
-# "no compatible Homebrew bottle" FAIL이 난다.
-# 실측(2026-09): arm64_tahoe / arm64_sequoia / arm64_golden_gate / arm64_linux.
-#
-# [중요] 현행 formulae(ffmpeg 9.x) bottle은 실행 중 OS에서 dyld 심볼 에러로
-# 실행 불가할 수 있다 (Tahoe 26.x SDK 빌드 / Sequoia 빌드라도 깨진 dylib 링크).
-# [v3.8.4] evermeet.cx 정적 폴백은 폐기 — Apple Silicon(arm64) 빌드를 제공하지
-# 않아 Rosetta2/dyld 실패만 양산했다. bottle 전멸 시 명시적 FAIL로 닫는다.
 _MAC_BOTTLE_ARCH_PREFIX = {
     "arm64": "arm64_",
     "x86_64": "x86_64_",
@@ -667,13 +666,32 @@ def _ffmpeg_done_event(text):
     )
 
 
+def _write_bottle_payload(url, dest_path, expected_sha256):
+    """Homebrew bottle 페이로드 기록 + SHA-256 강제 검증.
+
+    [v3.9.0] 기존 생략 주석 구간의 누락된 다운로드 단계를 복원.
+    ghcr.io 토큰 인증이 필요하므로 _http_get 경유. SHA 없으면 채택 금지
+    (무검증 수급 차단, §5-28). 해시 불일치는 ValueError로 호출자에게 전달.
+    """
+    hasher = hashlib.sha256()
+    with _http_get(url, timeout=DOWNLOAD_TIMEOUT) as resp, open(dest_path, "wb") as f:
+        while True:
+            chunk = resp.read(1024 * 512)
+            if not chunk:
+                break
+            f.write(chunk)
+            hasher.update(chunk)
+    if hasher.hexdigest() != (expected_sha256 or "").lower():
+        raise ValueError(f"SHA256 mismatch for bottle: {url}")
+
+
 def _ensure_ffmpeg_macos(log, force):
     """맥용 ffmpeg 자동 수급 — Bottle 내부 라이브러리 경로 바인딩 및 호스트 승격 안전망."""
     dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
 
     try:
         log(emit_component("DEPS", "RUN", "FFMP", "resolving (homebrew formula)..."))
-        with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
+        with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=SHORT_API_TIMEOUT) as resp:
             data = json.load(resp)
 
         bottle = data.get("bottle", {}).get("stable", {})
@@ -691,7 +709,7 @@ def _ensure_ffmpeg_macos(log, force):
             try:
                 with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
                     tar_path = os.path.join(td, "ffmpeg.tar.gz")
-                    # ... 다운로드 및 SHA-256 검증 생략 (기존 로직 유지) ...
+                    _write_bottle_payload(url, tar_path, sha256)
 
                     staging = _safe_extract(tar_path, "tar.gz", Path(td) / "x")
                     binaries = _locate_binaries(staging)

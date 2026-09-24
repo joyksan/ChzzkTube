@@ -78,6 +78,11 @@ class _FakeMain:
         self._pot_retry_done = set()
         self._pot_retry_url = None
         self.watchdog_started = 0
+        self._analysis_watchdog_active = False
+
+    # ── legacy 플래그 직접 속성 (property 제거 — RecursionError 방지) ──────────
+    _analysis_watchdog_active: bool = False
+    _pot_retry_pending: bool = False
 
     def _start_gate_watchdog(self):
         self.watchdog_started += 1
@@ -86,8 +91,15 @@ class _FakeMain:
         """테스트용 — 항상 True 반환하여 deps 체크 통과."""
         return True
 
+    def _ensure_gate_state(self):
+        """Provide GateState fallback for test mocks — cached GateState."""
+        if not hasattr(self, "_gate_state"):
+            self._gate_state = main_module.MainWindow._ensure_gate_state(self)
+        return self._gate_state
+
     def _disarm_analysis_watchdog(self):
-        return main_module.MainWindow._disarm_analysis_watchdog(self)
+        main_module.MainWindow._disarm_analysis_watchdog(self)
+        self._analysis_watchdog_active = False
 
 
     # ── 실제 MainWindow 메서드 바인딩 ─────────────────────────────

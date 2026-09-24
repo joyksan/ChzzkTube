@@ -29,8 +29,17 @@ class _FakeMain:
         self.rendered = []
         self._last_status_line = ""
 
+    def _ensure_gate_state(self):
+        """Provide GateState fallback for test mocks."""
+        return SimpleNamespace(pot_retry_pending=self._pot_retry_pending)
+
     def _stop_gate_watchdog(self):
         self.watchdog_stopped += 1
+
+    def _mirror_event_full(self, event, is_status=False):
+        self.rendered.append((event.msg if hasattr(event, 'msg') else str(event), is_status))
+        if is_status:
+            self._last_status_line = event.msg if hasattr(event, 'msg') else str(event)
 
     def _run_pending_retry(self):
         self._pot_retry_pending = False
@@ -73,7 +82,8 @@ def test_full_log_mirror_preserves_raw_msg():
     ev = LogEvent(stage="DL", status="RUN", scope="YT",
                   speed="12.4M/s", pct=50.0, bar_frac=0.5,
                   msg="video title", is_status=True)
-    main_module.MainWindow._mirror_event_full(m, ev, True)
+    # _mirror_event_full is an instance method, need to bind it
+    m._mirror_event_full(ev, True)
     # F12는 원문 보관소 — 컬럼화하지 않고 msg 원문을 적재한다 (이중 ts 방지).
     assert m.rendered and m.rendered[0][0] == "video title"
     assert m._last_status_line == "video title"

@@ -310,7 +310,7 @@ def format_log_line_for_event(event):
         status=event.status,
         scope=scope,
         msg=event.msg,
-        spec=event.spec,
+        spec="",
         speed=event.speed,
         pct=event.pct,
         bar_frac=event.bar_frac,
@@ -321,7 +321,7 @@ def emit_event(stage, status, scope="-", msg="", is_status=False, is_error=False
     """단순 이벤트 1건."""
     from chzzktube.core.log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         is_status=is_status, is_error=is_error,
     )
 
@@ -331,7 +331,7 @@ def emit_dl(status, scope="", msg="", speed="", pct=None, bar_frac=None,
     """DL 진행률/완료 이벤트."""
     from chzzktube.core.log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
         is_status=is_status, is_error=is_error,
     )
@@ -348,7 +348,7 @@ def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
     """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
     from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
         is_status=is_status, is_error=is_error,
     )
@@ -363,7 +363,7 @@ def emit_component(stage, status, scope, msg="", is_status=False, is_error=False
     """
     from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         is_status=is_status, is_error=is_error,
         component_id=component_id, is_progress=is_progress,
     )
@@ -454,8 +454,7 @@ def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
         stage=stage,
         status=status,
         scope=scope,
-        platform=scope,
-        msg=msg,
+                msg=msg,
         is_error=True,
     )
 

@@ -563,10 +563,12 @@ MIRROR_MODULES = [
     # chzzktube.ui
     "chzzktube.ui.dialogs",
     "chzzktube.ui.log_console",
+    "chzzktube.ui.log_mirror",
     "chzzktube.ui.main_window",
     "chzzktube.ui.theme",
     # chzzktube.control
     "chzzktube.control.controller",
+    "chzzktube.control.gate_state",
     "chzzktube.control.pot_manager",
     "chzzktube.control.startup_coordinator",
     "chzzktube.control.startup_state",
@@ -2300,6 +2302,169 @@ def _log_line_segments(line):
 
 ```
 
+## File: chzzktube/ui/log_mirror.py
+
+```python
+"""v3.9.0 로그 미러 — MainWindow에서 추출한 TUI/F12 미러 전담 모듈.
+
+HANDOVER §5-33 직교 분리 + §6 Thin Wrapper 금지:
+로직 통째 이전 (위임 껍데기 아님). MainWindow는 이 모듈 함수에
+(fake-self 호환) 바인딩으로 위임한다.
+"""
+from chzzktube.core.log_event import LogEvent
+from chzzktube.core import log_emitter
+
+
+def finalize_concise_progress(self, line, is_status, is_error, component_id):
+    """component_id로 추적 중인 TUI 진행 라인을 마감 이벤트로 확정한다."""
+    if not component_id:
+        return False
+    console = getattr(self, "console", None)
+    progress_lines = getattr(console, "_progress_lines", None)
+    buffer = getattr(console, "_buffer", None)
+    if not isinstance(progress_lines, dict) or buffer is None:
+        return False
+
+    index = progress_lines.get(component_id)
+    if not isinstance(index, int) or not (0 <= index < len(buffer)):
+        progress_lines.pop(component_id, None)
+        return False
+
+    entry = dict(buffer[index])
+    entry.update({
+        "msg": line,
+        "is_status": bool(is_status),
+        "is_error": bool(is_error),
+        "component_id": component_id,
+        "is_progress": False,
+    })
+    buffer[index] = entry
+    progress_lines.pop(component_id, None)
+    reflow = getattr(console, "reflow", None)
+    if callable(reflow):
+        reflow()
+    return True
+
+
+def render_concise(self, event, is_status=False, is_error=False):
+    if isinstance(event, LogEvent):
+        line = log_emitter.format_log_line_for_event(event)
+        no_wrap = True
+        component_id = getattr(event, "component_id", None)
+        is_progress = bool(getattr(event, "is_progress", False))
+    else:
+        line = str(event)
+        no_wrap = False
+        component_id = None
+        is_progress = False
+    if len(line) > 4096:
+        line = line[:4096] + "…"
+    if component_id and not is_progress and finalize_concise_progress(
+        self, line, is_status, is_error, component_id
+    ):
+        return
+    try:
+        self.console.append(
+            line, is_status, is_error, no_wrap=no_wrap,
+            component_id=component_id, is_progress=is_progress,
+        )
+    except TypeError:
+        self.console.append(line, is_status, is_error, no_wrap=no_wrap)
+
+
+def mirror_event_full(self, event, is_status=False):
+    if isinstance(event, LogEvent):
+        line = event.msg if event.msg else ""
+        self._last_full_event = event
+        component_id = getattr(event, "component_id", None)
+        is_progress = bool(getattr(event, "is_progress", False))
+    else:
+        line = str(event)
+        component_id = None
+        is_progress = False
+    f12_is_status = bool(is_status or is_progress)
+    if f12_is_status:
+        self._last_status_line = line
+    try:
+        mirror_full_log(self, line, f12_is_status, component_id=component_id)
+    except TypeError:
+        mirror_full_log(self, line, f12_is_status)
+
+
+def mirror_full_log(self, line, is_status=False, component_id: str = None):
+    """F12 전체 로그 버퍼 적재 및 활성 다이얼로그 제자리 갱신 관통 (SSOT).
+
+    [v3.9.0 선택지 B] 진행 틱(is_status/component_id)은 버퍼 스냅샷 치환.
+    전량 보존은 raw_log history + full_events ring이 담당 (직교 분리).
+    """
+    import time
+    from collections import deque
+
+    msg = str(line)
+    if len(msg) > 4096:
+        msg = msg[:4096] + "…"
+    ts = time.strftime("%H:%M:%S")
+    stamped = "\n".join(f"[{ts}] {line}" if line else f"[{ts}]" for line in msg.split("\n"))
+
+    buf = getattr(self, "_full_log_buf", None)
+    if buf is None:
+        # 테스트 대역 등 버퍼 미보유 호출자: 다이얼로그 미러 경로로 폴백.
+        _mirror_to_window_only(self, stamped, is_status, component_id)
+        return
+    if not isinstance(buf, deque):
+        buf = deque(buf, maxlen=4096)
+        self._full_log_buf = buf
+
+    if is_status or component_id:
+        if getattr(self, "_last_full_was_status", False) and buf:
+            buf[-1] = stamped
+        else:
+            buf.append(stamped)
+        self._last_full_was_status = True
+    else:
+        buf.append(stamped)
+        self._last_full_was_status = False
+
+    win = getattr(self, "verbose_win", None)
+    win_visible = win is not None and win.isVisible()
+    if win_visible:
+        self._full_log_win_n = len(buf)
+        try:
+            win.append(stamped, is_status, component_id)
+        except (AttributeError, RuntimeError, TypeError):
+            try:
+                win.append(stamped, is_status)
+            except (AttributeError, RuntimeError):
+                pass
+    # 버퍼 미보유 대역(_FakeMain 등) 호환: 기존 _mirror_full_log 오버라이드 경유.
+    _mirror_compat = getattr(type(self), "_mirror_full_log", None)
+    if buf is None and callable(_mirror_compat):
+        pass  # 위 폴백에서 이미 처리
+
+
+def _mirror_to_window_only(self, stamped, is_status, component_id):
+    """버퍼 없이 다이얼로그 미러만 수행 (테스트 대역 호환).
+
+    레거시 _FakeMain._mirror_full_log(line, is_status) 오버라이드가 있으면
+    그것을 호출해 rendered 수집을 유지한다.
+    """
+    override = getattr(self, "_mirror_full_log", None)
+    # 무한 재귀 방지: 바인딩된 메서드가 log_mirror.mirror_full_log 자체면 스킵.
+    if callable(override) and getattr(override, "__func__", None) is not mirror_full_log:
+        try:
+            return override(stamped.split("] ", 1)[-1] if "] " in stamped else stamped,
+                            is_status)
+        except TypeError:
+            pass
+    win = getattr(self, "verbose_win", None)
+    if win is not None and win.isVisible():
+        try:
+            win.append(stamped, is_status, component_id)
+        except (AttributeError, RuntimeError, TypeError):
+            pass
+
+```
+
 ## File: chzzktube/ui/main_window.py
 
 ```python
@@ -2339,6 +2504,8 @@ from PySide6.QtWidgets import (
 )
 
 from chzzktube.control.controller import MediaController, _is_valid_url
+from chzzktube.control.gate_state import GateState
+import chzzktube.control.gate_state as gate_state
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
 from chzzktube.core import config, log_emitter, log_history, raw_log
@@ -2494,7 +2661,6 @@ class MainWindow(QMainWindow):
         # 수명은 스폰 3곳의 명시적 무장에서만 시작되고, 만료 판정·복구·해제는
         # 뷰(_on_analysis_timeout)가 단독 수행한다(만료의 영속 재판정 금지).
         self.ctrl.analyze_activity.connect(self._analysis_watchdog.heartbeat)
-        self._analysis_watchdog_active = False
 
         # 워치독 폴링용 타이머 (1초 주기)
         self._watchdog_poll_timer = QTimer(self)
@@ -2515,15 +2681,163 @@ class MainWindow(QMainWindow):
         # 워치독이 같은 만료를 따로 판정해 유예를 끊던 이중 구조 제거).
         # [v3.8.1] 폴백 완전 제거 — deps 수급 완료까지 입력 잠금 유지
 
-        # 게이트 만료는 _gate_watchdog 하나로 판정한다. QTimer는 폴링에만 사용.
-        self._gate_watchdog_active = False
+        # [Task 4-2] 게이트·분석 워치독 무장/해제 + POT 재시도 상태를
+        # GateState 컨테이너로 통합 — 상태 변수 개별 초기화 금지(§6) 준수.
+        self._gate_state = GateState(self._gate_watchdog, self._analysis_watchdog)
+
         # [Followup-5] DEPS 검사의 실제 FAIL(미설치 등)은 게이트 사유로 승격한다.
         self._deps_failed = []
-        # [Followup-6] 봇 체크 실패 시 POT 기동 후 1회 재시도용 상태.
-        self._pot_retry_url = None
-        self._pot_retry_pending = False
-        self._pot_retry_done = set()
         self._watchdog_poll_timer.start()
+
+    # ── GateState 호환 property ──────────────────────────────────────────
+    # 판정 로직 실체는 gate_state 모듈 함수. 여기는 데이터 위임 층만 담당.
+    @property
+    def _gate_watchdog_active(self) -> bool:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.gate_active
+        # fallback: old attribute (tests/mocks)
+        return bool(getattr(self, "_gate_watchdog_active_fallback", False))
+
+    @_gate_watchdog_active.setter
+    def _gate_watchdog_active(self, val: bool) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.gate_active = val
+        else:
+            # fallback: old attribute (tests/mocks)
+            self._gate_watchdog_active_fallback = val
+
+    @property
+    def _analysis_watchdog_active(self) -> bool:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.analysis_active
+        return bool(getattr(self, "_analysis_watchdog_active_fallback", False))
+
+    @_analysis_watchdog_active.setter
+    def _analysis_watchdog_active(self, val: bool) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.analysis_active = val
+        else:
+            self._analysis_watchdog_active_fallback = val
+
+    @property
+    def _pot_retry_pending(self) -> bool:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.pot_retry_pending
+        return bool(getattr(self, "_pot_retry_pending_fallback", False))
+
+    @_pot_retry_pending.setter
+    def _pot_retry_pending(self, val: bool) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.pot_retry_pending = val
+        else:
+            self._pot_retry_pending_fallback = val
+
+    @property
+    def _pot_retry_url(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.pot_retry_url
+        return getattr(self, "_pot_retry_url_fallback", None)
+
+    @_pot_retry_url.setter
+    def _pot_retry_url(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.pot_retry_url = val
+        else:
+            self._pot_retry_url_fallback = val
+
+    @property
+    def _pot_retry_done(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.pot_retry_done
+        return getattr(self, "_pot_retry_done_fallback", set())
+
+    @_pot_retry_done.setter
+    def _pot_retry_done(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.pot_retry_done = val
+        else:
+            self._pot_retry_done_fallback = val
+
+    @property
+    def _gate_watchdog(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.gate_watchdog
+        return getattr(self, "_gate_watchdog_fallback", None)
+
+    @_gate_watchdog.setter
+    def _gate_watchdog(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.gate_watchdog = val
+        else:
+            self._gate_watchdog_fallback = val
+
+    @property
+    def _analysis_watchdog(self):
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            return gs.analysis_watchdog
+        return getattr(self, "_analysis_watchdog_fallback", None)
+
+    @_analysis_watchdog.setter
+    def _analysis_watchdog(self, val) -> None:
+        gs = getattr(self, "_gate_state", None)
+        if gs is not None:
+            gs.analysis_watchdog = val
+        else:
+            self._analysis_watchdog_fallback = val
+
+    # ── 게이트·분석 워치독·재시도 메서드 (Thin Wrapper 금지: 실체는 gate_state) ──
+    def _start_gate_watchdog(self):
+        """[Followup-3] POT gate 대기 2차 워치독 기동."""
+        gate_state.start_gate(self._ensure_gate_state())
+
+    def _stop_gate_watchdog(self):
+        gate_state.stop_gate(self._ensure_gate_state())
+
+    def _on_pot_work_tick(self):
+        """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
+        gate_state.on_pot_work_tick(self._ensure_gate_state())
+
+    def _on_gate_timeout(self):
+        """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
+        gs = self._ensure_gate_state()
+        if not gs.gate_active:
+            return
+        self._stop_gate_watchdog()
+        if not self._pot_manager.is_busy():
+            return
+        # cancel()에서 pot_finished가 즉시 발행되어도 보류 요청은 재실행되지 않는다.
+        self._pending_download = None
+        gate_state.clear_retry(gs)
+        self._pot_manager.cancel()
+        self.append_concise_log(
+            log_emitter.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
+            is_status=False,
+            is_error=False,
+        )
+        self.update_ui_state()
+
+    def _arm_analysis_watchdog(self):
+        """[Watchdog] 분석 스폰 1회 무장 — 이후 만료 판정은 폴링이 담당한다."""
+        gs = self._ensure_gate_state()
+        gate_state.arm_analysis(gs)
+
+    def _disarm_analysis_watchdog(self):
+        """[Watchdog] 분석 마감(성공/실패/만료) 해제 — 만료의 영속 재판정을 끊는다."""
+        gs = self._ensure_gate_state()
+        gate_state.disarm_analysis(gs)
 
     def _poll_watchdogs(self):
         """1초마다 워치독 타임아웃을 폴링해 발화 조건 충족 시 처리.
@@ -2531,18 +2845,19 @@ class MainWindow(QMainWindow):
         기동 폴백은 여기서 판정하지 않는다 — 만료의 단일 기준은 _fallback_timer며,
         이중 판정은 Followup-4 유예(재무장 직후 폴링이 유예를 끊는 결함)를 낳았다.
         """
+        gs = self._ensure_gate_state()
         # 1) 게이트 워치독
-        if self._gate_watchdog_active and self._gate_watchdog.check_timeout():
+        if gs.gate_active and gs.gate_watchdog.check_timeout():
             self._on_gate_timeout()
             return
 
         # 2) 분석 워치독 — 워커의 activity 신호가 수명을 연장하고,
         #    만료 시 여기서 복구(워커 유기 + FAIL 마감)를 단독 수행한다.
-        if self._analysis_watchdog_active and self._analysis_watchdog.check_timeout():
+        if gs.analysis_active and gs.analysis_watchdog.check_timeout():
             self._on_analysis_timeout()
             return
 
-    def _platform_of_url(self) -> str:
+    def _on_analysis_timeout(self):
             """[결함 수리] stop_analysis_anim 호출 대비 URL 플랫폼 축약 기호 추출."""
             url = self.url_input.text().strip()
             return _short_platform(_dl_platform(url))
@@ -3237,7 +3552,7 @@ class MainWindow(QMainWindow):
     def _on_pot_finished(self, ok: bool, msg: str):
         self._stop_gate_watchdog()
         # [Followup-6] 봇 체크 재시도가 대기 중이면 POT 준비와 함께 재분석한다.
-        if ok and self._pot_retry_pending:
+        if ok and self._ensure_gate_state().pot_retry_pending:
             self._run_pending_retry()
             return
         pending = getattr(self, "_pending_download", None)
@@ -3251,30 +3566,73 @@ class MainWindow(QMainWindow):
         self._startup_completed = True
         self.update_ui_state()
 
+    def _ensure_gate_state(self):
+        """[Task 4-2] GateState 보장 — 기존 테스트 대역(SimpleNamespace)이
+        직접 플래그만 가질 때 자동으로 GateState를 구성해 호환성을 유지한다.
+        Thin Wrapper 금지(§6) 준수: gate_state 모듈 함수가 판정 로직의
+        단일 진실이며, 여기는 호출부 컨테이너 생성만 담당한다.
+        """
+        if getattr(self, "_gate_state", None) is not None:
+            return self._gate_state
+        # watchdog 인스턴스는 property일 수 있지만, 재귀 루프를 막기 위해
+        # property 내부가 또 _ensure_gate_state를 호출하기 전에 종료해야 한다.
+        # _gate_watchdog/_analysis_watchdog property는 자신의 _gate_state를
+        # 먼저 조회하므로, _gate_state가 없을 때만 인스턴스 dict로 폴백한다.
+        # _analysis_watchdog_raw 키도 함께 확인한다 (테스트 대역 Raw 저장용).
+        gs = GateState(
+            self.__dict__.get("_gate_watchdog", None),
+            self.__dict__.get("_analysis_watchdog",
+                              self.__dict__.get("_analysis_watchdog_raw", None)),
+        )
+        # 기존 플래그 값 마이그레이션 (설정자 우선, 없으면 기본 False)
+        # __dict__ 직접 조회 대신 getattr 사용 — 테스트 대역의 property getter가
+        # 다시 _ensure_gate_state()를 호출하는 순환(RecursionError)을 원천 차단한다.
+        # watchdog 인스턴스는 property일 수 있으므로 getattr 유지 (재귀 없음).
+        gs.gate_active = bool(getattr(self, "_gate_watchdog_active", False))
+        gs.analysis_active = bool(getattr(self, "_analysis_watchdog_active", False))
+        gs.pot_retry_pending = bool(getattr(self, "_pot_retry_pending", False))
+        gs.pot_retry_url = getattr(self, "_pot_retry_url", None)
+        gs.pot_retry_done = getattr(self, "_pot_retry_done", set())
+        self._gate_state = gs
+        return gs
+
+    def get_current_app_state(self) -> str:
+        """[P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
+        toggle_download의 큐잉(_pending_download)이 맡는다. is_busy를 STARTUP 사유로
+        두면 프리웜 진행 중 ENTER가 큐잉 분기에 도달하지 못하고 무반응으로 끝났다.
+        """
+        if not getattr(self, "_startup_completed", False):
+            return "STARTUP"
+        if self.ctrl.running:
+            return "RUNNING"
+        if self.ctrl.analyzing:
+            return "ANALYZING"
+        if self.ctrl.picking:
+            return "PICKING"
+        return "IDLE"
+
     def _start_gate_watchdog(self):
         """[Followup-3] POT gate 대기 2차 워치독 기동."""
-        self._gate_watchdog.reset()
-        self._gate_watchdog_active = True
+        gate_state.start_gate(self._ensure_gate_state())
 
     def _stop_gate_watchdog(self):
-        self._gate_watchdog_active = False
+        gate_state.stop_gate(self._ensure_gate_state())
 
     def _on_pot_work_tick(self):
         """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
-        if self._gate_watchdog_active:
-            self._gate_watchdog.heartbeat()
+        gate_state.on_pot_work_tick(self._ensure_gate_state())
 
     def _on_gate_timeout(self):
         """[Followup-3] gate hang — POT 작업을 트리 종료하고 대기 큐를 해제한다."""
-        if not self._gate_watchdog_active:
+        gs = self._ensure_gate_state()
+        if not gs.gate_active:
             return
         self._stop_gate_watchdog()
         if not self._pot_manager.is_busy():
             return
         # cancel()에서 pot_finished가 즉시 발행되어도 보류 요청은 재실행되지 않는다.
         self._pending_download = None
-        self._pot_retry_pending = False
-        self._pot_retry_url = None
+        gate_state.clear_retry(gs)
         self._pot_manager.cancel()
         self.append_concise_log(
             log_emitter.emit_event("SYS", "WARN", "POT", "gate timeout — pot abandoned"),
@@ -3285,12 +3643,11 @@ class MainWindow(QMainWindow):
 
     def _arm_analysis_watchdog(self):
         """[Watchdog] 분석 스폰 1회 무장 — 이후 만료 판정은 폴링이 담당한다."""
-        self._analysis_watchdog.reset()
-        self._analysis_watchdog_active = True
+        gate_state.arm_analysis(self._ensure_gate_state())
 
     def _disarm_analysis_watchdog(self):
         """[Watchdog] 분석 마감(성공/실패/만료) 해제 — 만료의 영속 재판정을 끊는다."""
-        self._analysis_watchdog_active = False
+        gate_state.disarm_analysis(self._ensure_gate_state())
 
     def _on_analysis_timeout(self):
         """[Watchdog] 분석 무응답 — 워커를 유기하고 FAIL로 마감한다.
@@ -3319,14 +3676,12 @@ class MainWindow(QMainWindow):
         """[Followup-6] 봇 체크 실패 시 POT 서버 기동 후 1회만 재분석을 큐잉한다."""
         if not _needs_pot_retry(err_msg):
             return False
-        if self._pot_retry_pending:
+        gs = self._ensure_gate_state()
+        if gs.pot_retry_pending:
             return False
         url = self.url_input.text().strip()
-        if not url or url in self._pot_retry_done:
+        if not gate_state.schedule_retry(gs, url):
             return False
-        self._pot_retry_done.add(url)
-        self._pot_retry_url = url
-        self._pot_retry_pending = True
         self.append_concise_log(
             log_emitter.emit_event("POT", "RUN", "POT",
                                    "bot-check detected — starting pot server, retrying once"),
@@ -3342,9 +3697,7 @@ class MainWindow(QMainWindow):
 
     def _run_pending_retry(self):
         """[Followup-6] POT 준비 완료 후 보류 URL을 명시적으로 재분석한다."""
-        url = self._pot_retry_url
-        self._pot_retry_pending = False
-        self._pot_retry_url = None
+        url = gate_state.consume_retry(self._ensure_gate_state())
         if not url:
             return
         self.url_input.setText(url)
@@ -3542,85 +3895,26 @@ class MainWindow(QMainWindow):
             reflow()
         return True
 
+    # [v3.9.0] 로그 미러는 ui/log_mirror.py로 이전 — 아래 4종은 호환 바인딩.
+    def _finalize_concise_progress(self, line, is_status, is_error, component_id):
+        from chzzktube.ui import log_mirror as _lm
+
+        return _lm.finalize_concise_progress(self, line, is_status, is_error, component_id)
+
     def _render_concise(self, event, is_status=False, is_error=False):
-        if isinstance(event, LogEvent):
-            line = log_emitter.format_log_line_for_event(event)
-            no_wrap = True
-            component_id = getattr(event, "component_id", None)
-            is_progress = bool(getattr(event, "is_progress", False))
-        else:
-            line = str(event)
-            no_wrap = False
-            component_id = None
-            is_progress = False
-        if len(line) > 4096:
-            line = line[:4096] + "…"
-        if component_id and not is_progress and self._finalize_concise_progress(
-            line, is_status, is_error, component_id
-        ):
-            return
-        try:
-            self.console.append(
-                line, is_status, is_error, no_wrap=no_wrap,
-                component_id=component_id, is_progress=is_progress,
-            )
-        except TypeError:
-            # 하위 호환: component_id/is_progress 인자 없는 구버전 console 호출
-            self.console.append(line, is_status, is_error, no_wrap=no_wrap)
+        from chzzktube.ui import log_mirror as _lm
+
+        return _lm.render_concise(self, event, is_status, is_error)
 
     def _mirror_event_full(self, event, is_status=False):
-        if isinstance(event, LogEvent):
-            line = event.msg if event.msg else ""
-            self._last_full_event = event  # component_id 추출용 저장
-            component_id = getattr(event, "component_id", None)
-            is_progress = bool(getattr(event, "is_progress", False))
-        else:
-            line = str(event)
-            component_id = None
-            is_progress = False
-        # F12의 갱신 여부는 기존 append(is_status, component_id) 계약으로 처리한다.
-        # 진행 메타데이터만 있고 is_status가 빠진 구 발행 이벤트도 갱신한다.
-        f12_is_status = bool(is_status or is_progress)
-        if f12_is_status:
-            self._last_status_line = line
-        try:
-            self._mirror_full_log(line, f12_is_status, component_id=component_id)
-        except TypeError:
-            # 하위 호환: component_id 인자 없는 구버전 mock 호출
-            self._mirror_full_log(line, f12_is_status)
+        from chzzktube.ui import log_mirror as _lm
+
+        return _lm.mirror_event_full(self, event, is_status)
 
     def _mirror_full_log(self, line, is_status=False, component_id: str = None):
-        """F12 전체 로그 버퍼 적재 및 활성 다이얼로그 제자리 갱신 관통 (SSOT)."""
-        msg = str(line)
-        if len(msg) > 4096:
-            msg = msg[:4096] + "…"
-        ts = time.strftime("%H:%M:%S")
-        stamped = "\n".join(f"[{ts}] {line}" if line else f"[{ts}]" for line in msg.split("\n"))
+        from chzzktube.ui import log_mirror as _lm
 
-        # [버퍼 지터링 차단] 
-        # 진행 틱(is_status=True 또는 component_id 존재)은 버퍼를 도배하지 않고 
-        # 직전 상태 줄을 제자리 치환하여 F12 오픈 시의 스크롤 폭주를 원천 봉쇄
-        if is_status or component_id:
-            if getattr(self, "_last_full_was_status", False) and self._full_log_buf:
-                self._full_log_buf[-1] = stamped
-            else:
-                self._full_log_buf.append(stamped)
-            self._last_full_was_status = True
-        else:
-            self._full_log_buf.append(stamped)
-            self._last_full_was_status = False
-
-        win = getattr(self, "verbose_win", None)
-        win_visible = win is not None and win.isVisible()
-        if win_visible:
-            self._full_log_win_n = len(self._full_log_buf)
-            try:
-                win.append(stamped, is_status, component_id)
-            except (AttributeError, RuntimeError, TypeError):
-                try:
-                    win.append(stamped, is_status)
-                except (AttributeError, RuntimeError):
-                    pass
+        return _lm.mirror_full_log(self, line, is_status, component_id)
 
     def append_concise_log(self, msg, is_status=False, is_error=False, fg_color=None):
         if isinstance(msg, LogEvent):
@@ -5483,37 +5777,479 @@ def emit_live_final_stats(ctx, total_bytes, start_time):
 
 ```
 
-## File: chzzktube/pipeline/target_downloader.py
+## File: chzzktube/pipeline/target_downloader/__init__.py
 
 ```python
-##### target_downloader.py - 개별 URL 다운로드 / 대상 평탄화
-"""DownloadWorker의 다운로드 실행부 분할 모듈.
+##### target_downloader/__init__.py - 패키지 공개 API 재내보내기
+"""DownloadWorker의 다운로드 실행부 분할 모듈 패키지.
 
 - expand_targets : 재생목록/채널 URL을 개별 동영상 URL로 평탄화
 - download_target : 개별 URL을 타입별로 분기해 실제 다운로드
   chzzk(clip/vod) → 직접 HTTP 스트림, youtube VOD → yt-dlp,
   youtube live → _download_youtube_live(ffmpeg), stream → streamlink
+
+하위 모듈:
+- utils: 공통 상수/유틸리티/에러 분류
+- options: yt-dlp 옵션 빌더
+- flatten: 재생목록/채널 평탄화
+- chzzk: 치지직 VOD/클립/라이브 다운로드
+- youtube_vod: 유튜브 VOD 다운로드 (yt-dlp)
+- youtube_live: 유튜브 라이브/스트림링크 다운로드
+- dispatch: 메인 디스패처 (download_target)
 """
-import functools
+
+# 공통 유틸리티/상수
+from .utils import (
+    _RETRYABLE_BOT_MARKERS,
+    _TERMINAL_FAIL_MARKERS,
+    _WATCHDOG_HEARTBEAT_INTERVAL,
+    _FormatQualityLoss,
+    _is_retryable_bot_error,
+    _has_configured_cookies,
+    _chzzk_filename,
+    _extract_yt_id,
+    _emit_error_log,
+    _emit_skip_log,
+    _is_youtube_live_url,
+)
+
+# yt-dlp 옵션
+from .options import _make_ytdl_opts, _format_selector
+
+# 평탄화
+from .flatten import _flatten, _classify_item, _normalize_single_item, expand_targets
+
+# 치지직
+from .chzzk import _download_chzzk, _download_chzzk_live, _http_download
+
+# 라이브 레코더 (기존 td._lr 호환용)
+import chzzktube.pipeline.live_recorder as _lr
+
+# 유튜브 VOD
+from .youtube_vod import (
+    _download_vod,
+    _ensure_pot_server_ready,
+    _emit_vod_success,
+    _max_requested_height,
+    _needs_pot_promotion,
+    _QUALITY_CLIENT_CHAIN,
+    _POT_CLIENTS,
+    YtDownloadError,
+)
+import yt_dlp
+import chzzktube.core.raw_log as raw_log
+
+# 유튜브 라이브/스트림
+from .youtube_live import _download_youtube_live, _download_streamlink
+
+# 메인 디스패처
+from .dispatch import download_target
+
+# ── 공개 API (기존 import 호환) ────────────────────────────────────────────
+__all__ = [
+    # 상수
+    "_RETRYABLE_BOT_MARKERS",
+    "_TERMINAL_FAIL_MARKERS",
+    "_WATCHDOG_HEARTBEAT_INTERVAL",
+    "_QUALITY_CLIENT_CHAIN",
+    "_POT_CLIENTS",
+    # 예외
+    "_FormatQualityLoss",
+    "YtDownloadError",
+    # 모듈
+    "yt_dlp",
+    "_lr",
+    "raw_log",
+    # 유틸리티
+    "_is_retryable_bot_error",
+    "_has_configured_cookies",
+    "_chzzk_filename",
+    "_extract_yt_id",
+    "_emit_error_log",
+    "_emit_skip_log",
+    "_is_youtube_live_url",
+    # 옵션
+    "_make_ytdl_opts",
+    "_format_selector",
+    # 평탄화
+    "_flatten",
+    "_classify_item",
+    "_normalize_single_item",
+    "expand_targets",
+    # 치지직
+    "_http_download",
+    "_download_chzzk",
+    "_download_chzzk_live",
+    # 유튜브 VOD
+    "_download_vod",
+    "_ensure_pot_server_ready",
+    "_emit_vod_success",
+    "_max_requested_height",
+    "_needs_pot_promotion",
+    # 유튜브 라이브/스트림
+    "_download_youtube_live",
+    "_download_streamlink",
+    # 디스패처
+    "download_target",
+]
+```
+
+## File: chzzktube/pipeline/target_downloader/chzzk.py
+
+```python
+##### target_downloader/chzzk.py - 치지직 VOD/클립/라이브 다운로드
+"""치지직 VOD/클립/라이브 직접 HTTP 스트림 다운로드."""
 import os
-import re
 import time
 import urllib.request
-import yt_dlp
-
-# yt_dlp.utils가 없을 수 있으므로 안전하게 참조
-try:
-    YtDownloadError = yt_dlp.utils.DownloadError
-except AttributeError:
-    # 네임스페이스 패키지 형태에서는 직접 import 시도
-    try:
-        from yt_dlp.utils import DownloadError as YtDownloadError
-    except ImportError:
-        class YtDownloadError(Exception):
-            pass
 
 import chzzktube.core.chzzk_api as chzzk_api
 from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
+from chzzktube.pipeline.target_downloader import utils as td_utils
+from chzzktube.pipeline.classifier import ContentKind
+import chzzktube.core.raw_log as raw_log
+from chzzktube.core.log_emitter import emit_event
+from chzzktube.core.dl_platform import _dl_platform
+
+
+def _http_download(ctx, url: str, out_path: str) -> bool:
+    """HTTP 스트림 직접 다운로드 — ffmpeg 없이 순수 urllib로 청크 기록.
+
+    - ctx.speed_win에 수신 바이트 누적으로 속도 측정
+    - 워치독 하트비트 5초 주기 발행 (원본 로직: 다중 워치독 속성 순회)
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp, open(out_path, "wb") as f:
+            last_heartbeat = time.monotonic()
+            while True:
+                chunk = resp.read(256 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                ctx.speed_win.add(len(chunk))
+
+                # [결함 5 수리] 워치독 하트비트 5초 주기 — 다중 워치독 속성 순회
+                now = time.monotonic()
+                if now - last_heartbeat >= td_utils._WATCHDOG_HEARTBEAT_INTERVAL:
+                    last_heartbeat = now
+                    for attr in ("_download_watchdog", "_gate_watchdog", "_live_watchdog", "_analysis_watchdog"):
+                        wd = getattr(ctx, attr, None)
+                        if wd and hasattr(wd, "heartbeat"):
+                            try:
+                                wd.heartbeat()
+                            except Exception:
+                                pass
+                            break
+        return True
+    except Exception as ex:  # noqa: BLE001
+        raw_log.raw(emit_event("DL", "FAIL", "CHZZK", f"HTTP 다운로드 실패: {ex}"), to_tui=False)
+        return False
+
+
+def _download_chzzk(ctx, url: str, content_type: str) -> bool | str:
+    """치지직 VOD/클립 다운로드 — API 분석 후 HTTP 스트림 직접 수신."""
+    # 1. API로 메타데이터 + 스트림 URL 획득
+    try:
+        if content_type == "clip":
+            ch_info = analyze_chzzk_clip_api(url)
+        else:
+            ch_info = analyze_chzzk_vod_api(url)
+    except Exception as ex:  # noqa: BLE001
+        td_utils._emit_error_log(ctx, url, f"Chzzk API 분석 실패: {ex}", ctx.failed_targets)
+        return False
+
+    # 2. 스트림 URL이 없으면 스킵
+    if not ch_info.get("stream_url"):
+        td_utils._emit_skip_log(ctx, ctx.current_item, "스트림 URL 없음")
+        return "skip"
+
+    # 3. 출력 경로 생성
+    fmt = {"ext": "mp4"}  # 치지직은 기본 mp4
+    out_path = td_utils._chzzk_filename(ch_info, fmt, ctx.cfg)
+
+    # 4. HTTP 다운로드 실행
+    if _http_download(ctx, ch_info["stream_url"], out_path):
+        raw_log.raw(
+            emit_event("DL", "OK", "CHZZK", f"완료: {os.path.basename(out_path)}", url=url),
+            to_tui=True,
+        )
+        return True
+    else:
+        td_utils._emit_error_log(ctx, url, "HTTP 다운로드 실패", ctx.failed_targets)
+        return False
+
+
+def _download_chzzk_live(ctx, url: str) -> bool:
+    """치지직 API의 HLS 포맷을 FFmpeg stdout 릴레이로 녹화한다."""
+    import os
+    import chzzktube.pipeline.live_recorder as _lr
+    import chzzktube.core.chzzk_api as chzzk_api
+    import chzzktube.pipeline.progress_emitter as _pe
+
+    info = chzzk_api.analyze_chzzk_live_api(url)
+    if info.get("live_status") != "PROGRESS":
+        raise RuntimeError("chzzk live offline")
+    formats = [fmt for fmt in info.get("formats", []) if fmt.get("url")]
+    selection = str(ctx.v_sel or "auto").strip()
+    if selection and selection != "auto":
+        formats = [fmt for fmt in formats if str(fmt.get("id")) == selection]
+    else:
+        limit = str(ctx.cfg.get("max_video_res") or "none")
+        if limit.isdigit():
+            formats = [fmt for fmt in formats if 0 < (fmt.get("height") or 0) <= int(limit)]
+    if not formats:
+        raise RuntimeError("chzzk live format unavailable")
+    fmt = max(formats, key=lambda f: (f.get("height") or 0, f.get("bitrate") or 0))
+    if not ctx._meta_logged:
+        _pe.emit_chzzk_header(ctx, info, fmt)
+    out_file = os.path.join(ctx.cfg["download_path"], td_utils._chzzk_filename(info, fmt, ctx.cfg))
+    temp_ts, _, _ = _lr.prepare_live_paths(ctx, out_file)
+    cmd = ["ffmpeg", "-y", "-i", fmt["url"]]
+    if ctx.cfg.get("audio_only"):
+        cmd.append("-vn")
+    cmd.extend(["-c", "copy", "-f", "mpegts", "pipe:1"])
+    ok = _lr.record_live_stream(ctx, cmd, temp_ts, log_tag="FFmpeg")
+    if not ok and not ctx.state.get("canceled"):
+        raise RuntimeError("chzzk live recording failed")
+    return ok
+```
+
+## File: chzzktube/pipeline/target_downloader/dispatch.py
+
+```python
+##### target_downloader/dispatch.py - 다운로드 디스패처 (메인 엔트리포인트)
+"""개별 항목 다운로드 — 사전 분류 스킵 및 정적 디스패치 테이블 실행."""
+from chzzktube.pipeline.classifier import ContentKind, ClassifiedTarget
+from chzzktube.pipeline.target_downloader.chzzk import _download_chzzk, _download_chzzk_live
+from chzzktube.pipeline.target_downloader.youtube_vod import _download_vod
+from chzzktube.pipeline.target_downloader.youtube_live import _download_youtube_live, _download_streamlink
+from chzzktube.pipeline.target_downloader.utils import _emit_error_log
+import chzzktube.core.raw_log as raw_log
+from chzzktube.core.log_emitter import emit_event
+from chzzktube.core.dl_platform import _dl_platform
+
+
+# ── 정적 디스패치 테이블 ───────────────────────────────────────────────────
+# ContentKind -> 다운로드 함수 매핑 (확장 용이)
+_DISPATCH_TABLE = {
+    ContentKind.CLIP: _download_chzzk,           # CHZZK_CLIP
+    ContentKind.VOD: _download_chzzk,            # CHZZK_VOD + YOUTUBE_VOD (구분은 handler 내부에서)
+    ContentKind.LIVE_CHZZK: _download_chzzk_live,
+    ContentKind.LIVE_YOUTUBE: _download_youtube_live,
+}
+
+
+def download_target(ctx, item, failed_targets, skip_targets=None) -> bool | str:
+    """개별 항목 다운로드 — 사전 분류 스킵 및 정적 디스패치 테이블 실행.
+
+    Args:
+        ctx: DownloadContext (logger, cfg, speed_win, classifier, current_item 등 포함)
+        item: ClassifiedTarget 또는 dict/str (내부에서 _classify_item으로 승격)
+        failed_targets: list[(url, reason)] — 실패 항목 누적용
+        skip_targets: list[(url, reason)] — 스킵 항목 누적용 (None이면 무시)
+
+    Returns:
+        True  - 다운로드 성공
+        "skip" - 스킵 (연령 제한, 라이브 미지원 등)
+        False - 다운로드 실패 (에러 로그는 이미 기록됨)
+    """
+    from chzzktube.pipeline.target_downloader.flatten import _classify_item
+    from chzzktube.pipeline.target_downloader.utils import _emit_skip_log
+
+    # 1. ClassifiedTarget으로 승격 (이미 승격된 경우 통과)
+    item = _classify_item(ctx, item)
+    ctx.current_item = item
+
+    # 2. 다운로드 불가 사전 필터링
+    if not item.downloadable:
+        reason = item.skip_reason or "다운로드 불가"
+        _emit_skip_log(ctx, item, reason)
+        if skip_targets is not None:
+            skip_targets.append((item.url, reason))
+        return "skip"
+
+    # 3. 디스패치 테이블에서 핸들러 조회
+    handler = _DISPATCH_TABLE.get(item.kind)
+    if not handler:
+        _emit_error_log(ctx, item.url, f"지원하지 않는 콘텐츠 종류: {item.kind}", failed_targets)
+        return False
+
+    # 4. 핸들러 실행 (예외는 핸들러 내부에서 처리 후 False 반환)
+    try:
+        # VOD는 플랫폼 태그로 분기 (CHZZK vs YouTube)
+        if item.kind == ContentKind.VOD:
+            if item.platform_tag == "chzzk":
+                return _download_chzzk(ctx, item.url, "vod")
+            else:
+                return _download_vod(ctx, item.url)
+        elif item.kind == ContentKind.CLIP:
+            return _download_chzzk(ctx, item.url, "clip")
+        else:
+            return handler(ctx, item.url)
+    except Exception as ex:  # noqa: BLE001
+        _emit_error_log(ctx, item.url, f"디스패치 예외: {ex}", failed_targets)
+        return False
+```
+
+## File: chzzktube/pipeline/target_downloader/flatten.py
+
+```python
+##### target_downloader/flatten.py - 재생목록/채널 평탄화
+"""재생목록/채널 URL을 개별 동영상 ClassifiedTarget 리스트로 평탄화."""
+import yt_dlp
+
+from chzzktube.core.playlist import normalize_youtube_channel_url
+from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
+from chzzktube.pipeline.target_downloader.utils import _has_configured_cookies
+
+
+def _flatten(ctx, url: str) -> list[ClassifiedTarget]:
+    """yt-dlp extract_flat 기반 재생목록/채널 평탄화.
+
+    [원칙 준수]
+    - 어설픈 하드코딩 dict 날조 금지: entries의 원시 메타를 ItemClassifier에 그대로 위임.
+    - extract_flat 환경에서는 StreamCapability.indeterminate()가 자동 적용되어
+      has_video/has_audio=None (미정) 상태가 거짓말 없이 정직하게 보존된다.
+    """
+    opts = {
+        "logger": ctx.logger,
+        "extract_flat": True,
+        "skip_download": True,
+        "noplaylist": False,
+        "socket_timeout": 30,
+    }
+    _apply_cookie_opts(opts, ctx.cfg)
+    _apply_client_opts(opts, ctx.cfg, forced=None)  # 순정 위임
+    _apply_light_analysis_opts(opts)
+    _apply_ejs_opts(opts)
+
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        entries = (info or {}).get("entries") or []
+        targets: list[ClassifiedTarget] = []
+
+        for e in entries:
+            if not e:
+                continue
+            # yt-dlp flat 추출 시 url 또는 webpage_url 필드 참조
+            target_url = e.get("url") or e.get("webpage_url")
+            if not target_url:
+                continue
+
+            # YouTube ID만 떨어진 경우 정규 URL로 복원
+            if not target_url.startswith("http"):
+                target_url = f"https://www.youtube.com/watch?v={target_url}"
+
+            # 1단계 ItemClassifier에 위임하여 TriState(None) 메타데이터 보존 객체 생성
+            classified = ItemClassifier.classify(target_url, raw_info=e)
+            targets.append(classified)
+
+        return targets
+
+
+def _classify_item(ctx, raw_target: ClassifiedTarget | str | dict) -> ClassifiedTarget:
+    """원시 대상을 ClassifiedTarget으로 승격 — 다운로드 가능성/인증 요구 검증 포함."""
+    if isinstance(raw_target, ClassifiedTarget):
+        item = raw_target
+    elif isinstance(raw_target, str):
+        item = ItemClassifier.classify(raw_target, raw_info=None)
+    elif isinstance(raw_target, dict):
+        # dict 형태로 들어온 경우 (레거시 호환)
+        item = ItemClassifier.classify(raw_target.get("url", ""), raw_info=raw_target)
+    else:
+        raise TypeError(f"지원하지 않는 대상 타입: {type(raw_target)}")
+
+    # 1. 다운로드 불가 (이미지 전용 등) 조기 반환
+    if not item.downloadable:
+        return item
+
+    # 2. 인증 요구사항 교차 검증 (도메인 정책 vs 현재 런타임 cfg)
+    if item.capability.requires_auth and not _has_configured_cookies(ctx.cfg):
+        return ClassifiedTarget(
+            url=item.url,
+            title=item.title,
+            kind=item.kind,
+            capability=item.capability,
+            platform_tag=item.platform_tag,
+            downloadable=False,
+            needs_pot=item.needs_pot,
+            skip_reason="age/member gated",
+            metadata=item.metadata,
+        )
+
+    return item
+
+
+def _normalize_single_item(url: str) -> ClassifiedTarget:
+    """단일 영상 URL을 ClassifiedTarget으로 정규화 (메타는 다운로드 단계에서 채움)."""
+    return ItemClassifier.classify(url, raw_info=None)
+
+
+def expand_targets(ctx) -> list[ClassifiedTarget]:
+    """재생목록/채널 URL을 개별 동영상 항목 객체로 펼친다.
+
+    반환: List[ClassifiedTarget] - 파이프라인 전체가 공유하는 단일 계약
+    """
+    from chzzktube.core.dl_platform import detect_content_type
+    from chzzktube.pipeline.target_downloader.utils import _emit_error_log
+
+    expanded: list[ClassifiedTarget] = []
+    for url in ctx.targets:
+        try:
+            urls: list[ClassifiedTarget] | None = None
+            if detect_content_type(url) == "playlist":
+                urls = _flatten(ctx, url)
+            else:
+                u = url.lower()
+                if "/@" in u or "/channel/" in u or "/c/" in u or "/user/" in u:
+                    urls = _flatten(ctx, normalize_youtube_channel_url(url))
+
+            if urls:
+                # _flatten이 이미 List[ClassifiedTarget] 반환
+                expanded.extend(urls)
+            else:
+                # 단일 영상 - 정규화 팩토리를 통해 즉시 승격
+                expanded.append(_normalize_single_item(url))
+        except Exception as ex:  # noqa: BLE001
+            url_short = url[:40] + ("..." if len(url) > 40 else "")
+            # [v3.8.1] 즉시 TUI 발행 금지 — finalizer에서 단일 출력
+            _emit_error_log(ctx, url, str(ex), failed_targets=[])
+            expanded.append(_normalize_single_item(url))
+
+    return expanded
+
+
+# 지연 import로 순환 의존성 방지
+def _apply_cookie_opts(opts, cfg):
+    from chzzktube.core.client_opts import _apply_cookie_opts as _aco
+    _aco(opts, cfg)
+
+
+def _apply_client_opts(opts, cfg, forced):
+    from chzzktube.core.client_opts import _apply_client_opts as _acl
+    _acl(opts, cfg, forced=forced)
+
+
+def _apply_light_analysis_opts(opts):
+    from chzzktube.core.client_opts import _apply_light_analysis_opts as _ala
+    _ala(opts)
+
+
+def _apply_ejs_opts(opts):
+    from chzzktube.core.client_opts import _apply_ejs_opts as _ae
+    _ae(opts)
+```
+
+## File: chzzktube/pipeline/target_downloader/options.py
+
+```python
+##### target_downloader/options.py - yt-dlp 옵션 빌더
+"""yt-dlp 다운로드 옵션 생성 — 포맷 선택/병합/쿠키/PO 토큰 주입."""
+import functools
+import os
+
+import chzzktube.pipeline.progress_emitter as _pe
 from chzzktube.core.client_opts import (
     _apply_client_opts,
     _apply_cookie_opts,
@@ -5524,14 +6260,95 @@ from chzzktube.core.client_opts import (
     _apply_pot_opts,
     _concurrent_fragments,
 )
-from chzzktube.core.dl_platform import detect_content_type, _dl_platform
-from chzzktube.core.playlist import normalize_youtube_channel_url
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.utils import get_filename_template
 from chzzktube.infra.po_client import extract_video_id
-import chzzktube.pipeline.live_recorder as _lr
-import chzzktube.pipeline.progress_emitter as _pe
-from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
+from chzzktube.pipeline.target_downloader.utils import _extract_yt_id, _has_configured_cookies
+
+
+def _format_selector(ctx):
+    """yt-dlp format 선택 문자열 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 대응.
+
+    [결함 1 수리] tv 클라이언트 대비: 비디오+오디오 분리 포맷이 없을 때
+    단일 포맷(b)으로 폴백하지 않고 명시적 에러 유도 → 상위에서 폴백 체인 계속.
+    """
+    if ctx.cfg.get("audio_only"):
+        return "bestaudio/best"
+
+    v_id = str(ctx.v_sel or "").strip()
+    a_id = str(ctx.a_sel or "").strip()
+    if v_id and v_id != "auto":
+        if a_id and a_id != "auto":
+            return f"{v_id}+{a_id}"
+        return f"{v_id}+bestaudio"
+
+    res = str(ctx.cfg.get("max_video_res") or "none").strip()
+    if res.isdigit():
+        return f"bv*[height<={res}]+ba"
+    # [결함 1 수리] "bv*+ba/b" → "bv*+ba" (단일 포맷 폴백 제거)
+    return "bv*+ba"
+
+
+def _make_ytdl_opts(ctx, fmt, url, forced_client=None, inject_pot=False):
+    """yt-dlp 다운로드 옵션 — outtmpl/훅/병합/쿠키/player_client/PO 토큰 주입.
+
+    Args:
+        forced_client: 강제 사용할 player_client (None이면 "auto"로 순정 위임).
+        inject_pot: True면 PO token 강제 주입 (POT 서버 기동 후 재시도용).
+    """
+    opts = {
+        "logger": ctx.logger,
+        "noplaylist": True,
+        "progress_hooks": [functools.partial(_pe.hook, ctx)],
+        "postprocessor_hooks": [functools.partial(_pe.pp_hook, ctx)],
+        "outtmpl": os.path.join(
+            ctx.cfg.get("download_path", ""),
+            get_filename_template(cfg=ctx.cfg),
+        ),
+        "format": _format_selector(ctx),
+        "merge_output_format": ctx.cfg.get("container", "mp4"),
+        "socket_timeout": 30,
+        "retries": ctx.cfg.get("retries", 10),
+        "fragment_retries": ctx.cfg.get("fragment_retries", 10),
+        "concurrent_fragment_downloads": _concurrent_fragments(ctx.cfg),
+    }
+
+    _apply_cookie_opts(opts, ctx.cfg)
+    _apply_client_opts(opts, ctx.cfg, forced=forced_client)
+    _apply_ffmpeg_opts(opts)
+    _apply_post_opts(opts, ctx.cfg)
+    _apply_ejs_opts(opts)
+
+    # PO 토큰 강제 주입 (POT 서버 재시도 시)
+    if inject_pot:
+        video_id = _extract_yt_id(url)
+        if video_id:
+            _apply_pot_opts(opts, video_id, client=forced_client or "auto")
+
+    return opts
+```
+
+## File: chzzktube/pipeline/target_downloader/utils.py
+
+```python
+##### target_downloader/utils.py - 공통 유틸리티/상수/분류 헬퍼
+"""target_downloader 패키지 공통 유틸리티.
+
+- 에러 마커 상수 (봇 재시도 가능 vs 터미널 실패)
+- 워치독 하트비트 간격
+- 쿠키 설정 확인
+- 치지직 파일명 생성
+- YouTube ID 추출
+"""
+import os
+import re
+
+import chzzktube.core.raw_log as raw_log
+from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.log_emitter import emit_event
+from chzzktube.core.utils import get_filename_template
+from chzzktube.pipeline.classifier import ClassifiedTarget
+
 
 # ── 봇 차단 재시도 가능 마커 vs 터미널 에러 판별 (SSOT) ───────────────────────
 _RETRYABLE_BOT_MARKERS = frozenset({
@@ -5580,77 +6397,9 @@ def _is_retryable_bot_error(err: Exception) -> bool:
     return any(bot in msg for bot in _RETRYABLE_BOT_MARKERS)
 
 
-def _make_ytdl_opts(ctx, fmt, url, forced_client=None, inject_pot=False):
-    """yt-dlp 다운로드 옵션 — outtmpl/훅/병합/쿠키/player_client/PO 토큰 주입.
-
-    Args:
-        forced_client: 강제 사용할 player_client (None이면 "auto"로 순정 위임).
-        inject_pot: True면 PO token 강제 주입 (POT 서버 기동 후 재시도용).
-    """
-    opts = {
-        "logger": ctx.logger,
-        "noplaylist": True,
-        "progress_hooks": [functools.partial(_pe.hook, ctx)],
-        "postprocessor_hooks": [functools.partial(_pe.pp_hook, ctx)],
-        "outtmpl": os.path.join(
-            ctx.cfg.get("download_path") or ".",
-            get_filename_template(ctx.cfg),
-        ),
-        "format": fmt,
-        "merge_output_format": ctx.cfg.get("container", "mp4"),
-        "retries": 3,
-        "socket_timeout": 30,
-        "throttledratelimit": 50_000,
-    }
-    frags = _concurrent_fragments(ctx.cfg)
-    if frags > 1:
-        opts["concurrent_fragment_downloads"] = frags
-    _apply_cookie_opts(opts, ctx.cfg)
-
-    # client 지정: forced_client가 있으면 사용, 없으면 "auto"로 순정 위임
-    effective_client = forced_client if forced_client is not None else "auto"
-    _apply_client_opts(opts, ctx.cfg, forced=effective_client)
-    _apply_ejs_opts(opts)
-
-    # PO token 주입: inject_pot=True일 때만 (POT 서버 기동 후 재시도)
-    # client="auto" 시 순정이 선택할 클라와 일치하도록 web_embedded 기준 주입
-    if inject_pot:
-        vid = _extract_yt_id(url)
-        if vid:
-            pot_client = "web" if _has_configured_cookies(ctx.cfg) else "web_embedded"
-            _apply_pot_opts(opts, vid, client=pot_client)
-
-    _apply_ffmpeg_opts(opts)
-    _apply_post_opts(opts, ctx.cfg)
-    return opts
-
-
-def _extract_yt_id(url):
-    """YouTube URL에서 video ID 추출 (PO 토큰 content_binding용)."""
-    return extract_video_id(url)
-
-
-def _format_selector(ctx):
-    """yt-dlp format 선택 문자열 — 자동(해상도 제한 내 최고)/포맷 직접 고르기 대응.
-
-    [결함 1 수리] tv 클라이언트 대비: 비디오+오디오 분리 포맷이 없을 때
-    단일 포맷(b)으로 폴백하지 않고 명시적 에러 유도 → 상위에서 폴백 체인 계속.
-    """
-    if ctx.cfg.get("audio_only"):
-        return "bestaudio/best"
-
-    v_id = str(ctx.v_sel or "").strip()
-    a_id = str(ctx.a_sel or "").strip()
-    if v_id and v_id != "auto":
-        if a_id and a_id != "auto":
-            return f"{v_id}+{a_id}"
-        return f"{v_id}+bestaudio"
-
-    res = str(ctx.cfg.get("max_video_res") or "none").strip()
-    if res.isdigit():
-        return f"bv*[height<={res}]+ba"
-    # [결함 1 수리] "bv*+ba/b" → "bv*+ba" (단일 포맷 폴백 제거)
-    return "bv*+ba"
+def _has_configured_cookies(cfg: dict) -> bool:
+    """현재 설정에서 쿠키가 구성되어 있는지 확인."""
+    return bool(cfg.get("cookies") or cfg.get("cookies_file"))
 
 
 def _chzzk_filename(ch_info, fmt, cfg):
@@ -5688,111 +6437,128 @@ def _chzzk_filename(ch_info, fmt, cfg):
     return f"{prefix}{title}{suffix}.mp4"
 
 
-def _http_download(ctx, url, out_path):
-    """치지직 progressive MP4 직접 스트림 다운로드 + 진행률 틱.
+def _extract_yt_id(url: str) -> str | None:
+    """YouTube URL에서 video_id 추출."""
+    patterns = [
+        r"(?:v=|/)([0-9A-Za-z_-]{11})(?:[&?#]|$)",
+        r"youtu\.be/([0-9A-Za-z_-]{11})",
+        r"youtube\.com/shorts/([0-9A-Za-z_-]{11})",
+    ]
+    for pat in patterns:
+        m = re.search(pat, url)
+        if m:
+            return m.group(1)
+    return None
 
-    [결함 5 수리] 5초마다 워치독 하트비트 호출.
+
+def _emit_error_log(ctx, url: str, reason: str, failed_targets: list) -> None:
+    """에러 로그 기록만 수행 (즉시 TUI 발행 금지 — finalizer에서 단일 출력).
+
+    raw 버스에도 즉시 발행하지 않고, failed_targets에만 누적한다.
+    finalize 단계에서 한 번에 출력한다.
     """
-    ctx.speed_win.reset()
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req) as resp, open(out_path, "wb") as f:
-        done = 0
-        last_heartbeat = time.monotonic()
-        while True:
-            chunk = resp.read(262144)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
-            ctx.speed_win.add(done)
-
-            # [결함 5 수리] 5초마다 워치독 하트비트
-            now = time.monotonic()
-            if now - last_heartbeat >= _WATCHDOG_HEARTBEAT_INTERVAL:
-                last_heartbeat = now
-                for attr in ("_download_watchdog", "_gate_watchdog", "_live_watchdog", "_analysis_watchdog"):
-                    wd = getattr(ctx, attr, None)
-                    if wd and hasattr(wd, "heartbeat"):
-                        try:
-                            wd.heartbeat()
-                        except Exception:
-                            pass
-                        break
-    return out_path
+    failed_targets.append((url, reason))
 
 
-def _download_chzzk(ctx, url, content_type):
-    """치지직 클립/VOD — API 포맷의 progressive MP4 직접 스트림 다운로드."""
-    ch_info = (
-        analyze_chzzk_clip_api(url)
-        if content_type == "clip"
-        else analyze_chzzk_vod_api(url)
+def _is_youtube_live_url(ctx, url: str) -> bool:
+    """현재 항목이 YouTube 라이브 URL인지 확인."""
+    try:
+        return ctx.classifier.is_youtube_live(url)
+    except AttributeError:
+        # classifier 미주입 시 폴백
+        return "youtube.com/live" in url or "youtu.be/" in url and "live" in url
+
+
+def _emit_skip_log(ctx, item: ClassifiedTarget, reason: str) -> None:
+    """스킵 로그 기록 (to_tui=True — 사용자 알림 필요)."""
+    raw_log.raw(
+        emit_event("DL", "SKIP", _dl_platform(item.url), reason, url=item.url),
+        to_tui=True,
     )
-    formats = ch_info.get("formats") or []
-    if not formats:
-        raise RuntimeError("chzzk stream fail (cookie)")
-    fmt = formats[0]
-    stream_url = fmt.get("url") or ""
-    if not stream_url:
-        raise RuntimeError("chzzk URL missing")
+```
 
-    if not ctx._meta_logged:
-        _pe.emit_chzzk_header(ctx, ch_info, fmt)
+## File: chzzktube/pipeline/target_downloader/youtube_live.py
 
-    out_path = os.path.join(
-        ctx.cfg["download_path"], _chzzk_filename(ch_info, fmt, ctx.cfg)
-    )
-    real = _http_download(ctx, stream_url, out_path)
-    _pe.log_success_info(ctx, real)
-    ctx.speed_win.reset()
-    return True
+```python
+##### target_downloader/youtube_live.py - 유튜브 라이브/스트림링크 다운로드
+"""YouTube 라이브(ffmpeg 파이프) / Streamlink 기반 스트림 다운로드."""
+import os
+import time
+import subprocess
+import threading
+import queue
+from contextlib import suppress
 
+import yt_dlp
 
-def _download_chzzk_live(ctx, url):
-    """치지직 API의 HLS 포맷을 FFmpeg stdout 릴레이로 녹화한다."""
-    info = chzzk_api.analyze_chzzk_live_api(url)
-    if info.get("live_status") != "PROGRESS":
-        raise RuntimeError("chzzk live offline")
-    formats = [fmt for fmt in info.get("formats", []) if fmt.get("url")]
-    selection = str(ctx.v_sel or "auto").strip()
-    if selection and selection != "auto":
-        formats = [fmt for fmt in formats if str(fmt.get("id")) == selection]
-    else:
-        limit = str(ctx.cfg.get("max_video_res") or "none")
-        if limit.isdigit():
-            formats = [fmt for fmt in formats if 0 < (fmt.get("height") or 0) <= int(limit)]
-    if not formats:
-        raise RuntimeError("chzzk live format unavailable")
-    fmt = max(formats, key=lambda f: (f.get("height") or 0, f.get("bitrate") or 0))
-    if not ctx._meta_logged:
-        _pe.emit_chzzk_header(ctx, info, fmt)
-    out_file = os.path.join(ctx.cfg["download_path"], _chzzk_filename(info, fmt, ctx.cfg))
-    temp_ts, _, _ = _lr.prepare_live_paths(ctx, out_file)
-    cmd = ["ffmpeg", "-y", "-i", fmt["url"]]
-    if ctx.cfg.get("audio_only"):
-        cmd.append("-vn")
-    cmd.extend(["-c", "copy", "-f", "mpegts", "pipe:1"])
-    ok = _lr.record_live_stream(ctx, cmd, temp_ts, log_tag="FFmpeg")
-    if not ok and not ctx.state.get("canceled"):
-        raise RuntimeError("chzzk live recording failed")
-    return ok
+# _lr는 동적 조회로 테스트 패치 지원
+def _get_lr():
+    """live_recorder 모듈 동적 조회 (테스트 패치 지원)."""
+    import chzzktube.pipeline.target_downloader as td
+    return getattr(td, "_lr", None) or __import__("chzzktube.pipeline.live_recorder", fromlist=[""])
 
 
-def _download_youtube_live(ctx, url):
-    """유튜브 라이브 — ffmpeg 녹화 파이프라인 (live_recorder)."""
-    return _lr.download_youtube_live(ctx, url)
+def _download_youtube_live(ctx, url: str) -> bool | str:
+    """유튜브 라이브 — yt-dlp로 포맷 URL만 추출 후 live_recorder로 위임."""
+    return _get_lr().download_youtube_live(ctx, url)
 
 
-def _download_streamlink(ctx, url):
-    """streamlink 대상 — 자식 프로세스 녹화 파이프라인 (화질은 cfg fit)."""
+def _download_streamlink(ctx, url: str) -> bool:
+    """Streamlink 지원 사이트(트위치 등) — streamlink로 포맷 URL 추출 후 ffmpeg 파이프."""
+    _lr = _get_lr()
     out_file = os.path.join(ctx.cfg["download_path"], "streamlink_live.mp4")
     temp_ts, _, _ = _lr.prepare_live_paths(ctx, out_file, None)
     quality = str(ctx.cfg.get("streamlink_quality") or "best").strip() or "best"
     cmd = ["streamlink", url, quality, "-O"]
     return _lr.record_live_stream(ctx, cmd, temp_ts)
+```
+
+## File: chzzktube/pipeline/target_downloader/youtube_vod.py
+
+```python
+##### target_downloader/youtube_vod.py - 유튜브 VOD 다운로드 (yt-dlp)
+"""YouTube VOD 다운로드 — yt-dlp 기반, 품질 우선 폴백 + PO 토큰 주입."""
+import os
+import time
+
+import yt_dlp
+
+# yt_dlp.utils가 없을 수 있으므로 안전하게 참조
+try:
+    YtDownloadError = yt_dlp.utils.DownloadError
+except AttributeError:
+    # 네임스페이스 패키지 형태에서는 직접 import 시도
+    try:
+        from yt_dlp.utils import DownloadError as YtDownloadError
+    except ImportError:
+        class YtDownloadError(Exception):
+            pass
+
+from chzzktube.pipeline.target_downloader.utils import (
+    _WATCHDOG_HEARTBEAT_INTERVAL,
+    _FormatQualityLoss,
+    _emit_error_log,
+    _emit_skip_log,
+    _extract_yt_id,
+    _is_retryable_bot_error,
+    _has_configured_cookies,
+)
+from chzzktube.pipeline.target_downloader.options import _make_ytdl_opts, _format_selector
+import chzzktube.core.raw_log as raw_log
+from chzzktube.core.log_emitter import emit_event
+from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.log_emitter import emit_event
+from chzzktube.core.dl_platform import _dl_platform
 
 
-def _ensure_pot_server_ready(ctx, timeout=60.0):
+# 품질 우선 폴백 체인 (v3.8.0): web → web_safari → ios → tv
+_QUALITY_CLIENT_CHAIN = ("web", "web_safari", "ios", "tv")
+
+# PO 토큰 주입 대상 클라이언트 (web/web_safari만)
+_POT_CLIENTS = ("web", "web_safari")
+
+
+def _ensure_pot_server_ready(ctx, timeout=60.0) -> bool:
     """[Layer 3] POT 서버 준비 — 워커 스레드 안전 (v3.8.0).
 
     [근본 수리] v3.7.2는 `POTManager.instance()`를 호출했지만 그런 API는
@@ -5810,6 +6576,7 @@ def _ensure_pot_server_ready(ctx, timeout=60.0):
         False : 미준비/타임아웃 — 호출부는 PO 없이 진행 여부를 판단한다
     """
     import time
+    import chzzktube.pipeline.progress_emitter as _pe
 
     from chzzktube.infra.po_client import server_ping
 
@@ -5853,402 +6620,119 @@ def _ensure_pot_server_ready(ctx, timeout=60.0):
             _log("pot build busy — skipped")
             return False
         try:
-            _, err = ensure_node_server(
-                _log, _log, _SERVER_FALLBACK_VER, rebuild=False,
-                tick_func=_heartbeat,
-            )
-            if err is not None:
-                _log(f"pot build failed: {err}")
+            ensure_node_server(log_func=_log)
         finally:
-            try:
-                release_prewarm_lock(fd, log_func=_log)
-            except Exception:
-                pass
+            release_prewarm_lock(fd)
 
-    if built_server_js():
-        try:
-            _spawn_existing(_log)
-        except Exception as ex:  # noqa: BLE001
-            _log(f"pot spawn fail: {type(ex).__name__}")
-    else:
-        _log("pot build unavailable")
+    # 스폰 또는 기존 프로세스 재사용
+    proc = _spawn_existing(log_func=_log)
+    if proc is None:
+        _log("pot spawn failed")
         return False
 
-    deadline = time.time() + max(1.0, float(timeout))
-    while time.time() < deadline:
-        if ctx.state.get("canceled"):
-            return False
+    # /ping 준비까지 폴링
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         if _alive():
+            _log("pot server ready")
             return True
         _heartbeat()
         time.sleep(0.5)
-    _log("pot server startup timeout")
+
+    _log("pot server timeout")
     return False
 
 
-def _download_vod(ctx, url):
-    """유튜브 VOD 다운로드 — yt-dlp 순정 위임 + POT 서버 1회 재시도.
+def _emit_vod_success(ctx, info: dict) -> None:
+    """VOD 다운로드 성공 로그 — 제목/포맷/파일 크기."""
+    title = info.get("title", "unknown")
+    fmt = _format_selector(ctx) if hasattr(ctx, "v_spec") else "best"
+    raw_log.raw(
+        emit_event("DL", "OK", "YT", f"{title} [{fmt}]", url=ctx.current_url),
+        to_tui=True,
+    )
 
-    1차: yt-dlp 순정 단일 호출 (player_client="auto") →
-         내부 로테이션: web_embedded → tv_downgraded → web_safari → mweb → tv...
-         EJS 솔버(deno/node) 자동 작동 + 쿠키 있으면 인증 클라 우선
 
-    2차: 1차 실패(봇 차단/포맷 상실) 또는 1차 성공이 1080p 미달이면
-         POT 서버 기동 → PO token + visitorData 주입하여 동일 순정 호출
-         재시도 (1회만). 720p tv 타협 없이 최고 화질을 강제 개방.
+def _max_requested_height(info: dict) -> int:
+    """요청된 최대 해상도 높이 반환 (포맷 선택 검증용)."""
+    v_spec = info.get("v_spec") or {}
+    return v_spec.get("height") or 0
 
-    수동 클라 체인 완전 제거 — 순정이 알아서 최적 경로 찾음
-    """
-    cfg_client = str(ctx.cfg.get("yt_player_client", "auto") or "auto")
 
-    # 명시적 클라 지정 시에만 forced_client 사용 (테스트/디버깅용)
-    forced = None if cfg_client == "auto" else cfg_client
+def _needs_pot_promotion(ctx, info: dict) -> bool:
+    """1차 다운로드 성공했지만 고화질(1080p+) 분리 포맷 누락 시 POT 승격 필요 여부."""
+    requested = _max_requested_height(info)
+    if requested < 1080:
+        return False
 
-    fmt = _format_selector(ctx)
+    # 실제 획득한 포맷 확인
+    formats = info.get("formats") or []
+    has_high = any(
+        f.get("height", 0) >= 1080 and f.get("vcodec") != "none"
+        for f in formats
+    )
+    return not has_high
 
-    first_info = None
 
-    # 1차: 순정 위임 (PO token 미주입)
+def _try_download_with_client(ctx, url: str, client: str, inject_pot: bool) -> tuple[bool, dict | None]:
+    """지정된 client로 다운로드 시도 — 성공 시 (True, info), 실패 시 (False, err)."""
+    opts = _make_ytdl_opts(ctx, {}, url, forced_client=client, inject_pot=inject_pot)
+
     try:
-        opts = _make_ytdl_opts(ctx, fmt, url, forced_client=forced, inject_pot=False)
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
-        if not info:
-            raise RuntimeError("info extract fail")
-
-        # [Layer 3 승격 판정] 분리 포맷 시도에도 1080p 미달로 수급되면
-        # 720p 타협하지 않고 POT 서버로 강제 승격한다 (1회).
-        if _needs_pot_promotion(ctx, info) and not ctx.state.get("canceled"):
-            first_info = info
-            raise _FormatQualityLoss()
-
-        _emit_vod_success(ctx, info)
-        ctx.speed_win.reset()
-        return True
-
-    except _FormatQualityLoss:
-        # 화질 상실 — 아래 2차(POT 재시도)로 낙하
-        ex = RuntimeError("1080p+ format loss (promoting to POT)")
-    except Exception as ex:
-        # 봇 차단/포맷 상실 계열이 아니면 즉시 전파
-        if not _is_retryable_bot_error(ex):
-            raise ex
-
-    # 봇 차단/화질 상실 감지 → POT 서버 준비 후 1회 재시도 (Layer 3)
-    raw_log.raw(
-        "dl",
-        _pe.emit_event(
-            "DL", "WARN", "YTDL",
-            f"{str(ex)[:60]} — preparing POT for retry",
-        ),
-        to_tui=True,
-    )
-
-    if not _ensure_pot_server_ready(ctx):
-        if first_info is not None:
-            # POT 미가용 — 1차 수급본을 파기하지 않고 정직하게 보고한다.
-            h = _max_requested_height(first_info) or 0
-            raw_log.raw(
-                "dl",
-                _pe.emit_event(
-                    "DL", "WARN", "YTDL",
-                    f"hd unavailable — kept {h}p (POT offline)",
-                ),
-                to_tui=True,
-            )
-            _emit_vod_success(ctx, first_info)
-            ctx.speed_win.reset()
-            return True
-        raise RuntimeError("POT server unavailable for retry")
-
-    # 2차: PO token 주입하여 순정 재호출
-    opts = _make_ytdl_opts(ctx, fmt, url, forced_client=forced, inject_pot=True)
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-    if not info:
-        raise RuntimeError("info extract fail (with PO token)")
-
-    _emit_vod_success(ctx, info)
-    ctx.speed_win.reset()
-    return True
+            return True, info
+    except yt_dlp.utils.DownloadError as ex:
+        return False, ex
+    except Exception as ex:  # noqa: BLE001
+        return False, ex
 
 
-def _emit_vod_success(ctx, info):
-    """수급 완료 포맷 라인 발행 (헤더 + 개별 스트림/최종 결과물)."""
-    if not ctx._meta_logged:
-        _pe.emit_download_header(ctx, info)
-    for dl in info.get("requested_downloads") or []:
-        _pe.log_success_info(
-            ctx, dl.get("filepath") or dl.get("_filename") or ""
-        )
+def _download_vod(ctx, url: str) -> bool | str:
+    """YouTube VOD 다운로드 — 품질 우선 폴백 + PO 토큰 재시도.
 
-
-def _max_requested_height(info):
-    """수급 완료 포맷 중 최대 해상도 높이 (없으면 0)."""
-    heights = []
-    for dl in info.get("requested_downloads") or []:
-        h = dl.get("height") or (dl.get("format") or {}).get("height") if isinstance(dl, dict) else 0
-        if h:
-            heights.append(int(h))
-    return max(heights) if heights else 0
-
-
-def _needs_pot_promotion(ctx, info):
-    """1차 성공 결과가 최고 화질 목표(1080p+)를 상실했는지 판정 (v3.8.0).
-
-    - 분리 포맷(bv*+ba) 시도가 아닌 경우(오디오 추출·수동 포맷 선택)는 대상 아님.
-    - 사용자가 max_video_res로 1080p 미만을 명시 제한한 경우도 대상 아님
-      (사용자 의도가 우선).
-    - 수급된 최대 높이가 1080 미만이면 화질 상실로 판정 → Layer 3 승격.
+    반환:
+        True  - 성공
+        "skip" - 스킵 (연령 제한 등)
+        False - 실패 (상위에서 재시도/에러 처리)
     """
-    if ctx.cfg.get("audio_only"):
-        return False
-    v_id = str(ctx.v_sel or "").strip()
-    if v_id and v_id != "auto":
-        return False  # 수동 포맷 선택 — 사용자 의도 존중
-    res = str(ctx.cfg.get("max_video_res") or "none").strip()
-    if res.isdigit():
-        return False  # 사용자 해상도 제한 — 타협 아닌 의도적 제한
-    return _max_requested_height(info) < 1080
-
-
-def _emit_error_log(ctx, url, reason, failed_targets):
-    """실패 항목 기록 전용 (v3.8.0 — TUI 즉시 출력 철폐).
-
-    [FAIL 단일 출력] 개별 실패 라인은 finalizer.finalize()가 배치 마감 시
-    딱 1회 출력한다. 여기서 즉시 출력하면 yt-dlp 원문 에러(브리지) +
-    개별 라인 + 마감 요약이 3~4줄로 중복 발행되는 촌규가 된다.
-    """
-    failed_targets.append((url, reason))
-
-
-def _is_youtube_live_url(ctx, url):
-    """유튜브 URL이 라이브인지 경량 프리체크 (yt-dlp extract_info 사용)."""
-    try:
-        opts = {
-            "logger": ctx.logger,
-            "noplaylist": True,
-            "skip_download": True,
-            "extract_flat": False,
-        }
-        _apply_cookie_opts(opts, ctx.cfg)
-        _apply_client_opts(opts, ctx.cfg, forced=None)  # 순정 위임
-        _apply_light_analysis_opts(opts)
-        _apply_ejs_opts(opts)
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            return bool(info and info.get("is_live"))
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def download_target(ctx, item, failed_targets, skip_targets=None):
-    """개별 항목 다운로드 — 사전 분류 스킵 및 정적 디스패치 테이블 실행.
-
-    Returns:
-        True: 다운로드 성공
-        "skip": 시스템 사전 필터링으로 스킵됨 (skip_targets에 기록됨)
-        False: 다운로드 시도했으나 실패 (failed_targets에 기록됨)
-    """
-    # 1. 항목 분류 및 스킵 판정
-    item = _classify_item(ctx, item)
-
-    # 2. 다운로드 불가 항목 선제 필터링 (스킵 수집 및 TUI 로그 발행)
-    if not item.downloadable:
-        reason = item.skip_reason or "ineligible"
-        _emit_skip_log(ctx, item, reason)
-        if skip_targets is not None:
-            skip_targets.append((item.url, reason))
+    # 1. 연령 제한 등 스킵 사전 확인
+    item = ctx.current_item
+    if item.capability.requires_auth and not _has_configured_cookies(ctx.cfg):
+        _emit_skip_log(ctx, item, "age/member gated")
         return "skip"
 
-    # 3. URL 정규 문자열 추출
-    url = item.url
+    # 2. 품질 우선 폴백 체인 시도
+    last_err = None
+    for i, client in enumerate(_QUALITY_CLIENT_CHAIN):
+        inject_pot = client in _POT_CLIENTS and _ensure_pot_server_ready(ctx)
+        success, result = _try_download_with_client(ctx, url, client, inject_pot)
 
-    # 4. ContentKind 기반 정적 디스패치 (중복 regex 전면 철폐!)
-    try:
-        if item.kind == ContentKind.CLIP:
-            return _download_chzzk(ctx, url, "clip")
+        if success:
+            info = result
+            # 고화질(1080p+) 누락 시 POT 승격 필요 체크
+            if _needs_pot_promotion(ctx, info):
+                raise _FormatQualityLoss("1080p+ 분리 포맷 누락 — POT 재시도 필요")
+            _emit_vod_success(ctx, info)
+            return True
 
-        if item.kind == ContentKind.LIVE_CHZZK:
-            return _download_chzzk_live(ctx, url)
+        last_err = result
+        err = result if isinstance(result, Exception) else Exception(str(result))
 
-        if item.kind == ContentKind.LIVE_YOUTUBE:
-            return _download_youtube_live(ctx, url)
+        # 봇 차단 감지 → 다음 클라이언트로 폴백
+        if _is_retryable_bot_error(err):
+            raw_log.raw(
+                emit_event("DL", "WARN", "YT", f"{client} 봇 차단 — 다음 클라이언트 시도"),
+                to_tui=False,
+            )
+            continue
 
-        if item.kind == ContentKind.VOD:
-            if item.platform_tag == "CHZ":
-                return _download_chzzk(ctx, url, "vod")
-            return _download_vod(ctx, url)
+        # 터미널 에러 → 즉시 전파 (상위에서 처리)
+        raise err
 
-        # UNKNOWN 또는 기타 플랫폼 폴백
-        return _download_vod(ctx, url)
-
-    # 5. 에러 분류 정교화 (봇 차단 vs 터미널 실패 vs 네트워크)
-    except YtDownloadError as de:
-        err_str = str(de).lower()
-        if any(term in err_str for term in _TERMINAL_FAIL_MARKERS):
-            reason = "unavailable"
-        elif any(bot in err_str for bot in _RETRYABLE_BOT_MARKERS):
-            reason = "age/bot restricted"
-        elif "requested format not available" in err_str:
-            reason = "format missing"
-        else:
-            reason = f"blocked ({str(de)[:40]})"
-
-        _emit_error_log(ctx, url, reason, failed_targets)
-        return False
-
-    except (ConnectionError, TimeoutError, OSError) as net_ex:
-        reason = f"net err ({type(net_ex).__name__})"
-        _emit_error_log(ctx, url, reason, failed_targets)
-        return False
-
-    except Exception as ex:  # noqa: BLE001
-        reason = f"err ({type(ex).__name__}: {str(ex)[:40]})"
-        _emit_error_log(ctx, url, reason, failed_targets)
-        return False
-
-
-def _has_configured_cookies(cfg: dict) -> bool:
-    """쿠키가 실제 yt-dlp에 주입되는지 판정 (_apply_cookie_opts와 동일 로직)."""
-    browser = str(cfg.get("browser_cookie", "none") or "none").lower()
-    # 브라우저 쿠키: none/auto/cookie_file 외 값이면 쿠키 있음
-    if browser not in ("none", "auto", "cookie_file"):
-        return True
-    # cookie_file 모드: 파일이 존재해야만 쿠키 있음
-    if browser == "cookie_file":
-        cookie_file = str(cfg.get("cookie_file_path", "") or "").strip()
-        return bool(cookie_file and os.path.exists(cookie_file))
+    # 3. 모든 클라이언트 실패 → 마지막 에러 기록
+    _emit_error_log(ctx, url, f"전체 클라이언트 체인 실패: {last_err}", ctx.failed_targets)
     return False
-
-
-def _emit_skip_log(ctx, item: ClassifiedTarget, reason: str) -> None:
-    """TUI 고정 규격: DL │ SKIP │ SCOPE │ [reason] title 발행."""
-    title_short = item.title[:35] + ("..." if len(item.title) > 35 else "")
-    raw_log.raw(
-        "dl",
-        _pe.emit_event("DL", "SKIP", item.platform_tag, f"[{reason}] {title_short}"),
-        to_tui=True,
-    )
-
-
-def _classify_item(ctx, raw_target: ClassifiedTarget | str | dict) -> ClassifiedTarget:
-    """항목 정규화 및 I/O 격리 쿠키 정책 검증기.
-
-    입력: ClassifiedTarget | dict | str(URL)
-    출력: ClassifiedTarget (파이프라인 단일 계약)
-    """
-    # 1. ClassifiedTarget 규격 승격
-    if isinstance(raw_target, ClassifiedTarget):
-        item = raw_target
-    elif isinstance(raw_target, dict):
-        # dict에서 URL과 메타데이터 추출
-        url = raw_target.get("url", "")
-        raw_info = {k: v for k, v in raw_target.items() if k != "url"}
-        item = ItemClassifier.classify(url, raw_info=raw_info)
-    else:
-        # str(URL)인 경우
-        item = ItemClassifier.classify(str(raw_target))
-
-    # 2. 이미 다운로드 불가로 마킹된 항목 (이미지 전용 등) 조기 반환
-    if not item.downloadable:
-        return item
-
-    # 3. 인증 요구사항 교차 검증 (도메인 정책 vs 현재 런타임 cfg)
-    if item.capability.requires_auth and not _has_configured_cookies(ctx.cfg):
-        return ClassifiedTarget(
-            url=item.url,
-            title=item.title,
-            kind=item.kind,
-            capability=item.capability,
-            platform_tag=item.platform_tag,
-            downloadable=False,
-            needs_pot=item.needs_pot,
-            skip_reason="age/member gated",
-            metadata=item.metadata,
-        )
-
-    return item
-
-
-def _flatten(ctx, url: str) -> list[ClassifiedTarget]:
-    """yt-dlp extract_flat 기반 재생목록/채널 평탄화.
-
-    [원칙 준수]
-    - 어설픈 하드코딩 dict 날조 금지: entries의 원시 메타를 ItemClassifier에 그대로 위임.
-    - extract_flat 환경에서는 StreamCapability.indeterminate()가 자동 적용되어
-      has_video/has_audio=None (미정) 상태가 거짓말 없이 정직하게 보존된다.
-    """
-    opts = {
-        "logger": ctx.logger,
-        "extract_flat": True,
-        "skip_download": True,
-        "noplaylist": False,
-        "socket_timeout": 30,
-    }
-    _apply_cookie_opts(opts, ctx.cfg)
-    _apply_client_opts(opts, ctx.cfg, forced=None)  # 순정 위임
-    _apply_light_analysis_opts(opts)
-    _apply_ejs_opts(opts)
-
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-        entries = (info or {}).get("entries") or []
-        targets: list[ClassifiedTarget] = []
-
-        for e in entries:
-            if not e:
-                continue
-            # yt-dlp flat 추출 시 url 또는 webpage_url 필드 참조
-            target_url = e.get("url") or e.get("webpage_url")
-            if not target_url:
-                continue
-
-            # YouTube ID만 떨어진 경우 정규 URL로 복원
-            if not target_url.startswith("http"):
-                target_url = f"https://www.youtube.com/watch?v={target_url}"
-
-            # 1단계 ItemClassifier에 위임하여 TriState(None) 메타데이터 보존 객체 생성
-            classified = ItemClassifier.classify(target_url, raw_info=e)
-            targets.append(classified)
-
-        return targets
-
-
-def expand_targets(ctx) -> list[ClassifiedTarget]:
-    """재생목록/채널 URL을 개별 동영상 항목 객체로 펼친다.
-
-    반환: List[ClassifiedTarget] - 파이프라인 전체가 공유하는 단일 계약
-    """
-    expanded: list[ClassifiedTarget] = []
-    for url in ctx.targets:
-        try:
-            urls: list[ClassifiedTarget] | None = None
-            if detect_content_type(url) == "playlist":
-                urls = _flatten(ctx, url)
-            else:
-                u = url.lower()
-                if "/@" in u or "/channel/" in u or "/c/" in u or "/user/" in u:
-                    urls = _flatten(ctx, normalize_youtube_channel_url(url))
-
-            if urls:
-                # _flatten이 이미 List[ClassifiedTarget] 반환
-                expanded.extend(urls)
-            else:
-                # 단일 영상 - 정규화 팩토리를 통해 즉시 승격
-                expanded.append(_normalize_single_item(url))
-        except Exception as ex:  # noqa: BLE001
-            url_short = url[:40] + ("..." if len(url) > 40 else "")
-            # [v3.8.1] 즉시 TUI 발행 금지 — finalizer에서 단일 출력
-            _emit_error_log(ctx, url, str(ex), failed_targets=[])
-            expanded.append(_normalize_single_item(url))
-
-    return expanded
-
-
-def _normalize_single_item(url: str) -> ClassifiedTarget:
-    """단일 영상 URL을 ClassifiedTarget으로 정규화 (메타는 다운로드 단계에서 채움)."""
-    return ItemClassifier.classify(url, raw_info=None)
 ```
 
 ## File: chzzktube/infra/__init__.py
@@ -6381,6 +6865,14 @@ import zipfile
 from pathlib import Path
 
 import chzzktube.core.config as config
+from chzzktube.core import (
+    CONNECT_TIMEOUT,
+    READ_TIMEOUT,
+    DOWNLOAD_TIMEOUT,
+    SHORT_API_TIMEOUT,
+    TEMP_FILE_MODE,
+    EXECUTABLE_FILE_MODE,
+)
 from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
 from chzzktube.ui import ProgressBar
 
@@ -6405,7 +6897,7 @@ def _logcb(log):
     return log if callable(log) else (lambda *a, **k: None)
 
 
-def _http_get(url, timeout=30):
+def _http_get(url, timeout=READ_TIMEOUT):
     """HTTP GET 요청, ghcr.io는 토큰 인증 자동 처리."""
     headers = {"User-Agent": _UA}
     if "ghcr.io" in url:
@@ -6421,7 +6913,7 @@ def _http_get(url, timeout=30):
 def _ghcr_token(scope):
     """ghcr.io 익명 토큰 획득."""
     url = f"https://ghcr.io/token?scope={scope}"
-    with urllib.request.urlopen(url, timeout=15) as resp:
+    with urllib.request.urlopen(url, timeout=SHORT_API_TIMEOUT) as resp:
         data = json.load(resp)
     return data.get("token")
 
@@ -6449,27 +6941,29 @@ def _download(url, dest, log=None, label="", expected_sha256=None):
 
         hasher = hashlib.sha256() if expected_sha256 else None
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp, open(tmp, "wb") as f:
+            # 임시 파일을 0o600 권한으로 생성 (소유자만 읽기/쓰기)
+            with urllib.request.urlopen(req, timeout=DOWNLOAD_TIMEOUT) as resp:
                 # Set per-read timeout
                 try:
                     sock = resp.fp.raw._sock
                     if sock is not None:
-                        sock.settimeout(30.0)
+                        sock.settimeout(READ_TIMEOUT)
                 except AttributeError:
                     pass
 
                 total = int(resp.headers.get("Content-Length", 0))
                 downloaded = 0
 
-                while True:
-                    chunk = resp.read(1024 * 512)
-                    if not chunk:
-                        break
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if hasher is not None:
-                        hasher.update(chunk)
-                    bar.update(downloaded, total)
+                with open(tmp, "wb", opener=lambda p, f: os.open(p, f, TEMP_FILE_MODE)) as f:
+                    while True:
+                        chunk = resp.read(1024 * 512)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if hasher is not None:
+                            hasher.update(chunk)
+                        bar.update(downloaded, total)
 
             # SHA-256 검증
             if hasher is not None:
@@ -6600,7 +7094,7 @@ def _parse_btbn_checksums(manifest_text, asset_name):
     raise ValueError(f"valid SHA-256 for {asset_name} not found in manifest")
 
 
-def _fetch_btbn_checksums(url, timeout=15):
+def _fetch_btbn_checksums(url, timeout=SHORT_API_TIMEOUT):
     """checksums.sha256 자산 텍스트 다운로드 (stdlib only)."""
     req = urllib.request.Request(url, headers={"User-Agent": BTBN_UA})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -6630,7 +7124,7 @@ def _select_btbn_asset(assets, arch_token, ext):
     return None
 
 
-def _resolve_btbn_ffmpeg(timeout=15):
+def _resolve_btbn_ffmpeg(timeout=SHORT_API_TIMEOUT):
     """BtbN 최신 릴리스에서 (에셋 + 체크섬) 단일 트랜잭션 해석.
 
     반환: component/version/asset_name/url/sha256/archive_type/platform/architecture
@@ -6774,17 +7268,6 @@ def _atomic_install(binaries, dest_dir):
     _rmtree(str(backup))
     return bin_dir
 _FFMPEG_BREW_API = "https://formulae.brew.sh/api/formula/ffmpeg.json"
-
-# [macOS] Homebrew bottle 키 선정 (v3.8.1) — formulae.brew.sh 응답의 실제
-# bottle 키에서 arch prefix 매치로 선택한다. 과거처럼 OS 버전→키 하드코딩
-# 테이블을 두면 신형 macOS(15.x Tahoe/Sequoia 등) 키가 누락되어
-# "no compatible Homebrew bottle" FAIL이 난다.
-# 실측(2026-09): arm64_tahoe / arm64_sequoia / arm64_golden_gate / arm64_linux.
-#
-# [중요] 현행 formulae(ffmpeg 9.x) bottle은 실행 중 OS에서 dyld 심볼 에러로
-# 실행 불가할 수 있다 (Tahoe 26.x SDK 빌드 / Sequoia 빌드라도 깨진 dylib 링크).
-# [v3.8.4] evermeet.cx 정적 폴백은 폐기 — Apple Silicon(arm64) 빌드를 제공하지
-# 않아 Rosetta2/dyld 실패만 양산했다. bottle 전멸 시 명시적 FAIL로 닫는다.
 _MAC_BOTTLE_ARCH_PREFIX = {
     "arm64": "arm64_",
     "x86_64": "x86_64_",
@@ -7016,13 +7499,32 @@ def _ffmpeg_done_event(text):
     )
 
 
+def _write_bottle_payload(url, dest_path, expected_sha256):
+    """Homebrew bottle 페이로드 기록 + SHA-256 강제 검증.
+
+    [v3.9.0] 기존 생략 주석 구간의 누락된 다운로드 단계를 복원.
+    ghcr.io 토큰 인증이 필요하므로 _http_get 경유. SHA 없으면 채택 금지
+    (무검증 수급 차단, §5-28). 해시 불일치는 ValueError로 호출자에게 전달.
+    """
+    hasher = hashlib.sha256()
+    with _http_get(url, timeout=DOWNLOAD_TIMEOUT) as resp, open(dest_path, "wb") as f:
+        while True:
+            chunk = resp.read(1024 * 512)
+            if not chunk:
+                break
+            f.write(chunk)
+            hasher.update(chunk)
+    if hasher.hexdigest() != (expected_sha256 or "").lower():
+        raise ValueError(f"SHA256 mismatch for bottle: {url}")
+
+
 def _ensure_ffmpeg_macos(log, force):
     """맥용 ffmpeg 자동 수급 — Bottle 내부 라이브러리 경로 바인딩 및 호스트 승격 안전망."""
     dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
 
     try:
         log(emit_component("DEPS", "RUN", "FFMP", "resolving (homebrew formula)..."))
-        with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=15) as resp:
+        with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=SHORT_API_TIMEOUT) as resp:
             data = json.load(resp)
 
         bottle = data.get("bottle", {}).get("stable", {})
@@ -7040,7 +7542,7 @@ def _ensure_ffmpeg_macos(log, force):
             try:
                 with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
                     tar_path = os.path.join(td, "ffmpeg.tar.gz")
-                    # ... 다운로드 및 SHA-256 검증 생략 (기존 로직 유지) ...
+                    _write_bottle_payload(url, tar_path, sha256)
 
                     staging = _safe_extract(tar_path, "tar.gz", Path(td) / "x")
                     binaries = _locate_binaries(staging)
@@ -7948,6 +8450,7 @@ import urllib.request
 import tempfile
 
 import chzzktube.core.config as config
+from chzzktube.core import DOWNLOAD_TIMEOUT
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
 from chzzktube.infra.node_provider import NODE_MIN_MAJOR
@@ -8284,7 +8787,7 @@ def _spawn_existing(log_full_func=None):
     return _spawn_node_server(log_full_func)
 
 
-def _download_with_progress(url, dest_path, log_func, desc):
+def _download_with_progress(url, dest_path, log_func=None, desc="downloading", timeout=DOWNLOAD_TIMEOUT):
     """청크 단위 분할 다운로드 및 콘솔에 친절한 진행률 출력.
 
     ProgressBar를 사용하여 TUI 상태 줄 갱신형 + F12 갱신형으로 진행률 기록.
@@ -8294,12 +8797,12 @@ def _download_with_progress(url, dest_path, log_func, desc):
         temp_dest = dest_path + ".tmp"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube"})
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 # Set per-read timeout
                 try:
                     sock = resp.fp.raw._sock
                     if sock is not None:
-                        sock.settimeout(30.0)
+                        sock.settimeout(READ_TIMEOUT)
                 except AttributeError:
                     pass
 
@@ -10886,6 +11389,29 @@ class Verifier:
 ## File: chzzktube/core/__init__.py
 
 ```python
+##### core/__init__.py - 공통 상수 및 유틸리티
+"""chzzktube.core 패키지 공통 상수 및 유틸리티."""
+
+# ─── 네트워크 타임아웃 상수 (초) ────────────────────────────────────────────
+# 일관된 타임아웃 정책: 연결 10초, 읽기 30초, 대용량 다운로드 60초
+CONNECT_TIMEOUT = 10.0      # TCP 연결 수립 대기
+READ_TIMEOUT = 30.0         # HTTP 응답 헤더/바디 읽기 대기
+DOWNLOAD_TIMEOUT = 60.0     # 대용량 파일 다운로드 (streaming read)
+
+# ghcr.io 토큰 등 짧은 API 호출
+SHORT_API_TIMEOUT = 15.0
+
+# POT 서버 핑 등 매우 짧은 호출
+PING_TIMEOUT = 1.5
+
+# FFmpeg 버전 확인 등 로컬 프로세스
+LOCAL_PROC_TIMEOUT = 10.0
+
+# ─── 파일 권한 상수 ──────────────────────────────────────────────────────
+# 임시 파일은 소유자만 읽기/쓰기 (0o600)
+TEMP_FILE_MODE = 0o600
+# 실행 파일은 소유자 실행 + 그룹/타자 읽기/실행 (0o755)
+EXECUTABLE_FILE_MODE = 0o755
 
 ```
 
@@ -10902,6 +11428,7 @@ import urllib.request
 
 from chzzktube.core.cookies import get_browser_cookies
 from chzzktube.core.media import get_video_codec_rank
+from chzzktube.core import SHORT_API_TIMEOUT
 
 
 class ChzzkAuthError(Exception):
@@ -10933,14 +11460,15 @@ def _chzzk_headers():
 
 def _get_json(url, headers):
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=15) as res:
+    with urllib.request.urlopen(req, timeout=SHORT_API_TIMEOUT) as res:
         return json.loads(res.read().decode("utf-8"))
+
 
 def _get_json_with_auth_check(url, headers):
     """JSON GET + 인증 실패 시 ChzzkAuthError 발생."""
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as res:
+        with urllib.request.urlopen(req, timeout=SHORT_API_TIMEOUT) as res:
             return json.loads(res.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace") if e.fp else ""
@@ -11149,7 +11677,7 @@ def analyze_chzzk_vod_api(target_url):
     }
 
 
-def _fetch_m3u8_streams(m3u8_url, headers, timeout=15):
+def _fetch_m3u8_streams(m3u8_url, headers, timeout=SHORT_API_TIMEOUT):
     """m3u8 HLS 매니페스트를 경량 조회 — 분석 단계에서 format 목록만 추출.
 
     yt-dlp의 'Downloading m3u8 information' 스텝은 매니페스트 전체를
@@ -11626,7 +12154,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.8.5"
+_APP_VERSION = "v3.9.0"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -12270,7 +12798,7 @@ def format_log_line_for_event(event):
         status=event.status,
         scope=scope,
         msg=event.msg,
-        spec=event.spec,
+        spec="",
         speed=event.speed,
         pct=event.pct,
         bar_frac=event.bar_frac,
@@ -12281,7 +12809,7 @@ def emit_event(stage, status, scope="-", msg="", is_status=False, is_error=False
     """단순 이벤트 1건."""
     from chzzktube.core.log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         is_status=is_status, is_error=is_error,
     )
 
@@ -12291,7 +12819,7 @@ def emit_dl(status, scope="", msg="", speed="", pct=None, bar_frac=None,
     """DL 진행률/완료 이벤트."""
     from chzzktube.core.log_event import LogEvent  # lazy import
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
         is_status=is_status, is_error=is_error,
     )
@@ -12308,7 +12836,7 @@ def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
     """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
     from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
         is_status=is_status, is_error=is_error,
     )
@@ -12323,7 +12851,7 @@ def emit_component(stage, status, scope, msg="", is_status=False, is_error=False
     """
     from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
-        stage=stage, status=status, scope=scope, platform=scope, msg=msg,
+        stage=stage, status=status, scope=scope, msg=msg,
         is_status=is_status, is_error=is_error,
         component_id=component_id, is_progress=is_progress,
     )
@@ -12414,8 +12942,7 @@ def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
         stage=stage,
         status=status,
         scope=scope,
-        platform=scope,
-        msg=msg,
+                msg=msg,
         is_error=True,
     )
 
@@ -12456,11 +12983,7 @@ class LogEvent:
     """구조화된 로그 이벤트."""
     stage: str = "SYS"
     status: str = "OK"
-    # v3.4.0: platform → scope 개명. platform은 호환 별칭(읽기 전용 X, 쓰기 허용).
     scope: str = "-"
-    platform: str = field(default="-", repr=False, compare=False)  # deprecated
-    # v3.4.0 deprecated: SPEC 컬럼 폐지. 전달 시 [spec] 태그로 MSG 흡수된다.
-    spec: str = "-"
     speed: str = "-"
     pct: float = None
     bar_frac: float = None
@@ -13202,6 +13725,7 @@ def shutdown(timeout: float = 1.0) -> None:
 스트림 전환(비디오→오디오)·타겟 전환 시 reset()으로 윈도우를 비운다.
 """
 import time
+from collections import deque
 
 
 class SpeedWindow:
@@ -13209,11 +13733,12 @@ class SpeedWindow:
 
     add(총 바이트 누적값)를 계속 공급하면 speed()가 초당 바이트를 반환.
     내부적으로 (타임스탬프, 누적바이트) 표본을 10초 윈도우로 유지한다.
+    [v3.9.0] 리스트 재구성 → deque popleft O(1) 상각.
     """
 
     def __init__(self, window=10.0):
         self._window = float(window)
-        self._samples = []
+        self._samples = deque()
         self._last_total = 0
         self._last_t = 0.0
 
@@ -13231,7 +13756,8 @@ class SpeedWindow:
         self._samples.append((now, float(total_bytes)))
         cutoff = now - self._window
         if cutoff > 0:
-            self._samples = [(tt, b) for tt, b in self._samples if tt >= cutoff]
+            while self._samples and self._samples[0][0] < cutoff:
+                self._samples.popleft()
 
     def speed(self):
         """초당 바이트. 표본 2개 미만 또는 시간차 없으면 0.0."""
@@ -14725,40 +15251,6 @@ class MediaController(QObject):
             targets = list(dict.fromkeys(targets))
         return targets
 
-    ### ── 세션 상태 머신 ────────────────────────────────────────
-    def begin_download(self):
-        self.state.update(
-            {"running": True, "canceled": False, "skip": False}
-        )
-
-    def end_download(self):
-        self.state.update(
-            {"running": False, "canceled": False, "skip": False}
-        )
-
-    def on_download_finished(self, success_count, fail_count):
-        """다운로드 완료 후 상태 정리 (View → Controller 이관).
-
-        View는 이 메서드를 호출만 하고, 실제 상태 초기화와 후처리는
-        Controller가 담당한다. 사운드 재생/폴더 열기는 UI 전용 로직이므로
-        View에서 유지한다.
-        """
-        self.end_download()
-
-        if success_count > 0:
-            # 분석 데이터 초기화 — 다음 URL 입력 시 깨끗한 상태로 시작
-            self.view.extracted_data = {"info": None, "v_list": [], "a_list": []}
-
-    def request_cancel(self):
-        if self.running:
-            self.state["canceled"] = True
-        elif self.analyzing:
-            self._abandon_analyzer()
-
-    def request_skip(self):
-        if self.running:
-            self.state["skip"] = True
-
     ### ── 다운로드 워커 생명주기 ─────────────────────────────────
     def spawn_worker(
         self,
@@ -14833,6 +15325,102 @@ class MediaController(QObject):
 
 # ── 하위 호환성 유지 (기존 코드에서 DownloadController로 참조 가능) ──
 DownloadController = MediaController
+
+```
+
+## File: chzzktube/control/gate_state.py
+
+```python
+"""gate_state — MainWindow에서 추출한 게이트·분석 워치독 무장/해제·POT 재시도 상태.
+
+[Task 4-2] MainWindow(1667행)의 게이트/분석 워치독 플래그 + POT 재시도 상태를
+통합 컨테이너로 이전 — 상태 변수 개별 초기화 금지(§6) 준수.
+
+Thin Wrapper 금지(§6) 준수: MainWindow 메서드는 이 모듈 함수에 위임하는
+호환 바인딩만 유지하며, 무장/해제 판정 로직의 실체는 여기에 존재한다.
+
+Qt 무의존 — LivenessWatchdog 인스턴스는 MainWindow.__init__에서 생성해
+주입받는다 (테스트 주입 가능).
+"""
+from __future__ import annotations
+
+from typing import Any, Optional, Set
+
+
+class GateState:
+    """POT 게이트 + 분석 워치독 무장/해제 + POT 재시도 상태 컨테이너."""
+
+    def __init__(self, gate_watchdog: Any, analysis_watchdog: Any):
+        # 게이트 워치독 — POT gate 대기 시간 초과 판정
+        self.gate_watchdog = gate_watchdog
+        self.gate_active = False
+        # 분석 워치독 — AnalyzeWorker 무페이로드 하트비트 연장
+        self.analysis_watchdog = analysis_watchdog
+        self.analysis_active = False
+        # POT 봇 체크 재시도 상태 (URL당 1회 계약)
+        self.pot_retry_pending: bool = False
+        self.pot_retry_url: Optional[str] = None
+        self.pot_retry_done: Set[str] = set()
+
+
+# ── 게이트 무장/해제 ──────────────────────────────────────────────────
+
+def start_gate(gate_state: GateState) -> None:
+    """게이트 워치독 무장 — reset + active 플래그 설정."""
+    gate_state.gate_watchdog.reset()
+    gate_state.gate_active = True
+
+
+def stop_gate(gate_state: GateState) -> None:
+    """게이트 워치독 해제 — active 플래그 해제 (watchdog 인스턴스는 보존)."""
+    gate_state.gate_active = False
+
+
+def on_pot_work_tick(gate_state: GateState) -> None:
+    """실제 POT 진행만 활성 게이트를 연장한다. 완료 후에는 재무장하지 않는다."""
+    if gate_state.gate_active:
+        gate_state.gate_watchdog.heartbeat()
+
+
+# ── 분석 워치독 무장/해제 ────────────────────────────────────────────
+
+def arm_analysis(gate_state: GateState) -> None:
+    """분석 워치독 무장 — reset + active 플래그 설정."""
+    gate_state.analysis_watchdog.reset()
+    gate_state.analysis_active = True
+
+
+def disarm_analysis(gate_state: GateState) -> None:
+    """분석 워치독 해제 — active 플래그 해제 (성공·실패·취소·만료 시)."""
+    gate_state.analysis_active = False
+
+
+# ── POT 재시도 상태 ─────────────────────────────────────────────────
+
+def clear_retry(gate_state: GateState) -> None:
+    """POT 재시도 상태 초기화 — gate timeout/cancel 시 호출."""
+    gate_state.pot_retry_pending = False
+    gate_state.pot_retry_url = None
+
+
+def schedule_retry(gate_state: GateState, url: str) -> bool:
+    """봇 체크 재시도 스케줄 — URL당 1회 계약. 이미 스케줄됐으면 False."""
+    if gate_state.pot_retry_pending:
+        return False
+    if not url or url in gate_state.pot_retry_done:
+        return False
+    gate_state.pot_retry_done.add(url)
+    gate_state.pot_retry_url = url
+    gate_state.pot_retry_pending = True
+    return True
+
+
+def consume_retry(gate_state: GateState) -> Optional[str]:
+    """재시도 대기 URL 회수 — pending 해제 후 URL 반환, 없으면 None."""
+    url = gate_state.pot_retry_url
+    gate_state.pot_retry_pending = False
+    gate_state.pot_retry_url = None
+    return url
 
 ```
 

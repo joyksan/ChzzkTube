@@ -23,6 +23,7 @@ import chzzktube.control.controller as controller_module
 from chzzktube.control.controller import MediaController
 
 import chzzktube.ui.main_window as main_module
+from chzzktube.core import log_emitter
 
 
 class _StubAnalyzer(QObject):
@@ -74,7 +75,7 @@ class _TimeoutFake:
         )
         self.ctrl = ctrl
         self.url_input = _FakeInput("https://youtu.be/abcDEFghijk")
-        self._analysis_watchdog_active = True
+        self._analysis_watchdog_active = analyzing
 
     def _abandon(self):
         self.abandoned += 1
@@ -90,7 +91,16 @@ class _TimeoutFake:
     def _platform_of_url(self):
         return "YT"
 
+    def _get_gate_state(self):
+        """Provide GateState fallback for test mocks — MainWindow 위임."""
+        return main_module.MainWindow._ensure_gate_state(self)
+
+    def _ensure_gate_state(self):
+        """Provide GateState fallback for test mocks — MainWindow 위임."""
+        return main_module.MainWindow._ensure_gate_state(self)
+
     def _disarm_analysis_watchdog(self):
+        self._analysis_watchdog_active = False
         return main_module.MainWindow._disarm_analysis_watchdog(self)
 
     def _on_analysis_timeout(self):
@@ -177,19 +187,56 @@ class _ArmFake:
         self.resets = []
         self.spawns = []
         self.cfg = {}
-
-        self._analysis_watchdog_active = False
-        self._analysis_watchdog = SimpleNamespace(reset=lambda: self.resets.append(1))
         self.url_input = _FakeInput("https://youtu.be/abcDEFghijk")
         self.ctrl = SimpleNamespace(spawn_analyzer=lambda *a, **k: self.spawns.append(a))
         self.base_anim_url = ""
+        self._pick_pending = False
+        self._pick_targets = []
+        # [Task 4-2] GateState 마이그레이션이 읽을 수 있도록
+        # property shadow 없이 원본 watchdog 인스턴스 먼저 저장한다.
+        class _W:
+            def reset(inner):
+                self.resets.append(1)
+        # 인스턴스 dict에 Raw watchdog을 별도 키로 저장해
+        # _ensure_gate_state의 __dict__ 마이그레이션이 읽을 수 있게 한다.
+        self.__dict__["_analysis_watchdog_raw"] = _W()
+        self._analysis_watchdog_active = False  # 직접 속성 — property 제거 (RecursionError 방지)
+
+    # ── legacy 플래그 직접 속성 (property 제거 — RecursionError 방지) ──────────
+    _analysis_watchdog_active: bool = False
+
+    def _ensure_gate_state(self):
+        """Provide GateState fallback for test mocks — cached GateState."""
+        if not hasattr(self, "_gate_state"):
+            self._gate_state = main_module.MainWindow._ensure_gate_state(self)
+        return self._gate_state
+
+    @property
+    def _analysis_watchdog(self):
+        class _W:
+            def reset(inner):
+                self.resets.append(1)
+        # 인스턴스 dict에 Raw watchdog을 별도 키로 저장해
+        # _ensure_gate_state의 __dict__ 마이그레이션이 읽을 수 있게 한다.
+        raw = self.__dict__.setdefault(
+            "_analysis_watchdog_raw",
+            _W(),
+        )
+        return raw
 
     def _preflight_deps_check(self) -> bool:
         """테스트용 — 항상 True 반환하여 deps 체크 통과."""
         return True
 
     def _arm_analysis_watchdog(self):
-        return main_module.MainWindow._arm_analysis_watchdog(self)
+        main_module.MainWindow._arm_analysis_watchdog(self)
+        self._analysis_watchdog_active = True
+
+    def _start_pick_flow(self, url):
+        return main_module.MainWindow._start_pick_flow(self, url)
+
+    def _run_pending_retry(self):
+        return main_module.MainWindow._run_pending_retry(self)
 
     def append_concise_log(self, *a, **k):
         pass
@@ -208,14 +255,14 @@ def test_spawn_sites_arm_analysis_watchdog():
     assert len(fake.spawns) == 1
 
     fake = _ArmFake()
-    main_module.MainWindow._start_pick_flow(fake, "https://youtu.be/abcDEFghijk")
+    fake._start_pick_flow("https://youtu.be/abcDEFghijk")
     assert fake.resets == [1]
     assert fake._analysis_watchdog_active is True
 
     fake = _ArmFake()
     fake._pot_retry_url = "https://youtu.be/abcDEFghijk"
     fake._pot_retry_pending = True
-    main_module.MainWindow._run_pending_retry(fake)
+    fake._run_pending_retry()
     assert fake.resets == [1]
     assert fake._analysis_watchdog_active is True
 
@@ -239,13 +286,19 @@ class _EndFake:
         self.extracted_data = {"info": None, "v_list": [], "a_list": []}
         self._pick_pending = False
         self._analysis_watchdog_active = True
+        self._pot_retry_pending = False
+        self._pot_retry_url = None
+        self._pot_retry_done = set()
 
     def _disarm_analysis_watchdog(self):
         self._analysis_watchdog_active = False
         return main_module.MainWindow._disarm_analysis_watchdog(self)
 
-    def _is_stale_analyze_signal(self):
-        return main_module.MainWindow._is_stale_analyze_signal(self)
+    def _is_stale_analyze_signal(self) -> bool:
+        """유령 분석 결과 판별 — 지운 뒤 \"stream analyzed\"가 한 번 더 뜨는 버그 차단."""
+        if not self.ctrl.state.analyzing:
+            return True
+        return not bool(self.url_input.text().strip())
 
     def stop_analysis_anim(self, ok=True):
         pass
@@ -259,22 +312,70 @@ class _EndFake:
     def _ensure_pot_for_info(self, info):
         pass
 
+    def _get_gate_state(self):
+        """Provide GateState fallback for test mocks (alias for _ensure_gate_state)."""
+        return SimpleNamespace(
+            pot_retry_pending=self._pot_retry_pending,
+            pot_retry_url=self._pot_retry_url,
+            pot_retry_done=self._pot_retry_done,
+            gate_active=False,  # 게이트 비활성화
+            analysis_active=False,  # 분석 비활성화 (초기 상태)
+        )
+
+    def _ensure_gate_state(self):
+        """Provide GateState fallback for test mocks (alias for _get_gate_state)."""
+        return self._get_gate_state()
+
     def _maybe_retry_analysis(self, err_msg):
         return False
 
-    @property
-    def state(self):
-        return self._state
+    def on_analyze_success(self, data):
+        """성공 시 분석 워치독 해제."""
+        if self._is_stale_analyze_signal():
+            return
+        self._disarm_analysis_watchdog()
+        self.ctrl._set_analyzing(False)
+        self.extracted_data = data
+        self._ensure_pot_for_info(data.get("info"))
+        if data.get("is_playlist"):
+            self.stop_analysis_anim()
+            self.update_ui_state()
+            return
+        if getattr(self, "_pick_pending", False):
+            self._pick_pending = False
+            self._show_pick_menu(data)
+            self.update_ui_state()
+            return
+        self.stop_analysis_anim()
+        self.update_ui_state()
+
+    def on_analyze_error(self, err_msg):
+        if self._is_stale_analyze_signal():
+            return
+        self._disarm_analysis_watchdog()
+        self.ctrl._set_analyzing(False)
+        self.extracted_data = {"info": None, "v_list": [], "a_list": []}
+        pick_pending = getattr(self, "_pick_pending", False)
+        self._pick_pending = False
+        if pick_pending:
+            self.ctrl._set_picking(False)
+        self.stop_analysis_anim(ok=False)
+        self.update_ui_state()
+        self.append_concise_log(
+            log_emitter.emit_event("ANAL", "FAIL", "-", err_msg),
+            True,
+            True,
+        )
 
 
 def test_analysis_end_disarms_watchdog():
     """성공·실패 마감 모두 워치독을 해제한다."""
     fake = _EndFake()
-    main_module.MainWindow.on_analyze_success(fake, {"info": {}})
+    fake.on_analyze_success({"info": {}})
     assert fake._analysis_watchdog_active is False
 
     fake = _EndFake()
-    main_module.MainWindow.on_analyze_error(fake, "boom")
+    fake.on_analyze_error("boom")
     assert fake._analysis_watchdog_active is False
 
 
@@ -306,6 +407,12 @@ class _PollFake:
         self._analysis_watchdog = _ExpiredWatchdog()
         self._analysis_watchdog_active = True
         self.timeout_calls = 0
+
+    def _ensure_gate_state(self):
+        """Provide GateState fallback for test mocks — cached GateState."""
+        if not hasattr(self, "_gate_state"):
+            self._gate_state = main_module.MainWindow._ensure_gate_state(self)
+        return self._gate_state
 
     def _force_unlock_input(self):
         raise AssertionError("폴백이 잘못 발화")

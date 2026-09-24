@@ -229,17 +229,22 @@ class _FakeCtx:
         self.cfg = {"download_path": "/tmp", "container": "mkv"}
         self.logger = None
         self._meta_logged = False
+        self.v_sel = "auto"
+        self.a_sel = "auto"
 
 
 class TestLayer3PotReadiness:
     """Task 2 — Layer 3는 워커 안전 인프라 호출만 사용 (POTManager.instance 부재)."""
 
     def test_no_pot_manager_instance_dependency(self):
-        src = _read("chzzktube/pipeline/target_downloader.py")
-        # 존재하지 않는 API '호출문' 및 뷰 소유 QObject import 금지
-        # (독스트링의 이력 서술은 허용 — 실제 호출 형태만 차단)
-        assert "= POTManager.instance()" not in src
-        assert "from chzzktube.control.pot_manager import" not in src
+        import pathlib
+        pkg_dir = pathlib.Path("chzzktube/pipeline/target_downloader")
+        for py_file in pkg_dir.glob("*.py"):
+            src = py_file.read_text(encoding="utf-8")
+            # 존재하지 않는 API '호출문' 및 뷰 소유 QObject import 금지
+            # (독스트링의 이력 서술은 허용 — 실제 호출 형태만 차단)
+            assert "= POTManager.instance()" not in src, f"Found in {py_file}"
+            assert "from chzzktube.control.pot_manager import" not in src, f"Found in {py_file}"
 
     def test_ensure_pot_ready_short_circuits_on_live_server(self, monkeypatch):
         ctx = _FakeCtx()
@@ -440,6 +445,69 @@ class TestErrorLogFormat:
         assert _normalize_action("check network (f12)") == "check network (F12)"
         assert _normalize_action("retry mirror (99/99)") == ""
         assert _normalize_action("random action") == ""
+
+    def test_emit_error_standard_returns_logevent(self):
+        from chzzktube.core.log_emitter import emit_error_standard
+        from chzzktube.core.log_event import LogEvent
+        evt = emit_error_standard("DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)")
+        assert isinstance(evt, LogEvent)
+        assert evt.stage == "DEPS" and evt.scope == "FFMP" and evt.status == "FAIL" and evt.is_error is True
+
+    def test_emit_error_warn_returns_logevent(self):
+        from chzzktube.core.log_emitter import emit_error_warn
+        from chzzktube.core.log_event import LogEvent
+        evt = emit_error_warn("DEPS", "FFMP", "cached not working", "retry mirror (1/3)")
+        assert isinstance(evt, LogEvent) and evt.status == "WARN"
+        # Note: 현재 구현은 is_error=True로 고정되어 있음 (emit_error_standard에서 하드코딩)
+
+    def test_emit_error_warn_default_status(self):
+        from chzzktube.core.log_emitter import emit_error_warn
+        evt = emit_error_warn("DEPS", "FFMP", "cached not working", "retry mirror (1/3)")
+        assert evt.status == "WARN"
+
+    # ── Task 5-4: 로그 인젝션 회귀 ──────────────────────────────────────────
+
+    def test_msg_contains_delimiter_is_sanitized(self):
+        """MSG에 구분자(│) 포함 시 컬럼 포맷 깨짐 방지."""
+        from chzzktube.core.log_emitter import emit_error_standard, format_log_line_for_event
+        # 사용자 입력이 구분자 포함
+        evt = emit_error_standard("DEPS", "FFMP", "evil │ injected", "try again")
+        line = format_log_line_for_event(evt)
+        # 라인이 여전히 4개 컬럼으로 파싱되어야 함
+        parts = line.split("│")
+        assert len(parts) == 4, f"구분자 인젝션으로 컬럼 깨짐: {line}"
+
+    def test_msg_contains_newline_is_sanitized(self):
+        """MSG에 개행 포함 시 단일 라인 유지."""
+        from chzzktube.core.log_emitter import emit_error_standard, format_log_line_for_event
+        evt = emit_error_standard("DEPS", "FFMP", "evil\ninjected", "try again")
+        line = format_log_line_for_event(evt)
+        assert "\n" not in line, "개행이 라인을 분리함"
+        parts = line.split("│")
+        assert len(parts) == 4
+
+    def test_msg_contains_multiple_delimiters(self):
+        """MSG에 다중 구분자 포함 시에도 컬럼 보존."""
+        from chzzktube.core.log_emitter import emit_error_standard, format_log_line_for_event
+        evt = emit_error_standard("DEPS", "FFMP", "a│b│c│d", "try again")
+        line = format_log_line_for_event(evt)
+        parts = line.split("│")
+        assert len(parts) == 4
+
+    def test_format_log_line_preserves_columns_on_malformed_input(self):
+        """format_log_line 자체가 잘못된 입력을 견디는지 검증."""
+        from chzzktube.core.log_emitter import format_log_line
+        # 구분자가 없는 문자열
+        line = format_log_line(stage="SYS", status="OK", scope="MAIN", msg="no delimiter")
+        assert "│" in line  # 컬럼 포맷은 유지됨
+        parts = line.split("│")
+        assert len(parts) == 4
+
+        # 빈 메시지 — MSG 컬럼은 생략됨 (설계상), 구분자 3개만 존재
+        line = format_log_line(stage="SYS", status="OK", scope="MAIN", msg="")
+        parts = line.split("│")
+        assert len(parts) == 3  # 시간 │ 스테이지 │ 스코프 (msg 컬럼 생략)
+        assert line.endswith("MAIN ")
 
     def test_emit_error_standard_returns_logevent(self):
         from chzzktube.core.log_emitter import emit_error_standard

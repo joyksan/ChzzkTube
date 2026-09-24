@@ -191,11 +191,12 @@ def test_no_duplicate_f12_lines_for_progress_ticks():
         raw_log.flush(timeout=0.5)
 
 
-def test_f12_full_buffer_keeps_progress_ticks():
-    """HANDOVER 3.7-3: F12 및 파일 로그는 to_tui 여부와 관계없이 전량 기록.
+def test_f12_buffer_snapshot_replaces_progress_ticks():
+    """F12 선택지 B (§5-33): 뷰 버퍼는 진행 틱을 스냅샷 치환, 전량은 history/full_events가 보장.
 
-    진행 틱(is_status=True) 메시지조차 _full_log_buf에 누적되어야 하며,
-    창을 닫았다 열어도 원본 텍스트가 복구된다.
+    - _full_log_buf: 동일 진행 라인은 제자리 치환 → 길이 1, 최종 100%만 남는다.
+    - 전량 보존은 raw_log history + dispatcher full_events ring의 책임 (별도 테스트).
+    - 창 열림 시 win.append(msg, is_status, component_id) 치환 호출은 유지.
     """
     from chzzktube.core.log_event import LogEvent
     from chzzktube.ui.main_window import MainWindow
@@ -209,7 +210,9 @@ def test_f12_full_buffer_keeps_progress_ticks():
             return True
 
     class FakeMainWindow:
-        _full_log_buf = []
+        from collections import deque
+        _full_log_buf = deque(maxlen=4096)
+        _last_full_was_status = False
 
     FakeMainWindow._mirror_full_log = MainWindow._mirror_full_log
 
@@ -219,15 +222,15 @@ def test_f12_full_buffer_keeps_progress_ticks():
                       is_status=True, is_progress=True, component_id="deps_ffmpeg")
         events.append(ev)
 
-    # 진행 틱 4개 → 모두 _full_log_buf에 기록되어야 한다.
+    # 진행 틱 4개 → 버퍼는 스냅샷 1개로 치환되어야 한다 (뷰 폭발 방지).
+    m = FakeMainWindow()
     for ev in events:
         FakeMainWindow._mirror_full_log(
-            FakeMainWindow(), ev.msg, is_status=True, component_id="deps_ffmpeg"
+            m, ev.msg, is_status=True, component_id="deps_ffmpeg"
         )
 
-    assert len(FakeMainWindow._full_log_buf) == 4
-    assert "25%" in FakeMainWindow._full_log_buf[0]
-    assert "100%" in FakeMainWindow._full_log_buf[-1]
+    assert len(m._full_log_buf) == 1
+    assert "100%" in m._full_log_buf[0]
 
     # F12 창이 보일 때 진행 메시지도 갱신형 append로 전달된다.
     win = FakeWin()
@@ -239,5 +242,28 @@ def test_f12_full_buffer_keeps_progress_ticks():
     assert len(win.appended) == 4
     assert win.appended[-1][2] == "deps_ffmpeg"
     assert all(a[1] is True for a in win.appended)  # is_status 진행 틱
+
+
+def test_f12_full_history_keeps_every_tick():
+    """전량 보존은 dispatcher full_events ring이 담당 (버퍼 치환과 직교)."""
+    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core.log_emitter import emit_component
+
+    seen = []
+    fn = lambda ev, is_status: seen.append(ev)
+    raw_log.subscribe_full(fn)
+    try:
+        for pct in (25, 50, 75, 100):
+            raw_log.raw("f12", emit_component("DEPS", "RUN", "ffmpeg", msg=f"{pct}% bar"),
+                        is_status=True, is_progress=True, to_tui=True,
+                        component_id="deps_ffmpeg")
+        raw_log.flush(timeout=1.0)
+        tails = [e.msg for e in seen if getattr(e, "component_id", None) == "deps_ffmpeg"][-4:]
+        assert tails == ["25% bar", "50% bar", "75% bar", "100% bar"]
+    finally:
+        with raw_log._dispatcher._lock:
+            if fn in raw_log._dispatcher._full_subs:
+                raw_log._dispatcher._full_subs.remove(fn)
+        raw_log.flush(timeout=0.5)
 
 

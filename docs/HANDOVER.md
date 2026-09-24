@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-23 - v3.8.5 — 수급 계층 런타임 구조 보존·TUI 마감 이벤트 복구·TUI 칼정렬 rstrip 적용·macOS 호스트 승격 구출 (patch)
+> 마지막 갱신: 2026-09-24 - v3.9.0 — 대규모 리팩토링(기술부채 해소 + 방향성 재정립): 게이트/워치독 상태 추출, 파이프라인 분기 분리, LogEvent deprecated 정리, 타임아웃/권한 일관화, 로그 인젝션 회귀 테스트
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.8.5` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.8.5"` (최신: 2026-09-23 수급 계층 런타임 구조 보존·TUI 마감 이벤트 복구·TUI 칼정렬 rstrip 적용·macOS 호스트 승격 구출 (patch))
+- **버전**: `v3.9.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.9.0"` (최신: 2026-09-24 대규모 리팩토링(기술부채 해소 + 방향성 재정립): 게이트/워치독 상태 추출, 파이프라인 분기 분리, LogEvent deprecated 정리, 타임아웃/권한 일관화, 로그 인젝션 회귀 테스트)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.8.5`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.9.0`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -216,7 +216,7 @@
   - 외부 엔진: `YTDL`, `STRE`, `FFMP`, `NODE`, `POT`
   - 미디어 플랫폼: `YT`, `CHZ`, `TW`, `TIKT`, `IG`, `X`, `BILI`, `AFTV`
   - 시스템 도메인: `MAIN`, `RAW`, `QUEUE`, `DISK`
-* **SPEC 컬럼 폐지**: 미디어 코덱/해상도/버전 등 사양 정보는 `SPEC` 컬럼으로 전달하지 않고 `MSG` 전두부 태그(`[1080p60]`, `[v3.8.5]`)로 위임한다.
+* **SPEC 컬럼 폐지**: 미디어 코덱/해상도/버전 등 사양 정보는 `SPEC` 컬럼으로 전달하지 않고 `MSG` 전두부 태그(`[1080p60]`, `[v3.9.0]`)로 위임한다.
 
 #### 3. TUI vs F12 채널 격리 및 전량 보존 계약 (Storage vs View)
 * **메인 TUI (`to_tui=True`)**:
@@ -348,13 +348,13 @@ YouTube 차단 회피는 yt-dlp 순정 로직을 최우선 존중하고, 앱 레
 
 ```
 LAYER 3: View (Qt Widgets) — chzzktube/ui/
-  main_window.py(main.py 본체) · dialogs.py · theme.py · log_console.py
+  main_window.py(main.py 본체) · dialogs.py · theme.py · log_console.py · log_mirror.py
 LAYER 2: Orchestrators — chzzktube/control/
-  startup_coordinator.py · controller.py · startup_state.py · pot_manager.py
+  startup_coordinator.py · controller.py · startup_state.py · pot_manager.py · gate_state.py
 LAYER 1: Worker Threads (QThread) — chzzktube/workers/
   downloader.py · analyze_worker.py · update_worker.py
 LAYER 0.5: Pipeline Functions (ctx 기반, 비스레드) — chzzktube/pipeline/
-  target_downloader.py · progress_emitter.py · live_recorder.py · finalizer.py · dl_context.py
+  target_downloader/ · progress_emitter.py · live_recorder.py · finalizer.py · dl_context.py
 LAYER 0: Domain / Helpers / Infra (Leaf)
   chzzktube/core/: media.py · chzzk_api.py · cookies.py · config.py · utils.py
     yt_logger_bridge.py · dl_platform.py · speed_window.py · playlist.py
@@ -616,7 +616,7 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
       - `fallback`, `timeout` 등 내부 엔진 구현 용어 노출 금지
       - 원인만 명시하고 후속 진행/액션을 누락하는 단발성 실패 로그 금지
 
-27. **수급 무결성 및 무검증 레거시 폴백 절대 금지 (v3.8.5)**: 외부 의존성(FFmpeg, Node.js 등) 수급 시, 단일 출처의 SHA-256 무결성 검증을 통과하지 못하거나 타깃 아키텍처(Apple Silicon 등)를 네이티브로 지원하지 못하는 레거시 공급원(evermeet.cx, 비공식 미러 등)으로의 묵시적·단계적 폴백 체인 구성을 엄격히 금지한다. Primary 공급자(macOS Homebrew Bottle, Windows/Linux BtbN)의 수급 및 `_verify_ffmpeg` 실행 검증에 실패할 경우, 시스템을 오염시키는 임의 바이너리로 도망치지 말고 반드시 `emit_error_standard` 규격을 통한 **명시적 FAIL**로 즉시 파이프라인을 닫고 사용자 개입(F12 안내)을 대기해야 한다. '어떻게든 실행되게 만든다'는 명목의 무검증 우회는 시스템 무결성을 파괴하는 악성 퇴행이다.
+27. **수급 무결성 및 무검증 레거시 폴백 절대 금지 (v3.9.0)**: 외부 의존성(FFmpeg, Node.js 등) 수급 시, 단일 출처의 SHA-256 무결성 검증을 통과하지 못하거나 타깃 아키텍처(Apple Silicon 등)를 네이티브로 지원하지 못하는 레거시 공급원(evermeet.cx, 비공식 미러 등)으로의 묵시적·단계적 폴백 체인 구성을 엄격히 금지한다. Primary 공급자(macOS Homebrew Bottle, Windows/Linux BtbN)의 수급 및 `_verify_ffmpeg` 실행 검증에 실패할 경우, 시스템을 오염시키는 임의 바이너리로 도망치지 말고 반드시 `emit_error_standard` 규격을 통한 **명시적 FAIL**로 즉시 파이프라인을 닫고 사용자 개입(F12 안내)을 대기해야 한다. '어떻게든 실행되게 만든다'는 명목의 무검증 우회는 시스템 무결성을 파괴하는 악성 퇴행이다.
 
 28. **FFmpeg 동적 수급 계약과 아키텍처 매핑 (v3.8.4)**: `components.py`의 FFmpeg 수급은 공급자 API를 매 트랜잭션 재해석한다 — 버전·URL을 하드코딩하지 않는다.
 
@@ -636,24 +636,24 @@ DownloadWorker(targets, cfg, state_dict, v_sel, a_sel, is_live_hint=False,
 
     진행 틱은 `_ffmpeg_progress_event`(`component_id="ffmpeg"`, `is_progress=True`)로, 마감은 `_ffmpeg_done_event`(`is_progress=False`)로 발행한다 — 이 두 플래그가 브리지(TUI/F12)의 동일 라인 제자리 갱신을 성립시킨다.
 
-29. **런타임 아카이브 전개 무결성 (Node.js/NPM 참수 금지) (v3.8.5)**: 외부 아카이브 전개 시 단일 실행 파일만 임의 색출해 승격시키는 행위는 의존 라이브러리(`lib/`)가 필요한 런타임에서 전면 금지된다. 
+29. **런타임 아카이브 전개 무결성 (Node.js/NPM 참수 금지) (v3.9.0)**: 외부 아카이브 전개 시 단일 실행 파일만 임의 색출해 승격시키는 행위는 의존 라이브러리(`lib/`)가 필요한 런타임에서 전면 금지된다.
     - `ffmpeg`는 중첩 디렉터리(`Cellar/.../bin`) 평탄화 승격 대상이지만, `node`는 실행 셸 스크립트(`bin/npm`)가 참조하는 내부 엔진(`lib/node_modules/npm/`)을 반드시 원본 계층 그대로 보존해야 한다.
     - 런타임 모듈 전개 시 디렉터리 루트를 온전히 보존하지 않고 바이너리만 솎아내는 편의적 축약 전개는 엄격히 금지된다.
 
-30. **수급 워커 단일 조회 및 마감 이벤트 TUI 관통 보장 (v3.8.5)**: `UpdateWorker` 및 프로비저닝 파이프라인은 대역폭 낭비와 UI 상태 동결을 방지하기 위해 다음 두 규칙을 강제한다.
+30. **수급 워커 단일 조회 및 마감 이벤트 TUI 관통 보장 (v3.9.0)**: `UpdateWorker` 및 프로비저닝 파이프라인은 대역폭 낭비와 UI 상태 동결을 방지하기 위해 다음 두 규칙을 강제한다.
     - `mgr.ensure_all()` 호출 시 반드시 `stale_only=True`를 강제한다. 정상 기동 중 검증 완료된 패키지를 무조건 전수 재다운로드(`stale_only=False`)하여 트래픽을 낭비하는 것을 금지한다.
     - `_provision_cb`의 TUI 노출 판정(`show`) 조건에 `status in ("OK", "DONE")`을 반드시 포함한다. 성공/마감 이벤트를 오류 상태가 아니라는 이유로 필터링하여 TUI에 `100% RUN` 상태가 화석처럼 고착되는 렌더링 누수를 영구 차단한다.
 
-31. **TUI 칼정렬 인덴트 보존 (format_log_line rstrip 원칙) (v3.8.5)**: 콘솔 조판 레이어(`format_log_line`)는 사용자가 의도한 좌측 정렬 공백(예: `"  0%"`)을 임의로 훼손해서는 안 된다.
+31. **TUI 칼정렬 인덴트 보존 (format_log_line rstrip 원칙) (v3.9.0)**: 콘솔 조판 레이어(`format_log_line`)는 사용자가 의도한 좌측 정렬 공백(예: `"  0%"`)을 임의로 훼손해서는 안 된다.
     - `clean_msg = str(msg).strip()` 사용을 영구 금지하고, 반드시 우측 개행 및 공백만 제거하는 `clean_msg = str(msg).rstrip("\r\n ")`을 적용한다.
     - 유니코드 표준 공백(`\u00a0` 포함)을 무차별 제거하여 `0%`와 `100%`의 게이지 시작 좌표가 어긋나는 시각적 지터링을 원천 방지한다.
 
-32. **macOS 격리 수급 호스트 승격(Bootstrap) 계약 (v3.8.5)**: Homebrew Bottle이 고정 경로 `LC_LOAD_DYLIB` 및 미설치 dylib 부재로 실행 검증(`_verify_ffmpeg`)에 전멸했을 때, 임의의 미검증 외부 아카이브로 도피하지 않는다.
+32. **macOS 격리 수급 호스트 승격(Bootstrap) 계약 (v3.9.0)**: Homebrew Bottle이 고정 경로 `LC_LOAD_DYLIB` 및 미설치 dylib 부재로 실행 검증(`_verify_ffmpeg`)에 전멸했을 때, 임의의 미검증 외부 아카이브로 도피하지 않는다.
     - 1차: `DYLD_FALLBACK_LIBRARY_PATH`로 아카이브 내 동봉 `lib/`를 주입해 실행 프로브를 완수한다.
     - 2차: 최종 실패 시, 호스트 시스템(`/opt/homebrew/bin/ffmpeg` 등)에 이미 존재하는 '정상 실행 검증된 바이너리'를 앱 격리 저장소(`writable_base()/ffmpeg/bin/`)로 원자적 복사(승격)하여 앱 단독 자산화한다.
     - 호스트 바이너리 승격 시에도 `_verify_ffmpeg` 검증은 필수이며, 승격 실패 시에만 `emit_error_standard` 규격을 통한 명시적 FAIL로 파이프라인을 닫는다.
 
-33. **로그 저장 전량성과 뷰 제자리 갱신의 직교 분리 (v3.8.5)**: "F12/히스토리 전량 기록"과 "진행률 제자리 갱신"은 상호 배타적이지 않다.
+33. **로그 저장 전량성과 뷰 제자리 갱신의 직교 분리 (v3.9.0)**: "F12/히스토리 전량 기록"과 "진행률 제자리 갱신"은 상호 배타적이지 않다.
     - CLI 명령어 원문(`$ cmd`), HTTP 트랜잭션, 아카이브 전개, 검증 실패 원인 등 저수준 시스템 행위는 영구 스토리지에 무삭제 순차 기록되어야 한다.
     - 그러나 GUI 뷰(`VerboseLogWindow`) 및 메모리 링 버퍼(`_full_log_buf`)에서 다운로드 진행률 틱(`is_status=True` 또는 `component_id` 보유)을 단순 개행으로 무차별 적재하는 행위는 엄격히 금지한다.
     - F12 창이 열려 있을 때는 `win.append(..., component_id)`를 통한 실시간 제자리 치환을, 창이 닫혀 있을 때는 `_full_log_buf`의 상태 줄 스냅샷 치환을 강제하여 F12 오픈 시 수천 줄의 게이지 잔해가 덤프되는 뷰 폭발을 방지해야 한다.

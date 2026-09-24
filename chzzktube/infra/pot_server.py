@@ -21,6 +21,7 @@ import urllib.request
 import tempfile
 
 import chzzktube.core.config as config
+from chzzktube.core import DOWNLOAD_TIMEOUT
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
 from chzzktube.infra.node_provider import NODE_MIN_MAJOR
@@ -357,7 +358,7 @@ def _spawn_existing(log_full_func=None):
     return _spawn_node_server(log_full_func)
 
 
-def _download_with_progress(url, dest_path, log_func, desc):
+def _download_with_progress(url, dest_path, log_func=None, desc="downloading", timeout=DOWNLOAD_TIMEOUT):
     """청크 단위 분할 다운로드 및 콘솔에 친절한 진행률 출력.
 
     ProgressBar를 사용하여 TUI 상태 줄 갱신형 + F12 갱신형으로 진행률 기록.
@@ -367,12 +368,12 @@ def _download_with_progress(url, dest_path, log_func, desc):
         temp_dest = dest_path + ".tmp"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube"})
-            with urllib.request.urlopen(req, timeout=120) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 # Set per-read timeout
                 try:
                     sock = resp.fp.raw._sock
                     if sock is not None:
-                        sock.settimeout(30.0)
+                        sock.settimeout(READ_TIMEOUT)
                 except AttributeError:
                     pass
 

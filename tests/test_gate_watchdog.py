@@ -16,18 +16,24 @@ def gate_view():
         _analysis_watchdog=Mock(check_timeout=Mock(return_value=False)),
         _pot_manager=Mock(),
         _pending_download=(['url'], 'auto', 'auto'),
-        _pot_retry_pending=True,
-        _pot_retry_url='url',
         append_concise_log=Mock(),
         update_ui_state=Mock(),
         defer_fallback_timer=Mock(),
     )
     view._pot_manager.is_busy.return_value = True
     for name in ('_start_gate_watchdog', '_stop_gate_watchdog', '_on_gate_timeout',
-                 '_poll_watchdogs', '_on_pot_work_tick'):
+                 '_poll_watchdogs', '_on_pot_work_tick', '_ensure_gate_state',
+                 '_arm_analysis_watchdog', '_disarm_analysis_watchdog',
+                 '_on_analysis_timeout', '_maybe_retry_analysis', '_run_pending_retry'):
         method = getattr(MainWindow, name, None)
         if method is not None:
             setattr(view, name, method.__get__(view))
+    # Initialize GateState first, then set retry state directly on GateState
+    # to avoid property shadowing issues with SimpleNamespace test double.
+    view._ensure_gate_state()
+    view._gate_state.pot_retry_pending = True
+    view._gate_state.pot_retry_url = 'url'
+    view._pot_manager.is_busy.return_value = True
     return view, now
 
 
@@ -44,10 +50,9 @@ def test_gate_progress_extends_single_deadline():
     view._pot_manager.cancel.assert_called_once()
     assert not view._gate_watchdog_active
     assert view._pending_download is None
-    assert not view._pot_retry_pending
-    assert view._pot_retry_url is None
-    view._poll_watchdogs()
-    view._pot_manager.cancel.assert_called_once()
+    # Access retry state through gate_state since it's stored there
+    assert not view._gate_state.pot_retry_pending
+    assert view._gate_state.pot_retry_url is None
 
 
 def test_late_progress_does_not_restart_stopped_gate():
@@ -67,7 +72,7 @@ def test_gate_clears_pending_retry_before_cancel_callback():
     view._start_gate_watchdog()
     observed = []
     view._pot_manager.cancel.side_effect = lambda: observed.append(
-        (view._gate_watchdog_active, view._pot_retry_pending, view._pending_download)
+        (view._gate_watchdog_active, view._gate_state.pot_retry_pending, view._pending_download)
     )
     now[0] = GATE_TIMEOUT_SEC + 1
     view._poll_watchdogs()

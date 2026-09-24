@@ -1,4 +1,9 @@
-"""결함 1: 유튜브 tv 클라이언트 폴백 시 화질 제한 및 포맷 무음 위험 회귀 테스트."""
+"""결함 1: 순정 위임 계약 — 수동 로테이션 잔재 금지 (v3.9.0 갱신).
+
+[v3.9.0 방침 전환] 구 todo Task 3(수동 client_chain 구성)는 폐기.
+HANDOVER §5-6.x: 앱 수동 클라 로테이션(_RETRY_CLIENTS, client_chain) 완전 제거 →
+yt-dlp 순정 단일 auto 호출 위임. 빈 스텁 테스트를 실제 계약 단언으로 교체.
+"""
 from unittest.mock import Mock, patch
 import pytest
 
@@ -45,19 +50,35 @@ class TestFormatSelector:
         assert fmt == "123+bestaudio"
 
 
-class TestDownloadVodClientChain:
-    """_download_vod 클라이언트 폴백 체인 검증."""
+class TestNoManualClientChain:
+    """수동 클라이언트 체인 잔재 금지 — 순정 위임 계약."""
 
-    def test_client_chain_excludes_ios(self):
-        """ios는 SUPPORTS_COOKIES=False로 쿠키 사용 시 스킵 → 체인에서 제외."""
-        # 내부 상수 직접 검증 (구현 후)
-        ctx = DownloadContext(cfg={"yt_player_client": "auto"}, current_url="https://youtu.be/test")
-        # 실제 구현에서 client_chain 구성 로직 확인 필요
-        # 이 테스트는 구현 후 통과해야 함
+    def test_no_retry_clients_constant(self):
+        """AnalyzeWorker._RETRY_CLIENTS는 빈 목록 (순정 위임)."""
+        from chzzktube.workers.analyze_worker import AnalyzeWorker
 
-    def test_tv_client_warning_emitted(self):
-        """tv 클라이언트 진입 시 화질 저하 경고 로그."""
-        # 구현 후 검증
+        assert AnalyzeWorker._RETRY_CLIENTS == []
+
+    def test_no_client_chain_symbol(self):
+        """target_downloader 패키지에 client_chain/ios 잔재 없음."""
+        import pathlib
+
+        # 새 패키지 구조의 모든 .py 파일 검사
+        pkg_dir = pathlib.Path("chzzktube/pipeline/target_downloader")
+        for py_file in pkg_dir.glob("*.py"):
+            src = py_file.read_text(encoding="utf-8")
+            assert "client_chain" not in src, f"client_chain found in {py_file}"
+            assert "_RETRY_CLIENTS" not in src, f"_RETRY_CLIENTS found in {py_file}"
+
+    def test_pure_delegation_comment_present(self):
+        """순정 위임 주석이 살아있어 방향성 회귀 방지."""
+        import pathlib
+
+        # options.py에 순정 위임 주석 확인
+        src = pathlib.Path("chzzktube/pipeline/target_downloader/options.py").read_text(
+            encoding="utf-8"
+        )
+        assert "순정" in src
 
 
 class TestDownloadVodTerminalFailFast:
@@ -65,10 +86,20 @@ class TestDownloadVodTerminalFailFast:
 
     def test_private_video_not_retried(self, monkeypatch):
         """비공개 영상은 재시도 없이 즉시 에러."""
+        from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, StreamCapability
+
         ctx = DownloadContext(
             cfg={"yt_player_client": "auto"},
             current_url="https://youtu.be/private",
             speed_win=SpeedWindow(),
+        )
+        # _download_vod expects ctx.current_item to be set
+        ctx.current_item = ClassifiedTarget(
+            url="https://youtu.be/private",
+            title="private",
+            kind=ContentKind.VOD,
+            capability=StreamCapability(has_video=True, has_audio=True),
+            platform_tag="youtube",
         )
 
         class FakeYDL:
@@ -81,7 +112,9 @@ class TestDownloadVodTerminalFailFast:
             def extract_info(self, url, download=True):
                 raise td.YtDownloadError("ERROR: [youtube] Private video")
 
-        monkeypatch.setattr(td.yt_dlp, "YoutubeDL", FakeYDL)
+        monkeypatch.setattr("chzzktube.pipeline.target_downloader.youtube_vod.yt_dlp.YoutubeDL", FakeYDL)
+        # POT 서버 체크 건너뛰기 (터미널 에러는 POT 재시도 전에 즉시 전파되어야 함)
+        monkeypatch.setattr("chzzktube.pipeline.target_downloader.youtube_vod._ensure_pot_server_ready", lambda ctx, timeout=60.0: False)
 
         with pytest.raises(td.YtDownloadError, match="Private video"):
             td._download_vod(ctx, "https://youtu.be/private")
@@ -92,11 +125,12 @@ class TestHttpDownloadWatchdogHeartbeat:
 
     def test_http_download_heartbeat_interval(self, monkeypatch, tmp_path):
         """5초마다 워치독 하트비트 호출 — 테스트용 0.5초 간격으로 단축."""
-        import chzzktube.pipeline.target_downloader as td_module
+        import chzzktube.pipeline.target_downloader as td
+        import chzzktube.pipeline.target_downloader.utils as td_utils
         import time
 
         # [테스트용] 모듈 내 상수 단축 (5초 → 0.5초)
-        td_module._WATCHDOG_HEARTBEAT_INTERVAL = 0.5
+        td_utils._WATCHDOG_HEARTBEAT_INTERVAL = 0.5
 
         # 느린 응답 시뮬레이션 - 0.1초 지연으로 총 1초 이상 소요
         class SlowResponse:
@@ -128,7 +162,7 @@ class TestHttpDownloadWatchdogHeartbeat:
                 heartbeats.append(time.monotonic())
         ctx._download_watchdog = FakeWatchdog()
 
-        monkeypatch.setattr(td.urllib.request, "urlopen", lambda req: SlowResponse())
+        monkeypatch.setattr("chzzktube.pipeline.target_downloader.chzzk.urllib.request.urlopen", lambda req, timeout=None: SlowResponse())
 
         out_path = tmp_path / "test.mp4"
         td._http_download(ctx, "https://example.com/video.mp4", str(out_path))

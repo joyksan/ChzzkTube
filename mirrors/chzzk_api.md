@@ -8,6 +8,7 @@ import urllib.request
 
 from chzzktube.core.cookies import get_browser_cookies
 from chzzktube.core.media import get_video_codec_rank
+from chzzktube.core import SHORT_API_TIMEOUT
 
 
 class ChzzkAuthError(Exception):
@@ -39,14 +40,15 @@ def _chzzk_headers():
 
 def _get_json(url, headers):
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, timeout=15) as res:
+    with urllib.request.urlopen(req, timeout=SHORT_API_TIMEOUT) as res:
         return json.loads(res.read().decode("utf-8"))
+
 
 def _get_json_with_auth_check(url, headers):
     """JSON GET + 인증 실패 시 ChzzkAuthError 발생."""
     req = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=15) as res:
+        with urllib.request.urlopen(req, timeout=SHORT_API_TIMEOUT) as res:
             return json.loads(res.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", "replace") if e.fp else ""
@@ -255,7 +257,7 @@ def analyze_chzzk_vod_api(target_url):
     }
 
 
-def _fetch_m3u8_streams(m3u8_url, headers, timeout=15):
+def _fetch_m3u8_streams(m3u8_url, headers, timeout=SHORT_API_TIMEOUT):
     """m3u8 HLS 매니페스트를 경량 조회 — 분석 단계에서 format 목록만 추출.
 
     yt-dlp의 'Downloading m3u8 information' 스텝은 매니페스트 전체를

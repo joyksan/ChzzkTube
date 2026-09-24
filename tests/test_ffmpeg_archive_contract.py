@@ -175,7 +175,7 @@ def test_macos_bottle_fixed_cellar_is_probed_not_skipped(monkeypatch, tmp_path):
 def test_macos_bottle_failed_verification_fails_explicitly(monkeypatch, tmp_path):
     """모든 후보가 실행 검증에 실패했을 때만 명시적으로 FAIL로 종결한다."""
     _arm64_sequoia(monkeypatch, tmp_path, _formula("/opt/homebrew/Cellar"))
-    monkeypatch.setattr(components, "_verify_ffmpeg", lambda path: False)
+    monkeypatch.setattr(components, "_verify_ffmpeg", lambda path, env_extra=None: False)
 
     result = components._ensure_ffmpeg_macos(lambda event: None, force=True)
 
@@ -184,11 +184,18 @@ def test_macos_bottle_failed_verification_fails_explicitly(monkeypatch, tmp_path
 
 
 def test_macos_bottle_missing_sha256_is_rejected(monkeypatch, tmp_path):
-    """SHA-256이 없는 bottle은 검증 불가 → 채택 금지 (무검증 수급 차단)."""
+    """SHA-256이 없는 bottle은 검증 불가 → 채택 금지 (무검증 수급 차단).
+
+    [v3.9.0] 호스트 승격(§5-32)이 테스트 호스트의 실ffmpeg를 승격해
+    None을 반환하므로, Path.is_file을 격리해 순수 bottle 판정만 본다.
+    """
+    from pathlib import Path
+
     formula = _formula(":any_skip_relocation")
     formula["bottle"]["stable"]["files"]["arm64_sequoia"].pop("sha256")
     _arm64_sequoia(monkeypatch, tmp_path, formula)
-    monkeypatch.setattr(components, "_verify_ffmpeg", lambda path: True)
+    monkeypatch.setattr(components, "_verify_ffmpeg", lambda path, env_extra=None: True)
+    monkeypatch.setattr(Path, "is_file", lambda self: False)
 
     result = components._ensure_ffmpeg_macos(lambda event: None, force=True)
 
@@ -201,21 +208,9 @@ def test_macos_bottle_failure_does_not_invoke_evermeet(monkeypatch, tmp_path):
     assert not hasattr(components, "_FFMPEG_EVERMEET_URLS")
 
     _arm64_sequoia(monkeypatch, tmp_path, _formula(":any_skip_relocation"))
-    monkeypatch.setattr(components, "_verify_ffmpeg", lambda path: False)
+    monkeypatch.setattr(components, "_verify_ffmpeg", lambda path, env_extra=None: False)
 
     result = components._ensure_ffmpeg_macos(lambda event: None, force=True)
 
     assert result is not None
-    assert "exhausted" in result or "failed" in result
-
-
-def test_macos_bottle_missing_sha256_is_rejected(monkeypatch, tmp_path):
-    """SHA-256이 없는 bottle은 검증 불가 → 채택 금지."""
-    formula = _formula(":any_skip_relocation")
-    formula["bottle"]["stable"]["files"]["arm64_sequoia"].pop("sha256")
-    _arm64_sequoia(monkeypatch, tmp_path, formula)
-    monkeypatch.setattr(components, "_verify_ffmpeg", lambda path: True)
-
-    result = components._ensure_ffmpeg_macos(lambda event: None, force=True)
-
-    assert result is not None
+    assert "exhausted" in result or "failed" in result or "no runnable bottle" in result

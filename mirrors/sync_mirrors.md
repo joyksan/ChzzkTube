@@ -25,10 +25,12 @@ MIRROR_MODULES = [
     # chzzktube.ui
     "chzzktube.ui.dialogs",
     "chzzktube.ui.log_console",
+    "chzzktube.ui.log_mirror",
     "chzzktube.ui.main_window",
     "chzzktube.ui.theme",
     # chzzktube.control
     "chzzktube.control.controller",
+    "chzzktube.control.gate_state",
     "chzzktube.control.pot_manager",
     "chzzktube.control.startup_coordinator",
     "chzzktube.control.startup_state",
