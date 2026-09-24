@@ -33,7 +33,7 @@ def bootstrap(clear_caches=True):
             importlib.invalidate_caches()
             # .venv 등에서 사전 로드된 구버전 모듈 캐시 제거
             for mod_name in list(sys.modules.keys()):
-                if mod_name.startswith(("yt_dlp", "streamlink")):
+                if mod_name.startswith("yt_dlp"):
                     del sys.modules[mod_name]
         except Exception:
             pass

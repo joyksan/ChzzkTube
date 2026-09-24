@@ -383,8 +383,8 @@ class CookieViewerDialog(QDialog):
 
 # [raw 상세 로그] DEPS 확인 시 실제 CLI를 실행해 셸에서 친 것과 동일한 원문을
 # 2026-09-15 모던 TUI 하이퍼미니멀리즘 전면 개편
-# F12 상세 로그에 기록한다. yt-dlp --version → '2026.08.19', streamlink
-# --version → 'streamlink 8.5.0' 식의 터미널 출력 그대로.
+# F12 상세 로그에 기록한다. yt-dlp --version → '2026.08.19',
+# ffmpeg -version → 'ffmpeg version 9.0' 식의 터미널 출력 그대로.
 class SettingsDialog(QDialog):
     """하이퍼미니멀 모던 TUI 스타일 설정 패널 (Flat, Monospace, Borderless)."""
 
@@ -517,17 +517,7 @@ class SettingsDialog(QDialog):
         layout.addLayout(r_res)
 
         r_sl = QHBoxLayout()
-        r_sl.addWidget(self._key_label("Streamlink / Sub"))
-        self.cb_slq = self._make_combo([
-            ("best", "best (auto)"),
-            ("1080p60,1080p,best", "1080p60 fallback"),
-            ("720p,best", "720p fallback"),
-            ("worst", "worst (save data)"),
-        ])
-        self.cb_slq.currentIndexChanged.connect(
-            lambda: self._apply_change("streamlink_quality", self.cb_slq.currentData())
-        )
-        r_sl.addWidget(self.cb_slq, 2)
+        r_sl.addWidget(self._key_label("Subtitles"))
 
         self.cb_sublangs = self._make_combo([
             ("all", "Sub: all"),
@@ -761,7 +751,6 @@ class SettingsDialog(QDialog):
         set_combo(self.cb_yt_client, self.cfg.get("yt_player_client", "auto"))
         set_combo(self.cb_update_channel, self.cfg.get("update_channel", "stable"))
         set_combo(self.cb_max_res, self.cfg.get("max_video_res", "none"))
-        set_combo(self.cb_slq, self.cfg.get("streamlink_quality", "best"))
         set_combo(self.cb_sublangs, self.cfg.get("subtitle_langs", "all"))
         set_combo(self.cb_frags, self.cfg.get("concurrent_fragments", 4))
         self.chk_pick.setChecked(self.cfg.get("pick_format", False))

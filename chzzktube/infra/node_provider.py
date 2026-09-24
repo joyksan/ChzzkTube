@@ -4,10 +4,11 @@
 - node_ok / ensure_node_runtime : bgutil 요구 버전 충족 검증·자동 수급
 - bundled_npm_ok : 포터블 npm 무결성 검사
 
-[SSOT 원칙 v3.8.2]
+[SSOT 원칙 v3.10.0]
 - 오직 writable_base()/node/ 단일 경로만 읽기/쓰기
-- frozen 번들(_MEIPASS, _internal), bundle_root, 시스템 PATH 탐색 완전 제거
+- 시스템 PATH / frozen 번들(_MEIPASS, _internal) / bundle_root 탐색 완전 제거
 - 수급은 ProvisioningManager(bridge) 위임 — 이 모듈은 경로 판정만 담당
+- 앱 전용 경로에 없으면 정직하게 None 반환 (FAIL FAST, silent fallback 없음)
 
 서버 기동/빌드/소스 수급은 pot_server.py가 담당.
 """
@@ -19,6 +20,7 @@ import subprocess
 import urllib.request
 
 import chzzktube.core.config as config
+from chzzktube.core.raw_log import log_f12_cli
 from chzzktube.infra.paths import get_writable_base
 
 
@@ -47,11 +49,15 @@ def node_major_version(node_path, timeout=10):
             encoding="utf-8", errors="replace",
             timeout=timeout, **spawn_kwargs(),
         )
-        m = re.match(r"v?(\d+)", (out.stdout or "").strip())
+        version_out = (out.stdout or "").strip()
+        log_f12_cli(f"{node_path} --version", version_out)
+        m = re.match(r"v?(\d+)", version_out)
         if m:
             major = int(m.group(1))
-    except Exception:
+    except Exception as e:
         major = None
+        # [Silent fallback 제거] 버전 판별 실패 로그
+        log_f12_cli(f"{node_path} --version", f"Exception: {e}", is_error=True)
     _node_ver_cache[node_path] = major
     return major
 

@@ -23,6 +23,7 @@ import tempfile
 import chzzktube.core.config as config
 from chzzktube.core import DOWNLOAD_TIMEOUT
 from chzzktube.core.log_emitter import emit_component
+from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
 from chzzktube.infra.node_provider import NODE_MIN_MAJOR
 from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
@@ -556,6 +557,7 @@ def download_and_install_source(want_ver, log_func=None):
     zpath = os.path.join(tmp, "src.zip")
     try:
         url = _TAG_ZIP.format(ver=want_ver)
+        log_f12_net(f"GET {url} -> {zpath}")
         if log_func:
             _download_with_progress(url, zpath, log_func, "bgutil source downloading")
         else:
@@ -612,7 +614,11 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
     무응답이면 프리웜 워커가 영구 점유되어 is_busy()가 고정되고 POT 게이트
     다운로드가 큐에서 풀리지 않는다 — 상한이 반드시 필요하다.
     [Followup-2] job-object(TerminateJobObject)/process-group kill_tree로 트리 전체를 정리한다.
+    [F12] 실행 원문(`$ cmdline` + stdout/stderr)은 log_f12_cli로만 발행한다 —
+    to_tui=False 강제이므로 메인 TUI 콘솔은 오염되지 않는다.
     """
+    cmd_line = " ".join(map(str, cmd))
+    log_f12_cli(cmd_line, None)
     try:
         kwargs = daemon_spawn_kwargs(use_no_window=use_no_window)
         proc = subprocess.Popen(
@@ -628,6 +634,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
             stdout, _ = _communicate_with_ticks(proc, timeout, tick_func, tick_interval)
         except subprocess.TimeoutExpired:
             kill_tree(proc)  # [Followup-2] tree kill (job object / process group)
+            log_f12_cli(cmd_line, f"timeout ({timeout}s) — killed", is_error=True)
             if log_full_func:
                 log_full_func(
                     f"subprocess timeout ({timeout}s) — killed: {' '.join(map(str, cmd))}"
@@ -638,13 +645,16 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
                 proc_registry.remove(proc)
             except ValueError:
                 pass
-        if stdout and log_full_func:
-            for line in stdout.splitlines():
-                stripped = line.strip()
-                if stripped:
-                    log_full_func(stripped)
+        if stdout:
+            log_f12_cli(cmd_line, stdout, is_error=(proc.returncode != 0))
+            if log_full_func:
+                for line in stdout.splitlines():
+                    stripped = line.strip()
+                    if stripped:
+                        log_full_func(stripped)
         return proc.returncode
     except Exception as e:
+        log_f12_cli(cmd_line, f"[{type(e).__name__}] {e}", is_error=True)
         if log_full_func:
             log_full_func(f"subprocess Popen error: {e}")
         return -1

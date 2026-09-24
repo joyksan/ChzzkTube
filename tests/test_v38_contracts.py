@@ -71,8 +71,13 @@ class TestEnvironmentIsolation:
 
     def test_updater_cli_base_is_isolated(self):
         assert "shutil.which(" not in _read("chzzktube/infra/updater.py")
-        # ytdlp 해석은 앱 인터프리터 + 오버레이 단일 경로
-        assert updater._cli_base("ytdlp") == [sys.executable, "-m", "yt_dlp"]
+        # ytdlp 해석은 앱 전용 바이너리 경로 단일 경로
+        cli = updater._cli_base("ytdlp")
+        # binary가 설치되어 있으면 경로 반환, 없으면 None (정상 동작)
+        if cli is not None:
+            assert len(cli) == 1
+            assert cli[0].endswith("yt-dlp.exe") or cli[0].endswith("yt-dlp")
+        # 핵심: shutil.which 사용하지 않음 (격리 보장)
 
     def test_client_opts_ffmpeg_is_isolated(self):
         src = _read("chzzktube/core/client_opts.py")
@@ -539,3 +544,66 @@ class TestAnalTuiSpec:
         m = re.search(r"def stop_analysis_anim.*?(?=\n    def )", src, re.S)
         body = m.group(0)
         assert "analysis_done_msg" in body and 'scope="POT"' in body and "availability" in body
+
+
+class TestF12CliNetHelpers:
+    """Task 3 — F12 CLI/Network 원문 수급 헬퍼 계약 (v3.10.0).
+
+    [계약]
+    - 모든 발행은 to_tui=False 강제 → 메인 콘솔 오염 절대 차단
+    - CLI 원문은 truncate_for_full_log로 절취되어 F12 버퍼에만 적재
+    - TUI 구독자는 어떤 경우에도 CLI 원문을 받지 않는다
+    """
+
+    def _capture(self, raw_log):
+        """(tui, full) 수신 목록을 담은 대역 구독자를 등록한다."""
+        tui, full = [], []
+        raw_log.subscribe_concise(lambda ev, *a: tui.append(ev))
+        raw_log.subscribe_full(lambda ev, *a: full.append(ev))
+        return tui, full
+
+    def test_log_f12_cli_emits_prompt_and_truncated_output(self):
+        import chzzktube.core.raw_log as raw_log
+        tui, full = self._capture(raw_log)
+        raw_log.log_f12_cli("yt-dlp --version", "2026.8.19\nline2\nline3\nline4\nline5\nline6\nline7")
+        raw_log.flush()
+        msgs = [ev.msg for ev in full]
+        assert msgs[0] == "$ yt-dlp --version"
+        assert any("2026.8.19" in m for m in msgs)
+        # truncate_for_full_log: 6줄 + 절단 꼬리 → 원문 7줄이 전부 적재되지는 않는다.
+        assert any("lines truncated" in m for m in msgs)
+        # [TUI 격리] to_tui=False 강제 — TUI 구독자 수신 0건.
+        assert tui == []
+
+    def test_log_f12_net_never_reaches_tui(self):
+        import chzzktube.core.raw_log as raw_log
+        tui, full = self._capture(raw_log)
+        raw_log.log_f12_net("GET https://example.invalid/x -> /tmp/x")
+        raw_log.flush()
+        assert any("GET https://example.invalid/x" in ev.msg for ev in full)
+        assert tui == []
+
+    def test_helpers_ignore_empty_input(self):
+        import chzzktube.core.raw_log as raw_log
+        tui, full = self._capture(raw_log)
+        raw_log.log_f12_cli("", "body")
+        raw_log.log_f12_net("")
+        raw_log.flush()
+        assert full == [] and tui == []
+
+    def test_cli_helper_applies_ffmpeg_configuration_trim(self):
+        """`configuration:` 블록은 제거되고, 장문 단일 줄은 160자로 절단된다."""
+        from chzzktube.infra.updater import truncate_for_full_log
+        long_line = "x" * 400
+        # configuration: 블록은 뒤에 개행이 이어질 때 통째로 제거된다 (실제 ffmpeg 출력 형태).
+        out = truncate_for_full_log(
+            f"ffmpeg version 9.0\nconfiguration: {long_line}\n  --enable-gpl\n  --prefix=/x\nbuilt with gcc\n"
+        )
+        assert "configuration:" not in out
+        assert "--enable-gpl" not in out
+        assert "ffmpeg version 9.0" in out
+        assert "built with gcc" in out
+        # 장문 단일 줄(구분자 미포함)은 160자 + 말줄임으로 절단된다.
+        wide = truncate_for_full_log(long_line)
+        assert len(wide) == 161 and wide.endswith("…")
+

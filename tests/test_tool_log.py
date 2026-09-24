@@ -73,32 +73,46 @@ def test_concurrent_fragments_fit():
     assert _concurrent_fragments({"fast_download": True, "concurrent_fragments": 99}) == 16
 
 
-def test_streamlink_quality_fit():
-    from types import SimpleNamespace
+def test_streamlink_fully_removed():
+    """[v3.10.0] Streamlink 완전 제거 — 실행 인자/설정 키/재수출/의존성 부재."""
     import chzzktube.pipeline.target_downloader as td
-    import chzzktube.pipeline.live_recorder as live_recorder
+    import chzzktube.core.config as config
 
-    seen = {}
-
-    class _FakeLR:
-        @staticmethod
-        def prepare_live_paths(ctx, out_file, thumb):
-            return ("t.ts", None, out_file)
-
-        @staticmethod
-        def record_live_stream(ctx, cmd, temp_ts):
-            seen["cmd"] = cmd
-            return True
-
-    orig = live_recorder
-    td._lr = _FakeLR
-    try:
-        ctx = SimpleNamespace(cfg={"download_path": "/tmp", "streamlink_quality": "720p,best"},
-                              speed_win=SimpleNamespace(reset=lambda: None))
-        assert td._download_streamlink(ctx, "https://x") is True
-        assert seen["cmd"] == ["streamlink", "https://x", "720p,best", "-O"]
-    finally:
-        td._lr = live_recorder
+    # 1. target_downloader 재수출 및 실체 제거
+    assert not hasattr(td, "_download_streamlink")
+    # 2. 설정 키 제거
+    assert "streamlink_quality" not in config.default_config()
+    # 3. updater의 streamlink 업그레이드 경로 제거
+    import chzzktube.infra.updater as updater
+    assert not hasattr(updater, "_frozen_upgrade_streamlink")
+    assert not hasattr(updater, "_extract_streamlink_whl")
+    assert all(label != "streamlink" for label, _, _ in updater.PACKAGES)
+    # 4. 앱 코드에 streamlink '실행/설정/의존' 형태 잔존 없음
+    #    (제거 이력 서술 주석은 허용 — 테스트 관례: 호출 형태만 금지)
+    import os
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    violations = (
+        r'"streamlink',           # 실행 인자/설정값 리터럴
+        r"'streamlink",
+        r"import streamlink",     # import 문
+        r"from streamlink",
+        r"streamlink_quality",    # 설정 키
+        r"cmd\s*=\s*\[\s*[\"']streamlink",
+    )
+    for rel in ("chzzktube/pipeline/target_downloader/youtube_live.py",
+                "chzzktube/pipeline/target_downloader/dispatch.py",
+                "chzzktube/pipeline/target_downloader/__init__.py",
+                "chzzktube/core/config.py",
+                "chzzktube/ui/dialogs.py",
+                "chzzktube/infra/updater.py"):
+        with open(os.path.join(root, rel), encoding="utf-8") as f:
+            src = f.read()
+        for pattern in violations:
+            assert not re.search(pattern, src), f"streamlink 잔존({pattern}): {rel}"
+    # 5. pyproject 의존성에서도 제거
+    with open(os.path.join(root, "pyproject.toml"), encoding="utf-8") as f:
+        assert "streamlink" not in f.read().lower()
 
 
 def test_tool_log_protocols_importable():

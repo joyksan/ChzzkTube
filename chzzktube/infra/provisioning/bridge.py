@@ -20,7 +20,7 @@ def provision_component_sync(
     """단일 구성요소 동기 수급 — 기존 동기 코드에서 호출.
 
     Args:
-        component: 구성요소명 (yt-dlp, streamlink, ffmpeg, node, bgutil)
+        component: 구성요소명 (yt-dlp, ffmpeg, node, bgutil)
         log_func: 로그 콜백 (LogEvent 수신)
         channel: stable / nightly
         force: 이미 최신이어도 강제 재수급

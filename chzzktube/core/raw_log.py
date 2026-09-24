@@ -196,3 +196,27 @@ def flush(timeout: float = 1.0) -> None:
 def shutdown(timeout: float = 1.0) -> None:
     _dispatcher.shutdown(timeout)
 
+def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str = "deps-cli"):
+    """F12 상세로그 전용 CLI 실행 결과 발행 ($ cmdline + 원문 출력).
+
+    - to_tui=False 강제: 메인 TUI 콘솔 오염을 완벽히 차단
+    - truncate_for_full_log 적용: 최대 6줄, 160자 제한
+    """
+    if not cmd:
+        return
+    raw(tag, f"$ {cmd}", is_error=is_error, to_tui=False)
+    if output:
+        from chzzktube.infra.updater import truncate_for_full_log
+        for line in truncate_for_full_log(output).splitlines():
+            raw(tag, line, is_error=is_error, to_tui=False)
+
+
+def log_f12_net(msg: str, is_error: bool = False, tag: str = "deps-net"):
+    """F12 상세로그 전용 네트워크/시스템 원문 로그 발행.
+
+    - to_tui=False 강제: 메인 콘솔 오염 절대 차단
+    """
+    if not msg:
+        return
+    raw(tag, str(msg), is_error=is_error, to_tui=False)
+

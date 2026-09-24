@@ -3,7 +3,7 @@
 from chzzktube.pipeline.classifier import ContentKind, ClassifiedTarget
 from chzzktube.pipeline.target_downloader.chzzk import _download_chzzk, _download_chzzk_live
 from chzzktube.pipeline.target_downloader.youtube_vod import _download_vod
-from chzzktube.pipeline.target_downloader.youtube_live import _download_youtube_live, _download_streamlink
+from chzzktube.pipeline.target_downloader.youtube_live import _download_youtube_live
 from chzzktube.pipeline.target_downloader.utils import _emit_error_log
 import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_emitter import emit_event

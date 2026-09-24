@@ -3,7 +3,7 @@
 
 - _do_check : updater.check_deps() 결과를 DEPS 이벤트로(TUI 5줄), CLI 원문을
   raw 문자열로(F12) 버스 단일 경유 전송. stale 패키지는 check_done(list)으로 반환.
-- _do_upgrade: ProvisioningManager를 통해 yt-dlp/streamlink/ffmpeg/node/bgutil 일괄 수급.
+- _do_upgrade: ProvisioningManager를 통해 yt-dlp/ffmpeg/node/bgutil 일괄 수급.
   각 수급의 실제 진행 여부를 _had_action 판별해 '요약 결론' 1줄만 남긴다.
 - [분리] dialogs.py에서 추출 — 대화상자 컬렉션과 워커의 수명·계층이 다르다.
 - [시그널 계약] check_done(list) → main._on_update_check_done,
@@ -21,7 +21,6 @@ from chzzktube.core.log_emitter import emit_component, emit_error_standard
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (
     ("ytdlp", ("--version",)),
-    ("streamlink", ("--version",)),
     ("ffmpeg", ("-version",)),
     ("node", ("--version",)),
     ("npm", ("--version",)),
@@ -69,13 +68,11 @@ class UpdateWorker(QThread):
             )
         ))
         for label, status, ver in results:
-            raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "streamlink": "STRE", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
+            raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
         for label, args in _RAW_VERSION_CMDS:
             cmdline, out = updater.cli_raw(label, *args)
             if cmdline and out:
-                raw_log.raw("deps-cli", f"$ {cmdline}", to_tui=False)
-                for line in updater.truncate_for_full_log(out).splitlines():
-                    raw_log.raw("deps-cli", line, to_tui=False)
+                raw_log.log_f12_cli(cmdline, out)
         if self.check_updates:
             for label, pypi_name, cur, latest in updater.outdated_packages(channel=self.channel):
                 stale.append((label, pypi_name, cur, latest))

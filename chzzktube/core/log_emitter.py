@@ -166,7 +166,7 @@ def format_pick_menu(v_list, a_list, max_rows=40):
 # 포맷: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG
 #   STAGE   : SYS / DEPS / ANAL / DL / LIVE / MERG / BATCH / POT (5폭)
 #   STATUS  : READY / RUN / OK / DONE / SKIP / WARN / FAIL / ABORT / END (5폭)
-#   SCOPE   : 발생지·대상 (엔진 YTDL/STRE/FFMP/NODE/POT, 플랫폼 YT/CHZ/TW/TIKT…,
+#   SCOPE   : 발생지·대상 (엔진 YTDL/FFMP/NODE/POT, 플랫폼 YT/CHZ/TW/TIKT…,
 #             시스템 MAIN — 5폭, media.platform_short 실측값)
 #   MSG     : [tag] 전두 + 진행률 고정형(PCT 3폭우측 · SPEED 8폭우측 + GAUGE 10블록)
 
@@ -261,7 +261,7 @@ def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None
         # v3.4.0 표준 약자(YTDL/FFMP/NODE/POT/YT/CHZ/TW/TIKT 등)는 재축약 금지.
         # 플랫폼 이름(youtube/chzzk 등)만 media.platform_short로 축약한다.
         scope_s = (scope_upper if scope_upper in STAGES or scope_upper in STATUSES or scope_upper in {
-            "YTDL", "STRE", "FFMP", "NODE", "POT", "MAIN", "RAW", "QUEUE", "DISK"
+            "YTDL", "FFMP", "NODE", "POT", "MAIN", "RAW", "QUEUE", "DISK"
         } else _short_platform(scope_raw))[:5].ljust(5)
 
     # [SPEC 흡수] deprecated spec → MSG 전두부 [tag]. '-'·빈 값은 버린다.
@@ -344,13 +344,15 @@ def emit_err(msg):
 
 
 def emit_progress(stage, status, scope="-", msg="", speed="", pct=None,
-                  bar_frac=None, is_status=False, is_error=False):
+                  bar_frac=None, is_status=False, is_error=False,
+                  component_id: str | None = None, is_progress: bool = False):
     """진행률 표시 이벤트 — ANAL/DL/LIVE 단계."""
     from chzzktube.core.log_event import LogEvent  # lazy import (순환 참조 방지)
     return LogEvent(
         stage=stage, status=status, scope=scope, msg=msg,
         speed=speed, pct=pct, bar_frac=bar_frac,
         is_status=is_status, is_error=is_error,
+        component_id=component_id, is_progress=is_progress,
     )
 
 

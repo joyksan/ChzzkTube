@@ -1,6 +1,6 @@
 """tool_log — 외부툴 출력 흡수 단일 래퍼 (v3.3.2).
 
-[원칙] 새 기능이 외부툴(yt-dlp/streamlink/ffmpeg/bgutil)을 호출할 때는
+[원칙] 새 기능이 외부툴(yt-dlp/ffmpeg/bgutil)을 호출할 때는
 이 모듈 경유만 허용한다. 직접 subprocess 파싱·로거 세팅 코드의 중복 작성을
 금지한다 — 파싱 로직은 여기서 한 번만, 기능은 호출만.
 
@@ -52,7 +52,7 @@ def make_ytdlp_logger():
 
 def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
          line_budget=4096, encoding="utf-8"):
-    """subprocess stderr 실시간 흡수 — ffmpeg/streamlink/bgutil 공용.
+    """subprocess stderr 실시간 흡수 — ffmpeg/bgutil 공용.
 
     - reader 스레드로 stderr를 라인 단위 흡수, LogEvent(rendered=True) 원문
       보존으로 raw 버스에 적재한다 (F12+history, to_tui면 TUI도).

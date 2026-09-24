@@ -1,5 +1,5 @@
 ##### dl_platform.py - 다운로더 플랫폼/콘텐츠 타입 감별
-"""URL 문자열에서 플랫폼(youtube/chzzk/streamlink 등)과 콘텐츠 타입을 판정한다.
+"""URL 문자열에서 플랫폼(youtube/chzzk/twitch 등)과 콘텐츠 타입을 판정한다.
 
 표준 라이브러리 `platform`과의 이름 충돌을 피하기 위해 `dl_platform`으로
 명명 — downloader.target_downloader / AnalyzeWorker 공용.
@@ -70,7 +70,7 @@ def detect_content_type(url, info=None):
 
     chzzk      → clip / vod / live / chzzk
     youtube url → playlist / live / video
-    streamlink  → stream
+    youtube live/기타 스트림 → live
     info(dict)에 is_live 가 있으면 live 우선.
     """
     if not url:

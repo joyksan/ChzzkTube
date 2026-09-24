@@ -12,9 +12,9 @@
 *  macOS: Homebrew formulae API (bottle tar.gz, SHA-256 필수 + _verify_ffmpeg 실측 판정)
 
 [전수조사 정리 2026-09-04] 구 설계(Hitomi Downloader style 전체 구성요소
-자동수급: yt-dlp 휠 / bgutil 플러그인 / pot-pack / streamlink-pack)는
+자동수급: yt-dlp 휠 / bgutil 플러그인 / pot-pack / 라이브팩)는
 main.py에 연결된 적이 없는 죽은 코드였음 — 실제 의존 흐름은
-venv pip(yt-dlp / streamlink) + pot_provider(bgutil 서버 빌드) + 본 모듈.
+앱 전용 캐시(yt-dlp 바이너리 / ffmpeg) + pot_provider(bgutil 서버 빌드) + 본 모듈.
 """
 import hashlib
 import json
@@ -41,6 +41,7 @@ from chzzktube.core import (
     EXECUTABLE_FILE_MODE,
 )
 from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
+from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.ui import ProgressBar
 
 _UA = "ChzzkTube-Components/1.0"
@@ -881,7 +882,11 @@ def _wire_ffmpeg_path(bin_dir):
         pass
 
 def _verify_ffmpeg(ffmpeg_path, env_extra=None):
-    """ffmpeg 실행 가능 여부 검증 (dyld 에러 원인 보존)."""
+    """ffmpeg 실행 가능 여부 검증 (dyld 에러 원인 보존).
+
+    [F12] 실행 원문(`$ ffmpeg -version` + 출력/오류)은 log_f12_cli로만 발행한다 —
+    to_tui=False 강제이므로 메인 콘솔은 오염되지 않는다.
+    """
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
@@ -892,8 +897,16 @@ def _verify_ffmpeg(ffmpeg_path, env_extra=None):
             timeout=10,
             env=env,
         )
+        out = (result.stdout or b"").decode("utf-8", errors="replace")
+        err = (result.stderr or b"").decode("utf-8", errors="replace")
+        log_f12_cli(
+            f"{ffmpeg_path} -version",
+            (out + err).strip(),
+            is_error=(result.returncode != 0),
+        )
         return result.returncode == 0
-    except Exception:
+    except Exception as e:
+        log_f12_cli(f"{ffmpeg_path} -version", f"[{type(e).__name__}] {e}", is_error=True)
         return False
 
 

@@ -4,7 +4,7 @@
 - expand_targets : 재생목록/채널 URL을 개별 동영상 URL로 평탄화
 - download_target : 개별 URL을 타입별로 분기해 실제 다운로드
   chzzk(clip/vod) → 직접 HTTP 스트림, youtube VOD → yt-dlp,
-  youtube live → _download_youtube_live(ffmpeg), stream → streamlink
+  youtube live → _download_youtube_live(yt-dlp + ffmpeg 릴레이)
 
 하위 모듈:
 - utils: 공통 상수/유틸리티/에러 분류
@@ -12,7 +12,7 @@
 - flatten: 재생목록/채널 평탄화
 - chzzk: 치지직 VOD/클립/라이브 다운로드
 - youtube_vod: 유튜브 VOD 다운로드 (yt-dlp)
-- youtube_live: 유튜브 라이브/스트림링크 다운로드
+- youtube_live: 유튜브 라이브 다운로드
 - dispatch: 메인 디스패처 (download_target)
 """
 
@@ -57,8 +57,8 @@ from .youtube_vod import (
 import yt_dlp
 import chzzktube.core.raw_log as raw_log
 
-# 유튜브 라이브/스트림
-from .youtube_live import _download_youtube_live, _download_streamlink
+# 유튜브 라이브
+from .youtube_live import _download_youtube_live
 
 # 메인 디스패처
 from .dispatch import download_target
@@ -104,9 +104,8 @@ __all__ = [
     "_emit_vod_success",
     "_max_requested_height",
     "_needs_pot_promotion",
-    # 유튜브 라이브/스트림
+    # 유튜브 라이브
     "_download_youtube_live",
-    "_download_streamlink",
     # 디스패처
     "download_target",
 ]

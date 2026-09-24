@@ -1,16 +1,14 @@
-##### updater.py - pip component (yt-dlp / streamlink) version check and update helper
+##### updater.py - pip component (yt-dlp) version check and update helper
 """PyPI metadata query for latest versions, optional pip upgrade on demand.
 *  Version check: PyPI JSON API (lightweight, no pip needed)
 *  Upgrade:
     - Stable channel: python -m pip install -U <pkg>
     - Nightly channel: python -m pip install -U yt-dlp-nightly (yt-dlp only)
 *  frozen(PyInstaller) builds — pip이 없으므로 직접 다운로드:
-    - yt-dlp: PyPI/GitHub release에서 yt-dlp.exe 다운로드 후 교체
-    - streamlink: PyPI에서 whl 다운로드 후 importlib로 설치
+    - yt-dlp: GitHub release에서 yt-dlp 바이너리 직접 다운로드 후 교체 (yt_dlp_binary 위임)
     - 업데이트 실패 시 기존 버전 유지, 다음 실행 시 재시도
 *  네트워크 의존은 이 앱에서 본질적이다 (웹 미디어 추출기). """
 import concurrent.futures
-import importlib.metadata as im
 import json
 import os
 import shutil
@@ -23,22 +21,32 @@ from chzzktube.infra.platform import spawn_kwargs
 
 # (log_label, pypi_name, pypi_nightly) — log_label is shown in the DEPS PLATFORM column
 # pypi_nightly: Nightly 채널 사용 시 설치할 PyPI 패키지명 (None이면 Stable only)
+# [v3.10.0] streamlink 제거 — 라이브 녹화는 yt-dlp 단일 경로로 통합.
 # [전환] bgutil-ytdlp-pot-provider 제외: 플러그인(pip)에서 독립 Node 서버로
 # 이동 — 버전 관리 주체는 pot_provider(latest_server_ver)가 담당.
-PACKAGES = [("ytdlp", "yt-dlp", "yt-dlp-nightly"), ("streamlink", "streamlink", None)]
+PACKAGES = [("ytdlp", "yt-dlp", "yt-dlp-nightly")]
 # [주의] socket.setdefaulttimeout() 절대 사용 금지 — 프로세스 전체의 소켓 기본
 # 타임아웃을 오염시켜 yt-dlp 미디어 스트림 재시도 루프(0.0% 스톨)를 유발.
 # DNS hang 방어는 아래 latest_version의 ThreadPoolExecutor + urlopen(timeout)으로 충분.
 
 _PYPI_API = "https://pypi.org/pypi/{pkg}/json"
-_NIGHTLY_API = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp{_ext}"
 
 def installed_version(pypi_name):
-    """Installed version string from .pylib overlay only, or None if not installed.
+    """Installed version string from binary (yt-dlp) or .pylib overlay (others).
 
-    SSOT: 오직 .pylib 내부 dist-info만 스캔하여 버전 판정.
+    SSOT: yt-dlp는 yt_dlp_binary.yt_dlp_version() 사용, 나머지는 .pylib 내부 dist-info만 스캔.
     .venv나 시스템 site-packages에 존재하더라도 무시한다.
     """
+    # yt-dlp는 독립 실행형 바이너리 사용
+    if pypi_name == "yt-dlp":
+        from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+        exe = yt_dlp_path()
+        if exe:
+            ver = yt_dlp_version(exe)
+            if ver:
+                return ".".join(map(str, ver))
+        return None
+
     import glob
     import os
     from chzzktube.core.config import pylib_overlay_path
@@ -47,7 +55,7 @@ def installed_version(pypi_name):
     if not os.path.isdir(pylib_root):
         return None
 
-    # 패키지명 정규화: yt-dlp -> yt_dlp, streamlink -> streamlink
+    # 패키지명 정규화: yt-dlp -> yt_dlp
     pkg_dir = pypi_name.replace("-", "_")
     dist_info_pattern = os.path.join(pylib_root, f"{pkg_dir}-*.dist-info")
 
@@ -133,52 +141,72 @@ def outdated_packages(channel="stable"):
 
 def check_deps(log_func=None):
     """모든 의존성 체크 결과 리스트 반환.
-    각 요소: (label, status, version_or_path)
-    status: 표준 status (OK / FAIL 등) — `format_log_line`의 표준 사용.
+    각 요소: (label, status, msg)
+    label: "ytdlp" | "ffmpeg" | "node" | "pot"
+    status: "OK" | "FAIL" | "SKIP"
+    msg: "vX.Y.Z at <path>" | "not installed" | "<reason>"
     log_func(msg): POT readiness 판정 근거를 raw 스택으로 반환 (단일 호출).
     """
     import os
-    import shutil
     results = []
 
-    # 1. PyPI 패키지 (yt-dlp, streamlink) — nightly 채널 설치물 인지
-    #    yt-dlp-nightly 는 dist 명이 달라 im.version("yt-dlp") 가 실패하므로
-    #    nightly 설치물로 폴백 표기 (정상 설치 판정 유지)
-    for label, pypi_name, pypi_nightly in PACKAGES:
-        ver = installed_version(pypi_name)
-        if not ver and pypi_nightly:
-            nver = installed_version(pypi_nightly)
-            if nver:
-                ver = f"{nver} (nightly)"
-        results.append((label, "OK" if ver else "FAIL", ver or "not installed"))
-
-    # 2. 외부 실행 파일 (ffmpeg, node) — [v3.8.0 격리] 앱 전용 캐시 단일 참조.
-    #    시스템 PATH(shutil.which) 탐색 철폐 — 격리 캐시 수급본만 DEPS 대상.
-    for label in ("ffmpeg", "node"):
-        path = None
-        if label == "node":
-            try:
-                import chzzktube.infra.pot_provider as pot_provider
-                path = pot_provider.node_exe()
-                maj = pot_provider.node_major_version(path)
-            except Exception:
-                path, maj = None, None
-            msg = f"v{maj}" if maj else (os.path.basename(path) if path else "not found")
+    # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로 확인
+    # yt-dlp-nightly는 dist 명이 달라 .pylib 체크가 실패하므로
+    # nightly 설치물로 폴백 표기 (정상 설치 판정 유지)
+    label = "ytdlp"
+    pypi_name = "yt-dlp"
+    pypi_nightly = "yt-dlp-nightly"
+    
+    # yt-dlp는 독립 실행형 바이너리 사용 (yt_dlp_binary 모듈)
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+    exe = yt_dlp_path()
+    if exe:
+        ver_tuple = yt_dlp_version(exe)
+        if ver_tuple:
+            ver = ".".join(map(str, ver_tuple))
         else:
-            try:
-                from chzzktube.infra.components import ffmpeg_exe
-                path = ffmpeg_exe()
-            except Exception:
-                path = None
-            msg = _ffmpeg_version(path) or "not found" if path else "not found"
-        results.append((label, "OK" if path else "FAIL", msg))
+            ver = None
+    else:
+        ver = None
+    
+    # nightly 채널 설치물 인지 (pypi overlay 체크)
+    if not ver and pypi_nightly:
+        nver = installed_version(pypi_nightly)
+        if nver:
+            ver = f"{nver} (nightly)"
+    
+    if ver:
+        results.append((label, "OK", f"{ver} at {exe}"))
+    else:
+        results.append((label, "FAIL", "not installed"))
 
-    # 3. PO token 서버 — [Lazy 2층 분리] liveness가 아니라 readiness.
+    # 2. ffmpeg — 앱 전용 캐시 단일 참조 (시스템 PATH 탐색 철폐)
+    try:
+        from chzzktube.infra.components import ffmpeg_exe
+        path = ffmpeg_exe()
+    except Exception:
+        path = None
+    if path:
+        ver_str = _ffmpeg_version(path) or "unknown"
+        results.append(("ffmpeg", "OK", f"{ver_str} at {path}"))
+    else:
+        results.append(("ffmpeg", "FAIL", "not installed"))
+
+    # 3. node — 앱 전용 포터블 런타임 단일 참조
+    try:
+        import chzzktube.infra.pot_provider as pot_provider
+        path = pot_provider.node_exe()
+        maj = pot_provider.node_major_version(path)
+    except Exception:
+        path, maj = None, None
+    if path and maj:
+        results.append(("node", "OK", f"v{maj} at {path}"))
+    else:
+        results.append(("node", "FAIL", "not installed"))
+
+    # 4. PO token 서버 — liveness가 아니라 readiness 판정
     # 바이너리+빌드 산출물의 디스크 준비만 판정 (RAM 0MB·포트 미점유).
-    # Popen은 분석 게이트(_ensure_pot_for_info)까지 지연. FAIL 오경보 금지:
     # 미기동 정상 상태는 SKIP standby, 산출물 미비는 SKIP + 사유.
-    # [단일 호출] log_func 콜백을 내부 pot_readiness에 직접 전달 — 판정+로그
-    # 1회로 해결 (별도 _pot_readiness 호출 시 standby 2중 출력 결함).
     try:
         from chzzktube.infra.po_client import server_ping
         from chzzktube.infra.pot_server import pot_readiness
@@ -189,7 +217,7 @@ def check_deps(log_func=None):
             if ready:
                 results.append(("pot", "SKIP", "standby"))
             else:
-                results.append(("pot", "SKIP", reason))
+                results.append(("pot", "SKIP", reason or "not ready"))
     except Exception:
         results.append(("pot", "SKIP", "unknown"))
 
@@ -206,20 +234,25 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
     import chzzktube.infra.components as components
     import chzzktube.infra.pot_provider as pot_provider
     import subprocess
-    import sys
+    from chzzktube.infra.platform import spawn_kwargs
 
     missing = []
 
-    # 1. Python packages (yt-dlp, streamlink) — .pylib overlay에서 import 시도
-    try:
-        import yt_dlp
-    except ImportError:
-        missing.append("yt-dlp (not importable from .pylib)")
-
-    try:
-        import streamlink
-    except ImportError:
-        missing.append("streamlink (not importable from .pylib)")
+    # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로에서 실행 확인
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
+    exe = yt_dlp_path()
+    if not exe:
+        missing.append("yt-dlp (not found in app binary path)")
+    else:
+        # 실행 테스트
+        result = subprocess.run(
+            [exe, "--version"],
+            capture_output=True,
+            timeout=5,
+            **spawn_kwargs(),
+        )
+        if result.returncode != 0:
+            missing.append("yt-dlp (execution failed)")
 
     # 2. ffmpeg — 격리 캐시에서 실행 가능 확인
     try:
@@ -277,17 +310,16 @@ def _cli_base(label):
     """라벨 → 실제 CLI 명령 배열 (없으면 None). F12 상세 로그용 원문 실행.
 
     [v3.8.0 격리] 실행체 해석은 앱 전용 저장소 단일 경로로 일원화:
-    - ytdlp: dev/frozen 공통 — 앱이 실제로 사용하는 인터프리터 + .pylib
-      오버레이(항상 sys.path 선두)를 타는 `python -m yt_dlp`. 시스템 PATH의
-      yt-dlp는 절대 참조하지 않는다.
+    - ytdlp: dev/frozen 공통 — OS 표준 경로(%LOCALAPPDATA%/ChzzkTube/bin/ 등)에
+      설치된 yt-dlp 바이너리 직접 실행. 시스템 PATH의 yt-dlp는 절대 참조하지 않는다.
     - ffmpeg/node/npm: components.ffmpeg_exe / pot_provider.node_exe·npm_exe
       (writable_base 격리 캐시) 단일 참조 — shutil.which 폴백 철폐.
     """
     if label == "ytdlp":
-        # dev/frozen 공통: 앱 런타임 인터프리터로 오버레이 모듈 실행 (PATH 무관)
-        return [sys.executable, "-m", "yt_dlp"]
-    if label == "streamlink":
-        return [sys.executable, "-m", "streamlink"]
+        # dev/frozen 공통: OS 표준 경로에 설치된 yt-dlp 바이너리 직접 실행
+        from chzzktube.infra.yt_dlp_binary import yt_dlp_path
+        p = yt_dlp_path()
+        return [p] if p else None
     if label == "ffmpeg":
         try:
             from chzzktube.infra.components import ffmpeg_exe
@@ -454,49 +486,20 @@ def _extract_from_whl(whl_path, dest_dir):
         return False
 
 def _frozen_upgrade_ytdlp(channel="stable"):
-    """yt-dlp 직접 다운로드 → 프로젝트 오버레이(.pylib/)에 교체.
+    """yt-dlp 업그레이드: yt_dlp_binary.upgrade_yt_dlp()에 위임.
 
     dev/frozen 공통: venv(site-packages, uv 소유)는 절대 건드리지 않는다.
-    Stable: PyPI release whl에서 yt-dlp 라이브러리 전체(yt_dlp/ 패키지 +
-    yt_dlp-*.dist-info)를 오버레이에 해제 — 오버레이가 항상 우선한다.
-    Nightly: GitHub nightly-builds release에서 yt-dlp 실행파일 다운로드
-    → 오버레이 루트에 yt-dlp{.exe} 저장 (frozen에서 _cli_base가 PATH 찾기).
+    yt-dlp 바이너리는 OS 표준 경로(%LOCALAPPDATA%/ChzzkTube/bin/ 등)에 직접 교체.
     """
-    suffix = _exe_suffix()
-    if channel == "nightly":
-        url = _NIGHTLY_API.format(_ext=suffix)
-        overlay = _overlay_root()
-        if not overlay:
-            return 1, "overlay dir unavailable"
-        dest = os.path.join(overlay, f"yt-dlp{suffix}")
-        if _download_to(url, dest):
-            return 0, f"updated to {channel} (overlay)"
-        return 1, "download failed"
-
-    url = _get_pypi_whl_url("yt-dlp")
-    if not url:
-        return 1, "No whl found on PyPI"
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            whl_path = os.path.join(tmp, "yt-dlp.whl")
-            if not _download_to(url, whl_path):
-                return 1, "whl download failed"
-            overlay = _overlay_root()
-            if not overlay:
-                return 1, "overlay dir unavailable"
-            if _extract_pylib_whl(whl_path, overlay, "yt_dlp-"):
-                _refresh_overlay_sys_path()
-                return 0, f"updated to {channel} (overlay)"
-        return 1, "whl extract failed"
-    except Exception as e:
-        return 1, f"whl extract failed: {e}"
+    from chzzktube.infra.yt_dlp_binary import upgrade_yt_dlp
+    return upgrade_yt_dlp(channel)
 
 def _extract_pylib_whl(whl_path, pylib_root, prefix):
     """프로젝트 오버레이(.pylib/)에 whl 해제 + 구 dist-info 정리 (순수·테스트 가능).
 
     venv(site-packages, uv 소유)는 절대 건드리지 않는다. 해제 후
     sys.path 선두(.pylib/)의 오버레이 복사가 venv보다 항상 우선한다.
-    prefix: "streamlink-" 또는 "yt_dlp-" — 구 dist-info(glob) 스캔용.
+    prefix: "yt_dlp-" — 구 dist-info(glob) 스캔용.
     """
     import zipfile
     keep_dist = None
@@ -520,11 +523,6 @@ def _extract_pylib_whl(whl_path, pylib_root, prefix):
         return True
     except Exception:
         return False
-
-
-def _extract_streamlink_whl(whl_path, site_root):
-    """[레거시 shim] 구 호출부 호환 — 새 코드는 _extract_pylib_whl 사용."""
-    return _extract_pylib_whl(whl_path, site_root, "streamlink-")
 
 
 def _overlay_root():
@@ -555,47 +553,18 @@ def _refresh_overlay_sys_path():
         pass
 
 
-def _frozen_upgrade_streamlink():
-    """streamlink 직접 다운로드 → 프로젝트 오버레이(.pylib/)에 교체.
 
-    dev/frozen 공통: venv(site-packages, uv 소유)는 절대 건드리지 않는다.
-    해제 후 sys.path 선두의 오버레이 복사가 항상 우선한다.
-    """
-    whl_url = _get_pypi_whl_url("streamlink")
-    if not whl_url:
-        return 1, "No whl found on PyPI"
-
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            whl_path = os.path.join(tmp, "streamlink.whl")
-            if not _download_to(whl_url, whl_path):
-                return 1, "whl download failed"
-            overlay = _overlay_root()
-            if not overlay:
-                return 1, "overlay dir unavailable"
-            if _extract_pylib_whl(whl_path, overlay, "streamlink-"):
-                _refresh_overlay_sys_path()
-                return 0, "updated to latest (overlay)"
-        return 1, "whl extract failed"
-    except Exception as e:
-        return 1, f"streamlink update failed: {e}"
 
 def upgrade_packages(packages, channel="stable"):
     """직접 다운로드 방식으로 패키지 업데이트 (Dev/Frozen 통합).
 
-    [v3.4.0 변경] 해제 대상은 프로젝트 오버레이(.pylib/) — venv(site-packages,
+    [v3.4.0 변경] 해제 대상은 프로젝트 오버레이(.pylib/) -- venv(site-packages,
     uv 소유)는 절대 건드리지 않는다. 요약 문자열에 "(overlay)" 표기.
     이유: 포터블 빌드와 Dev에서 동일한 코드 경로를 타야 디버깅이 가능.
     pip install은 빌드 시에만 사용 (PyInstaller 번들 시점).
 
     Returns (returncode, output tail). Worker thread only.
     """
-    is_frozen = getattr(sys, "frozen", False)
-
-    # yt-dlp: Dev/Frozen 통합 - 직접 다운로드
+    # yt-dlp: Dev/Frozen 통합 - 직접 다운로드 (yt_dlp_binary 위임)
     if "yt-dlp" in packages:
         return _frozen_upgrade_ytdlp(channel)
-
-    # streamlink: Dev/Frozen 통합 - whl 직접 다운로드
-    if "streamlink" in packages:
-        return _frozen_upgrade_streamlink()

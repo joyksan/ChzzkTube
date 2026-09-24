@@ -50,8 +50,11 @@ def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
     except urllib.error.URLError as e:
         if isinstance(getattr(e, "reason", None), ConnectionRefusedError):
             return "down", ""
-    except Exception:
-        pass
+    except Exception as e:
+        # [Silent fallback 제거] 예외를 삼키지 않고 로그 후 down 반환
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"probe_server error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
+        return "down", f"error: {type(e).__name__}"
 
     # [폴백] HTTPError/URLError 외 (예: OS 레벨 연결 거부 랩핑) 소켓 직접 확인
     try:
@@ -83,8 +86,10 @@ def fetch_po_token(video_id, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5):
         visitor_data = data.get("visitorData") or ""
         if token:
             return token, visitor_data
-    except Exception:
-        pass
+    except Exception as e:
+        # [Silent fallback 제거] 예외를 삼키지 않고 로그
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"fetch_po_token error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return None, None
 
 
