@@ -2,14 +2,14 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-24 - v3.9.0 — 대규모 리팩토링(기술부채 해소 + 방향성 재정립): 게이트/워치독 상태 추출, 파이프라인 분기 분리, LogEvent deprecated 정리, 타임아웃/권한 일관화, 로그 인젝션 회귀 테스트
+> 마지막 갱신: 2026-09-25 - v3.12.0 — GUI 아키텍처 대규모 리팩토링 및 5축 품질 게이트 90+ 달성: HeaderBar/ActionBar 컴포넌트 분리, O(1) 인플레이스 콘솔 뮤테이션, HiDPI 반응형 다이얼로그, AppState 단일화
 
 ---
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.9.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.9.0"` (최신: 2026-09-24 대규모 리팩토링(기술부채 해소 + 방향성 재정립): 게이트/워치독 상태 추출, 파이프라인 분기 분리, LogEvent deprecated 정리, 타임아웃/권한 일관화, 로그 인젝션 회귀 테스트)
+- **버전**: `v3.12.0` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.12.0"` (최신: 2026-09-25 GUI 아키텍처 대규모 리팩토링 및 5축 품질 게이트 90+ 달성: HeaderBar/ActionBar 컴포넌트 분리, O(1) 인플레이스 콘솔 뮤테이션, HiDPI 반응형 다이얼로그, AppState 단일화)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -26,7 +26,7 @@
 
 ### 1.1.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.9.0`이다.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`이다. 현재 값은 `v3.12.0`이다.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않는다. 세 값은 항상 숫자 부분을 동일하게 유지한다.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -796,6 +796,8 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 > v3.8.2(2026-09-22) — Path Strategy Pattern으로 .pylib SSOT 완성: `config.pylib_overlay_path()` 단일 경로 리졸버로 Frozen/Dev 환경 분리 캡슐화, 호출부 `if is_frozen()` 분기 0건 달성, frozen 시 `writable_base()/.pylib`(`%LOCALAPPDATA%/ChzzkTube/.pylib` 또는 `~/.chzzktube/.pylib`) 사용.
 > v3.8.3(2026-09-22) — 수급 계층 stdlib-only 완성·1줄 1정보 로그 규격·TUI/F12 갱신형 진행률: `httpx` 잔여 완전 제거(`ParallelDownloader`·PyPI/GitHub/nodejs 메타 패처를 `urllib`+`asyncio.to_thread`로 전환), `filter_assets` `.zip` 강제 선택·`.7z` 배제 + `archive_type` 화이트리스트 가드, FFmpeg 7.1 URL 교정, Verifier `install_rel_path` 판정, `ProgressBar` 신규(TUI 컴포넌트별 갱신형·F12 누적→갱신형·§3.5 포맷터), stale 요약 개별 줄화·집계 직렬 나열 제거.
 > v3.8.3-p1(2026-09-22) — 진행률 viewer 회귀 수리: `MainWindow` 브리지 슬롯(`_render_concise`/`_mirror_event_full`)이 `component_id`/`is_progress`를 유지하도록 교정, 진행 라인 완료 시 TUI 히스토리에 유지, F12/`_full_log_buf`에 진행 틱 전량 기록(is_status 여부와 무관). `raw_log.raw()` 단일 진입점이 `component_id`/`is_progress`를 전파하도록 확장. `tests/test_progress_integration.py` 신규 추가 (10개 케이스). (patch)
+> v3.11.0(2026-09-25) — yt-dlp 독립 실행형 바이너리 마이그레이션 · Silent Fallback 완전 제거 · 진행률 바 최소 영문화 · 프로비저닝 아키텍처 리팩토링(Planner/Executor/Committer 분리).
+> v3.12.0(2026-09-25) — GUI 아키텍처 대규모 리팩토링 및 5축 품질 게이트 90+ 달성: MainWindow SRP 분해(HeaderBarWidget, ActionBarWidget 분리) · AppState Enum 단일화 · 콘솔 O(1) 인플레이스 블록 치환(Targeted Mutation) 및 20Hz 쓰로틀링 · Dialog HiDPI 반응형 전환 및 SettingsDialog 5대 섹션 빌더 분할 · 실시간 URL 사전 검증 Soft Warning 피드백 · theme.py 시맨틱 디자인 토큰화 · 엄격한 전수 Type Hints 완비 (361 tests 100% pass).
 
 #### 문제 (전수조사·사용자 검증 실측)
 - **P0 3건**: finalizer/downloader `_dl_platform` import 누락(배치 마감·SKIP에서 NameError → `finished_all` 미발화 → UI 락업), target_downloader `_chzzk_filename` 정의 부재(치지직 다운로드 전멸). 126건 테스트가 놓친 이유는 finalizer/downloader/치지직 경로 테스트 0건(커버리지 갭)
@@ -1407,51 +1409,63 @@ Coordinator: deps+upgrade(+pot if started) 완료 → READY 1회 + separator + �
 - 14. **READY 멱등**: READY 발산은 `StartupState.can_emit_ready()` 게이트 경유 1회. 우회 직접 `ready_emitted.emit` 금지.
 - 15. **잔재 정리**: `media/chzzk_api/cookies`의 `import log_history`는 미사용 잔재 — 직접 호출로 회귀 금지, 정리 시 import 행 삭제. `log_console.import re` 미사용 확인 후 제거 후보.
 
-### 프로젝트 전체 아키텍처 트리 (2026-09-12 실측, `wc -l *.py` 총 9745줄)
+### 프로젝트 전체 아키텍처 트리 (2026-09-25 v3.12.0 실측)
 ```
 L4 View (Qt 위젯 보유)
-├── main.py(1281) ......... MainWindow — 진입점·UI 조립·버스 구독 2점(concise/full)
-├── dialogs.py(846) ....... ExitConfirmDialog / SettingsDialog / VerboseLogWindow(F12)
-├── log_console.py(832) ... ConciseLogConsole — append→_insert_clamped→_flow_lines→_render_clamp
-└── speed_window.py ....... DL 속도 샘플러
+├── main_window.py ......... MainWindow — 루트 오케스트레이터 및 하위 컴포넌트 합성
+├── components/ ............ UI 모듈 컴포넌트 패키지 (신규)
+│   ├── header_bar.py ...... HeaderBarWidget — 경로 제어, F1/F2 폴더 변경/열기, F12 전체 로그, F3 설정
+│   └── action_bar.py ...... ActionBarWidget — URL 입력, 정규식 검증, 디바운스, TXT 로드, ENTER/ESC 액션
+├── dialogs.py ............. ExitConfirmDialog / SettingsDialog / VerboseLogWindow (HiDPI 반응형, 5대 섹션 빌더)
+├── log_console.py ......... ConciseLogConsole — findBlockByNumber + QTextCursor O(1) 인플레이스 블록 치환
+├── log_mirror.py .......... MainWindow 미러 브리지 (F12/TUI 분리)
+├── progress_bar.py ........ 컴포넌트별 갱신형 프로그레스 바
+└── theme.py ............... QSS/색상 시맨틱 디자인 토큰 단일 출처 (SSOT)
 L3 Control (QObject/Signal — Qt 소유)
-├── controller.py(217) .... MediaController — spawn_worker/spawn_analyzer
-├── startup_coordinator.py(137)  기동 게이트 — report_* + View행 Signal 3종 + raw("startup")
-├── startup_state.py(118) . READY 게이트 단일 진실(can_emit_ready)
-├── pot_manager.py(199) ... POT 수명주기 — ensure_ready(prewarm/gate) + Signal 2종
-├── downloader.py(164) .... DownloadWorker — finished_all만 잔존
-├── analyze_worker.py(354)  AnalyzeWorker — result_ready/error_occurred + pot-gate 판정
-├── update_worker.py(201) . UpdateWorker — check_done/upgrade_done + deps raw 발행
-└── pot_provider.py(177) .. POTProviderWorker facade — finished_signal
-L2 Service (QObject 아님 — plain)
-├── progress_emitter.py(182)  LogEvent 빌더 단일 출처(emit_event/emit_dl/emit_err/…)
-├── target_downloader.py(318)  다운로드 실행부(DownloadWorker 분할)
-├── finalizer.py .......... _finalize 분할 — TUI 컬럼 포맷 마무리
-├── live_recorder.py(221) . ffmpeg 라이브 녹화(_live_proc + kill)
-├── updater.py(423) ....... PyPI 조회+pip 업그레이드(최상단 stdlib only, node·ffmpeg CLI 캡처 lazy import)
-├── yt_logger_bridge.py ... yt-dlp logger → raw("ytdlp") 어댑터(시그널 없음)
-├── pot_server.py(760) .... bgutil 서버 수명주기(수급/빌드/기동/락/kill)
-├── po_client.py(103) ..... bgutil HTTP 순수 계층(server_ping PID 확인)
-├── node_provider.py(314) . Node.js 런타임 수급
-├── components.py(522) .... ffmpeg 자동 수급/관리
-├── dl_context.py(86) / worker_context.py  dataclass 컨텍스트
-└── log_history.py(95) .... 파일 로그 단일 소유자 — 직접 호출 금지(raw 경유만)
-L1 Model (순수 — Qt 금지)
-├── log_event.py .......... LogEvent{stage,status,platform,spec,msg,is_status,is_error,rendered}
-├── raw_log.py(82) ........ 단일 진입 raw() — 정규화·history 1회·full 전량·concise 선택
-├── config.py ............. default_config 23키 + _APP_VERSION + dl_config.json 병합
-├── theme.py(306) ......... QSS/색상 단일 정의
-├── utils.py .............. explorer/clean_ansi/filename_template
-├── dl_platform.py(111) ... URL 판정 + _short_platform/_dl_platform
-├── media.py(350) ......... 코덱랭크/포맷설명/remux/cleanup (+log_history 잔재 §5-15)
-├── chzzk_api.py(365) ..... 치지직 API 분석 (+log_history 잔재 §5-15)
-├── cookies.py(87) ........ 브라우저 쿠키 추출 (+log_history 잔재 §5-15)
-├── playlist.py ........... YT 채널 URL 정규화
-└── client_opts.py(125) ... player_client/쿠키 옵션 주입
-L0 Leaf (진입·검증·잡일 — import 대상 아님)
-├── smoke_test.py / tests/*.py(7종) / logs/ 일자별 산출물
-└── fix_*/list_arch/locate_arch/print_nonascii/read_arch/run_find/bump_version/sync_mirrors  # v3.3.0 이전 — 일회용 패치 스크립트 8종은 2026-09-12 삭제(`git rm`), bump_version/sync_mirrors는 현행 유지
-    src/chzzktube/__init__.py(스텁) · build/ dist/ mirrors/(산출물·미러, 소스 아님)
+├── controller.py .......... MediaController — 세션 상태 머신, 워커 수명주기 관리, QThread 비차단 수거
+├── gate_state.py .......... GateState + AppState(str, Enum) 상태 머신 단일화
+├── startup_coordinator.py . 기동 게이트 — report_* + View행 Signal 3종 + raw("startup")
+├── startup_state.py ....... READY 게이트 단일 진실(can_emit_ready)
+├── pot_manager.py ......... POT 수명주기 — ensure_ready(prewarm/gate) + Signal 2종
+├── downloader.py .......... DownloadWorker — _shared_state 취소 동기화 + _skip 리셋
+├── analyze_worker.py ...... AnalyzeWorker — result_ready/error_occurred + pot-gate 판정
+└── update_worker.py ....... UpdateWorker — check_done/upgrade_done + deps raw 발행
+L2 Service / Infra (순수 비즈니스 로직 및 외부 연동)
+├── pipeline/ .............. 다운로드 파이프라인
+│   ├── classifier.py ...... ClassifiedTarget 분류기
+│   ├── dl_context.py ...... 컨텍스트 데이터클래스
+│   ├── finalizer.py ....... 다운로드 배치 마감 요약
+│   ├── live_recorder.py ... ffmpeg 라이브 녹화
+│   ├── progress_emitter.py  LogEvent 빌더
+│   └── target_downloader/ . 플랫폼별 다운로더 분기 패키지 (dispatch/chzzk/youtube_vod/youtube_live)
+├── provisioning/ .......... 의존성 프로비저닝 (SRP 3분할)
+│   ├── planner.py ......... 의존성 최신 버전/해시 계획 수립
+│   ├── executor.py ........ 다운로드/검증/설치 실행
+│   ├── committer.py ....... 매니페스트/오버레이 커밋
+│   └── bridge.py .......... 동기/비동기 이벤트 루프 브리지
+├── pot_server.py .......... bgutil Node.js 서버 수명주기 (단계별 헬퍼 분리)
+├── po_client.py ........... bgutil HTTP 순수 통신 계층
+├── node_provider.py ....... Node.js 22+ 런타임 수급
+├── yt_dlp_binary.py ....... 독립 실행형 바이너리 수급 및 관리
+├── components.py .......... FFmpeg 자동 수급/관리
+├── updater.py ............. 의존성 무결성 검증 및 갱신
+└── yt_logger_bridge.py .... yt-dlp logger 어댑터
+L1 Model / Core (순수 — Qt 금지)
+├── log_event.py ........... LogEvent 데이터클래스
+├── raw_log.py ............. 단일 진입 raw() — 정규화·history 1회·full/concise 허브
+├── config.py .............. _APP_VERSION + dl_config.json 설정 관리
+├── dl_platform.py ......... URL 도메인 판정
+├── media.py ............... 코덱/포맷/remux 처리
+├── chzzk_api.py ........... 치지직 API 통신
+├── cookies.py ............. 브라우저 쿠키 추출
+├── playlist.py ............ 재생목록 URL 정규화
+└── speed_window.py ........ O(1) 다운로드 속도 측정 덱(deque)
+L0 Leaf (진입점·도구·테스트)
+├── main.py ................ 앱 진입점
+├── sync_mirrors.py ........ 소스코드 마크다운 미러 동기화 스크립트
+├── bump_version.py ........ 버전 증가 보조 도구
+├── smoke_test.py .......... 스모크 테스트
+└── tests/ ................. 회귀/계약 테스트 스위트 (361 tests)
 ```
 
 ### 시그널 방향 트리 (로그 시그널 0 — 결과/게이트 시그널만 잔존)

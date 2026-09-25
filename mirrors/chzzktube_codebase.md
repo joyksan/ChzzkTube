@@ -1018,6 +1018,9 @@ MIRROR_MODULES = [
     "chzzktube.ui.log_mirror",
     "chzzktube.ui.main_window",
     "chzzktube.ui.theme",
+    # chzzktube.ui.components
+    "chzzktube.ui.components.action_bar",
+    "chzzktube.ui.components.header_bar",
     # chzzktube.control
     "chzzktube.control.controller",
     "chzzktube.control.gate_state",
@@ -1072,9 +1075,12 @@ MIRROR_MODULES = [
     "chzzktube.infra.updater",
     # chzzktube.infra.provisioning (flat basename 충돌 회피: provisioning_<name>.md)
     "chzzktube.infra.provisioning.bridge",
+    "chzzktube.infra.provisioning.committer",
     "chzzktube.infra.provisioning.downloader",
+    "chzzktube.infra.provisioning.executor",
     "chzzktube.infra.provisioning.manager",
     "chzzktube.infra.provisioning.manifest",
+    "chzzktube.infra.provisioning.planner",
     "chzzktube.infra.provisioning.resolver",
     "chzzktube.infra.provisioning.verifier",
 ]
@@ -1101,6 +1107,8 @@ def sync_module(name: str, dry_run: bool = False) -> int:
     basename = clean_name.split(".")[-1]
     if clean_name.startswith("chzzktube.infra.provisioning."):
         dst = MIRRORS_DIR / f"provisioning_{basename}.md"
+    elif clean_name == "chzzktube.pipeline.target_downloader.utils":
+        dst = MIRRORS_DIR / "target_downloader_utils.md"
     else:
         dst = MIRRORS_DIR / f"{basename}.md"
 
@@ -5223,6 +5231,393 @@ BTN_GRID_QSS = BTN_NEUTRAL_QSS          # 쿠키 소스 그리드
 BTN_CLOSE_QSS = BTN_NEUTRAL_QSS         # 다이얼로그 닫기
 ```
 
+## File: chzzktube/ui/components/__init__.py
+
+```python
+"""UI 컴포넌트 패키지."""
+from chzzktube.ui.components.action_bar import ActionBarWidget
+from chzzktube.ui.components.header_bar import HeaderBarWidget
+
+__all__ = ["ActionBarWidget", "HeaderBarWidget"]
+
+```
+
+## File: chzzktube/ui/components/action_bar.py
+
+```python
+"""URL 입력 및 동작 제어 위젯 (ActionBarWidget).
+
+MainWindow Layer 2(URL 입력, 프롬프트, 디바운스 타이머, TXT 로드, ENTER/ESC 액션)를
+단일 책임 위젯으로 캡슐화한다.
+"""
+import os
+import re
+from typing import Optional
+
+from PySide6.QtCore import Qt, Signal, QTimer, QEvent
+from PySide6.QtWidgets import (
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QFileDialog,
+    QWidget,
+)
+
+from chzzktube.ui import theme
+from chzzktube.control.gate_state import AppState
+
+_ANALYZE_DEBOUNCE_MS = 300
+_BULK_INPUT_DELAY_MS = 600
+
+
+def _create_tui_tag(text: str, tooltip: str, slot=None) -> QPushButton:
+    """TUI 스타일 태그 버튼 생성 헬퍼."""
+    b = QPushButton(text)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if slot:
+        b.clicked.connect(slot)
+    b.setToolTip(tooltip)
+    b.setProperty("class", "tui-tag")
+    b.style().unpolish(b)
+    b.style().polish(b)
+    return b
+
+
+def _create_tui_sep() -> QLabel:
+    """힌트 버튼 사이 딤 '│' 구분자."""
+    sep = QLabel("│")
+    sep.setStyleSheet(
+        f"color: {theme.FG_DIM}; border: none; background: transparent; padding: 0px;"
+    )
+    return sep
+
+
+class ActionBarWidget(QGroupBox):
+    """URL 입력, 디바운스 분석 트리거, 다운로드 및 취소 제어 바."""
+
+    url_changed = Signal(str)
+    analyze_triggered = Signal(str, bool)  # (url, is_bulk)
+    download_requested = Signal()
+    esc_requested = Signal()
+    load_txt_requested = Signal(str)
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__("", parent)
+        self.setObjectName("input_group")
+        self.setProperty("class", "tui-panel")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        self._last_input_len = 0
+        self._analyze_timer = QTimer(self)
+        self._analyze_timer.setSingleShot(True)
+        self._analyze_timer.timeout.connect(self._on_debounce_timeout)
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        ilay = QHBoxLayout(self)
+        ilay.setContentsMargins(0, 0, 0, 0)
+        ilay.setSpacing(6)
+
+        # 프롬프트 `>` 기호
+        self.prompt_label = QLabel(">")
+        self.prompt_label.setStyleSheet(
+            f"color: {theme.ACCENT}; font-weight: bold; border: none; background: transparent; padding: 0px;"
+        )
+        ilay.addWidget(self.prompt_label)
+
+        # URL 입력창
+        self.url_input = QLineEdit()
+        self.url_input.setObjectName("url_input")
+        self.url_input.setPlaceholderText("URL, playlist, or channel URL...")
+        self.url_input.setClearButtonEnabled(False)
+        self.url_input.installEventFilter(self)
+        self.url_input.textChanged.connect(self._on_text_changed)
+        self.url_input.setDragEnabled(True)
+        self.url_input.acceptDrops()
+        self.url_input.dropEvent = lambda e: self._on_url_drop(e.mimeData())
+        self.url_input.returnPressed.connect(self.download_requested.emit)
+        ilay.addWidget(self.url_input, 1)
+
+        # 버튼들
+        self.btn_txt = _create_tui_tag(
+            "[ F4: Load .txt ]",
+            "Load URL list from TXT (F4)",
+            self._on_pick_txt,
+        )
+        ilay.addWidget(self.btn_txt)
+        ilay.addWidget(_create_tui_sep())
+
+        self.btn_esc = _create_tui_tag(
+            "[ ESC: Clear ]",
+            "Clear input (Esc) — abort when running",
+            self.esc_requested.emit,
+        )
+        ilay.addWidget(self.btn_esc)
+        ilay.addWidget(_create_tui_sep())
+
+        self.btn_enter = _create_tui_tag(
+            "[ ENTER: Start ]",
+            "Start download (Enter)",
+            self.download_requested.emit,
+        )
+        ilay.addWidget(self.btn_enter)
+
+    def eventFilter(self, obj, event):
+        if (
+            obj is self.url_input
+            and event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Escape
+        ):
+            self.esc_requested.emit()
+            return True
+        return super().eventFilter(obj, event)
+
+    def text(self) -> str:
+        return self.url_input.text()
+
+    def setText(self, text: str) -> None:
+        self.url_input.setText(text)
+
+    def clear(self) -> None:
+        self.url_input.clear()
+
+    def _set_validation_style(self, status: Optional[str]) -> None:
+        """입력값 유효성에 따른 시각적 피드백 (Soft Warning / Normal)."""
+        if status == "invalid":
+            self.url_input.setStyleSheet(f"border-bottom: 2px solid {theme.WARN};")
+        elif status == "valid":
+            self.url_input.setStyleSheet(f"border-bottom: 1px solid {theme.ACCENT};")
+        else:
+            self.url_input.setStyleSheet("")
+
+    def _on_text_changed(self, text: str) -> None:
+        clean = text.strip()
+        self.url_changed.emit(clean)
+        self._analyze_timer.stop()
+
+        if not clean:
+            self._last_input_len = 0
+            self._set_validation_style(None)
+            return
+
+        prev_len = self._last_input_len
+        self._last_input_len = len(clean)
+        is_bulk = (len(clean) - prev_len) > 1
+
+        is_url = bool(re.match(r"^(https?://|www\.)\S+", clean)) or clean.lower().endswith(".txt")
+        is_partial = "://" in clean or bool(re.search(r"\S\.\S", clean))
+
+        if is_url:
+            self._set_validation_style("valid")
+            delay = _BULK_INPUT_DELAY_MS if is_bulk else _ANALYZE_DEBOUNCE_MS
+            self._analyze_timer.start(delay)
+        elif is_partial:
+            self._set_validation_style("partial")
+            self._analyze_timer.start(_ANALYZE_DEBOUNCE_MS * 2)
+        else:
+            self._set_validation_style("invalid")
+            self._analyze_timer.stop()
+
+    def _on_debounce_timeout(self) -> None:
+        text = self.url_input.text().strip()
+        if text:
+            self.analyze_triggered.emit(text, False)
+
+    def _on_pick_txt(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select TXT File",
+            "",
+            "Text Files (*.txt);;All Files (*.*)",
+        )
+        if path:
+            norm_path = os.path.normpath(path)
+            self.url_input.setText(norm_path)
+            self.load_txt_requested.emit(norm_path)
+
+    def _on_url_drop(self, mime_data) -> None:
+        """드래그앤드롭 이벤트 처리 (.txt 파일 또는 URL)."""
+        if not mime_data.hasUrls():
+            return
+        for url in mime_data.urls():
+            path = url.toLocalFile()
+            if path.lower().endswith(".txt"):
+                self.url_input.setText(os.path.normpath(path))
+                self.load_txt_requested.emit(os.path.normpath(path))
+                return
+            remote = url.toString()
+            if remote.startswith(("http://", "https://")):
+                self.url_input.setText(remote)
+                return
+
+    def update_state(self, state: str, has_deps_error: bool = False) -> None:
+        """상태 전이에 따라 버튼 라벨 및 활성화 상태 갱신."""
+        is_idle_or_picking = state in (AppState.IDLE, AppState.PICKING, "IDLE", "PICKING")
+        self.url_input.setEnabled(is_idle_or_picking)
+        self.btn_txt.setEnabled(state in (AppState.IDLE, "IDLE"))
+
+        # ESC 버튼 상태
+        if state in (AppState.STARTUP, "STARTUP"):
+            self.btn_esc.setEnabled(False)
+            self.btn_esc.setText("[ ESC: Clear ]")
+        elif state in (AppState.RUNNING, "RUNNING"):
+            self.btn_esc.setEnabled(True)
+            self.btn_esc.setText("[ ESC: Abort ]")
+        elif state in (AppState.ANALYZING, AppState.PICKING, "ANALYZING", "PICKING"):
+            self.btn_esc.setEnabled(True)
+            self.btn_esc.setText("[ ESC: Cancel ]")
+        else:
+            self.btn_esc.setEnabled(True)
+            self.btn_esc.setText("[ ESC: Clear ]")
+
+        # ENTER 버튼 상태
+        if state in (AppState.IDLE, "IDLE"):
+            self.btn_enter.setEnabled(True)
+            self.btn_enter.setText("[ ENTER: Start ]")
+        elif state in (AppState.PICKING, "PICKING"):
+            self.btn_enter.setEnabled(True)
+            self.btn_enter.setText("[ ENTER: Select ]")
+        elif state in (AppState.STARTUP, "STARTUP") and has_deps_error:
+            self.btn_enter.setEnabled(True)
+            self.btn_enter.setText("[ ENTER: Retry Setup ]")
+        else:
+            self.btn_enter.setEnabled(False)
+            self.btn_enter.setText("[ ENTER: Start ]")
+
+```
+
+## File: chzzktube/ui/components/header_bar.py
+
+```python
+"""상단 경로, 설정, 로그 제어 위젯 (HeaderBarWidget).
+
+MainWindow Layer 1을 단일 책임 위젯으로 분리하고 Qt Signal을 통해 느슨하게 결합한다.
+"""
+import os
+from typing import Optional
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QFileDialog,
+    QSizePolicy,
+    QWidget,
+)
+
+from chzzktube.ui import theme
+from chzzktube.core.utils import _open_windows_explorer
+
+
+def _create_tui_tag(text: str, tooltip: str, slot=None) -> QPushButton:
+    """TUI 스타일 태그 버튼 생성 헬퍼."""
+    b = QPushButton(text)
+    b.setCursor(Qt.CursorShape.PointingHandCursor)
+    if slot:
+        b.clicked.connect(slot)
+    b.setToolTip(tooltip)
+    b.setProperty("class", "tui-tag")
+    b.style().unpolish(b)
+    b.style().polish(b)
+    return b
+
+
+class HeaderBarWidget(QGroupBox):
+    """다운로드 경로 표시 및 제어, 전체 로그/설정 버튼 그룹."""
+
+    path_changed = Signal(str)
+    change_folder_requested = Signal()
+    open_folder_requested = Signal()
+    toggle_log_requested = Signal()
+    open_settings_requested = Signal()
+
+    def __init__(self, cfg: Optional[dict] = None, parent: Optional[QWidget] = None):
+        super().__init__("", parent)
+        self.cfg = cfg if cfg is not None else {}
+        self.setObjectName("header_group")
+        self.setProperty("class", "tui-panel")
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        self._setup_ui()
+
+    def _setup_ui(self) -> None:
+        hlay = QHBoxLayout(self)
+        hlay.setContentsMargins(0, 0, 0, 0)
+        hlay.setSpacing(6)
+
+        self.path_label = QLabel()
+        self.path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.path_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.update_path(self.cfg.get("download_path", ""))
+        hlay.addWidget(self.path_label, 1)
+
+        self.btn_change = _create_tui_tag(
+            "[ F1: Change ]",
+            "Change download folder (F1)",
+            self._on_change_clicked,
+        )
+        self.btn_open = _create_tui_tag(
+            "[ F2: Open ]",
+            "Open download folder (F2)",
+            self._on_open_clicked,
+        )
+        hlay.addWidget(self.btn_change)
+        hlay.addWidget(self.btn_open)
+
+        # v_line: Change/Open과 Full Log/Settings 그룹 사이 시각 구분
+        self.v_line = QLabel("\u2502")
+        self.v_line.setProperty("class", "tui-sep")
+        hlay.addWidget(self.v_line)
+
+        self.btn_full_log = _create_tui_tag(
+            "[ F12: Full Log ]",
+            "Toggle full log window (F12)",
+            self.toggle_log_requested.emit,
+        )
+        self.btn_settings = _create_tui_tag(
+            "[ F3: Settings ]",
+            "Open settings (F3)",
+            self.open_settings_requested.emit,
+        )
+        hlay.addWidget(self.btn_full_log)
+        hlay.addWidget(self.btn_settings)
+
+    def update_path(self, path: str) -> None:
+        """다운로드 경로 라벨 업데이트."""
+        normalized = os.path.normpath(path) if path else ""
+        self.path_label.setText(
+            f"<span style='color:{theme.ACCENT}; font-weight:bold;'>Path</span> {normalized}"
+        )
+        self.path_label.setToolTip(normalized)
+
+    def _on_change_clicked(self) -> None:
+        """폴더 변경 다이얼로그 호출 후 시그널 발행."""
+        current_path = self.cfg.get("download_path", "")
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select Download Folder", current_path
+        )
+        if folder:
+            norm_folder = os.path.normpath(folder)
+            self.cfg["download_path"] = norm_folder
+            self.update_path(norm_folder)
+            self.path_changed.emit(norm_folder)
+            self.change_folder_requested.emit()
+
+    def _on_open_clicked(self) -> None:
+        """다운로드 폴더 열기."""
+        current_path = self.cfg.get("download_path", "")
+        if current_path:
+            _open_windows_explorer(current_path)
+        self.open_folder_requested.emit()
+
+```
+
 ## File: chzzktube/pipeline/__init__.py
 
 ```python
@@ -7256,7 +7651,7 @@ def cleanup_on_shutdown():
 ## File: chzzktube/infra/components.py
 
 ```python
-﻿### components.py - ffmpeg runtime manager
+### components.py - ffmpeg runtime manager
 """ffmpeg 자동 수급/관리 전용 모듈 — 앱 전용 격리 캐시 (v3.8.0).
 
 *  [격리 원칙] 시스템 PATH 탐색(shutil.which)·OS 패키지 매니저(brew install,
@@ -12909,7 +13304,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.11.0"
+_APP_VERSION = "v3.12.0"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -13006,7 +13401,7 @@ def save_config(cfg):
 ## File: chzzktube/core/cookies.py
 
 ```python
-﻿### cookies.py - 브라우저 쿠키 추출 (yt-dlp 네이티브 위임)
+### cookies.py - 브라우저 쿠키 추출 (yt-dlp 네이티브 위임)
 
 """
 yt-dlp의 extract_cookies_from_browser를 위임하여 브라우저별 경로 탐색,
@@ -13872,7 +14267,7 @@ def _prune():
 ## File: chzzktube/core/media.py
 
 ```python
-﻿### media.py - 순수 미디어 처리 헬퍼 (해상도 라벨 / 임시파일 정리 / FFmpeg 리먹싱 / 코덱 랭킹)
+### media.py - 순수 미디어 처리 헬퍼 (해상도 라벨 / 임시파일 정리 / FFmpeg 리먹싱 / 코덱 랭킹)
 import glob
 import os
 import re
@@ -14270,7 +14665,7 @@ def normalize_youtube_channel_url(url):
 ## File: chzzktube/core/raw_log.py
 
 ```python
-﻿"""raw_log — 앱 전체 동작의 단일 진실 공급원 (raw 버스).
+"""raw_log — 앱 전체 동작의 단일 진실 공급원 (raw 버스).
 
 [계약 v3.3.0 — 포함관계 모델]
 - 진입: raw(tag, msg) — msg는 LogEvent(문자열은 즉시 LogEvent로 정규화).

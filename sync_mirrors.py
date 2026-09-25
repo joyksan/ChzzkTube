@@ -28,6 +28,9 @@ MIRROR_MODULES = [
     "chzzktube.ui.log_mirror",
     "chzzktube.ui.main_window",
     "chzzktube.ui.theme",
+    # chzzktube.ui.components
+    "chzzktube.ui.components.action_bar",
+    "chzzktube.ui.components.header_bar",
     # chzzktube.control
     "chzzktube.control.controller",
     "chzzktube.control.gate_state",
@@ -82,9 +85,12 @@ MIRROR_MODULES = [
     "chzzktube.infra.updater",
     # chzzktube.infra.provisioning (flat basename 충돌 회피: provisioning_<name>.md)
     "chzzktube.infra.provisioning.bridge",
+    "chzzktube.infra.provisioning.committer",
     "chzzktube.infra.provisioning.downloader",
+    "chzzktube.infra.provisioning.executor",
     "chzzktube.infra.provisioning.manager",
     "chzzktube.infra.provisioning.manifest",
+    "chzzktube.infra.provisioning.planner",
     "chzzktube.infra.provisioning.resolver",
     "chzzktube.infra.provisioning.verifier",
 ]
@@ -111,6 +117,8 @@ def sync_module(name: str, dry_run: bool = False) -> int:
     basename = clean_name.split(".")[-1]
     if clean_name.startswith("chzzktube.infra.provisioning."):
         dst = MIRRORS_DIR / f"provisioning_{basename}.md"
+    elif clean_name == "chzzktube.pipeline.target_downloader.utils":
+        dst = MIRRORS_DIR / "target_downloader_utils.md"
     else:
         dst = MIRRORS_DIR / f"{basename}.md"
 

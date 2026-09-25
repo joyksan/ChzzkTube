@@ -1,4 +1,4 @@
-﻿"""raw_log — 앱 전체 동작의 단일 진실 공급원 (raw 버스).
+"""raw_log — 앱 전체 동작의 단일 진실 공급원 (raw 버스).
 
 [계약 v3.3.0 — 포함관계 모델]
 - 진입: raw(tag, msg) — msg는 LogEvent(문자열은 즉시 LogEvent로 정규화).

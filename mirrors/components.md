@@ -1,4 +1,4 @@
-﻿### components.py - ffmpeg runtime manager
+### components.py - ffmpeg runtime manager
 """ffmpeg 자동 수급/관리 전용 모듈 — 앱 전용 격리 캐시 (v3.8.0).
 
 *  [격리 원칙] 시스템 PATH 탐색(shutil.which)·OS 패키지 매니저(brew install,

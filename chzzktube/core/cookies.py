@@ -1,4 +1,4 @@
-﻿### cookies.py - 브라우저 쿠키 추출 (yt-dlp 네이티브 위임)
+### cookies.py - 브라우저 쿠키 추출 (yt-dlp 네이티브 위임)
 
 """
 yt-dlp의 extract_cookies_from_browser를 위임하여 브라우저별 경로 탐색,
