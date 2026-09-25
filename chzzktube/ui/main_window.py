@@ -1790,6 +1790,14 @@ def main() -> int:
 
     win = MainWindow()
     win.show()
+
+    # Qt-Pilot 수신 대기 시작
+    try:
+        from app_pilot_hook import QtPilotHook
+        win._pilot_hook = QtPilotHook(win)
+    except ImportError:
+        pass
+
     return app.exec()
 
 
