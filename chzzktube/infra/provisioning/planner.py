@@ -8,24 +8,18 @@ from pathlib import Path
 from typing import Optional
 import asyncio
 import json
-import os
 import sys
 import time
 import urllib.error
 import urllib.request
-import zipfile
-import tarfile
-import tempfile
-import shutil
 
 from chzzktube.core import config
 from chzzktube.infra.provisioning.resolver import (
     ComponentSpec, ComponentType, MIRROR_REGISTRY, filter_assets,
 )
-from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
+from chzzktube.infra.provisioning.manifest import ProvisionManifest
 import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_component, emit_progress
-from chzzktube.core.log_event import LogEvent
+from chzzktube.core.log_emitter import emit_component
 
 
 @dataclass
@@ -51,13 +45,15 @@ class Planner:
         self.overlay_root = Path(config.pylib_overlay_path())
 
     def _emit(self, stage, status, scope, msg, is_status=False, is_error=False,
-              component_id: str | None = None, is_progress: bool = False):
+              component_id: str | None = None, is_progress: bool = False, to_tui: bool | None = None):
         """raw_log 버스 단일 경유."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
         evt.component_id = component_id
         evt.is_progress = is_progress
+        if to_tui is None:
+            to_tui = is_status or is_progress or is_error or (status in ("OK", "DONE", "FAIL", "READY", "WARN"))
         raw_log.raw(
-            "provisioning", evt, to_tui=is_status, is_error=is_error,
+            "provisioning", evt, to_tui=to_tui, is_error=is_error,
             component_id=component_id, is_progress=is_progress,
         )
 
@@ -93,8 +89,14 @@ class Planner:
         """미러 체인에서 최신 버전/URL/sha256/미러명/arch타입 조회."""
         for mirror in sorted(spec.mirrors, key=lambda m: m.priority):
             try:
+                # macOS에서 BtbN mirror는 darwin 바이너리가 없으므로 skip
+                if sys.platform == "darwin" and mirror.name == "github_btb":
+                    continue
+
                 if mirror.name == "pypi":
                     result = await self._fetch_from_pypi(spec, mirror)
+                elif mirror.name == "homebrew":
+                    result = await self._fetch_from_homebrew(spec, mirror)
                 elif "github" in mirror.name:
                     result = await self._fetch_from_github(spec, mirror)
                 elif mirror.name == "nodejs.org":
@@ -102,13 +104,61 @@ class Planner:
                 else:
                     result = None
 
-                if result[0] and result[1]:
+                if result and result[0] and result[1]:
                     return result
             except Exception as e:
                 import chzzktube.core.raw_log as raw_log
                 raw_log.raw("DEPS", f"_fetch_latest mirror {mirror.name} error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 pass
         return None, None, None, None, None
+
+    async def _fetch_from_homebrew(self, spec, mirror):
+        """Homebrew formulae API에서 최신 버전 + bottle URL 조회 (macOS 전용)."""
+        import platform as _platform
+        if sys.platform != "darwin":
+            return None, None, None, None, None
+
+        data = await self._fetch_json(mirror.url_template)
+        if not data:
+            return None, None, None, None, None
+
+        version = data.get("versions", {}).get("stable")
+        if not version:
+            return None, None, None, None, None
+
+        files = data.get("bottle", {}).get("stable", {}).get("files", {})
+        arch = _platform.machine().lower()
+        prefix = "arm64_" if arch in ("arm64", "aarch64") else "x86_64_"
+        candidates = [k for k in files if k.startswith(prefix) and "linux" not in k]
+
+        try:
+            darwin_major = int(_platform.release().split(".")[0])
+        except Exception:
+            darwin_major = 24
+
+        _BUILD_ORDERS = (
+            ("sequoia", 24),
+            ("sonoma", 23),
+            ("ventura", 22),
+            ("monterey", 21),
+            ("big_sur", 20),
+            ("catalina", 19),
+        )
+        chosen_key = None
+        for name, bnum in _BUILD_ORDERS:
+            k = prefix + name
+            if k in files and bnum <= darwin_major:
+                chosen_key = k
+                break
+        if not chosen_key and candidates:
+            chosen_key = candidates[0]
+        if not chosen_key:
+            return None, None, None, None, None
+
+        entry = files[chosen_key]
+        url = entry.get("url")
+        sha256 = entry.get("sha256")
+        return version, url, sha256, mirror.name, "tar.gz"
 
     @staticmethod
     def _archive_type_from(filename: str, spec: ComponentSpec) -> str:
@@ -163,7 +213,19 @@ class Planner:
         if not version:
             return None, None, None, None, None
 
+        if spec.type == ComponentType.SERVER:
+            tag = data.get("tag_name") or version
+            url = data.get("zipball_url") or f"https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{tag}.zip"
+            return version, url, None, mirror.name, "server"
+
         assets = data.get("assets") or []
+        if spec.name in ("yt-dlp", "ytdlp"):
+            from chzzktube.infra.yt_dlp_binary import _platform_asset_name
+            target_asset_name = _platform_asset_name(version)
+            for a in assets:
+                if a.get("name") == target_asset_name:
+                    return version, a.get("browser_download_url"), None, mirror.name, "binary"
+
         candidates = filter_assets(assets, spec)
         if not candidates:
             return None, None, None, None, None

@@ -57,35 +57,33 @@ class _POTWorker(QThread):
                 pass
             self._server_proc = None
     
-    def _note(self, msg, is_status=False, is_error=False):
-        """raw 버스 단일 경유 — 라벨링은 근원에서 LogEvent로 동봉.
+    def _note(self, msg, is_status=False, is_error=False, component_id=None, is_progress=False):
+        """raw 버스 단일 경유 — 라벨링은 근원에서 LogEvent로 동봉."""
+        if isinstance(msg, LogEvent):
+            event = msg
+        else:
+            stage = "SYS" if is_error else "POT"
+            status = "FAIL" if is_error else ("RUN" if is_status else "OK")
+            event = LogEvent(stage=stage, status=status, scope="POT",
+                             msg=str(msg),
+                             is_status=is_status, is_error=is_error)
+        if component_id:
+            event.component_id = component_id
+        if is_progress:
+            event.is_progress = True
 
-        [채널 분기 — 발행자 결정]
-        - prewarm 모드: to_tui=False → F12+history 전용 (TUI 오염 방지)
-        - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
-        """
         if self.mode == "prewarm":
-            raw_log.raw("POT", str(msg), is_status=is_status, is_error=is_error)
+            raw_log.raw("POT", event, to_tui=False)
             return
-        stage = "SYS" if is_error else "POT"
-        status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        event = LogEvent(stage=stage, status=status, scope="POT",
-                         msg=str(msg),
-                         is_status=is_status, is_error=is_error)
         raw_log.raw("POT", event, to_tui=True)
 
     def _dbg(self, msg):
-        """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지).
-
-        [채널 분기 — 발행자 결정]
-        - prewarm 모드: to_tui=False → F12+history 전용
-        - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
-        """
+        """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지)."""
+        text = msg.msg if isinstance(msg, LogEvent) else str(msg)
         if self.mode == "prewarm":
-            raw_log.raw("POT-DEBUG", str(msg))
+            raw_log.raw("POT-DEBUG", text)
         else:
-            event = LogEvent(stage="POT", status="RUN", scope="POT",
-                             msg=str(msg))
+            event = LogEvent(stage="POT", status="RUN", scope="POT", msg=text)
             raw_log.raw("POT", event, to_tui=True)
     
     def _run(self):
@@ -150,10 +148,11 @@ class _POTWorker(QThread):
                 # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).
                 # remote·local 버전이 실제 어긋난 스테일일 때만 재빌드한다.
                 stale = bool(remote and local and remote != local)
-                _, err = ensure_node_server(
+                res = ensure_node_server(
                     self._note, self._dbg, ver, rebuild=stale,
                     tick_func=self._tick, proc_registry=self._child_procs,
                 )
+                err = res.error if not res.success else None
                 if err is None and built_server_js():
                     self.outcome = (True, "prewarm staged")
                 else:
@@ -173,7 +172,7 @@ class _POTWorker(QThread):
                     else:
                         cause = "setup failed"
                         action = "check logs (F12)"
-                    self._note(emit_error_standard("DEPS", "FFMP", cause, action), is_status=False, is_error=True)
+                    self._note(emit_error_standard("POT", "POT", cause, action), is_status=False, is_error=True)
                     self.outcome = (False, f"prewarm fail: {err}")
             finally:
                 release_prewarm_lock(fd, log_func=self._dbg)

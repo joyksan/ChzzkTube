@@ -405,21 +405,20 @@ _ERROR_ACTIONS = {
 _MAX_ERR_MSG_LEN = 55
 
 def _normalize_cause(cause: str) -> str:
-    """원인 문자열을 표준 키워드로 정규화."""
+    """원인 문자열을 표준 키워드로 정규화 (알려지지 않은 원인도 보존)."""
     cause_lower = cause.lower()
     for std_cause in _ERROR_CAUSES:
         if std_cause in cause_lower:
             return _ERROR_CAUSES[std_cause]
-    return "unknown error"
+    return cause.strip() if cause else "unknown error"
 
 def _normalize_action(action: str) -> str:
-    """액션 문자열을 표준 키워드로 정규화."""
+    """액션 문자열을 표준 키워드로 정규화 (알려지지 않은 액션도 보존)."""
     action_lower = action.lower()
     for std_action, std_value in _ERROR_ACTIONS.items():
         if std_action.lower() in action_lower:
             return std_value
-    # 알려진 액션이 없으면 빈 문자열 반환 (무시)
-    return ""
+    return action.strip()
 
 def _truncate_msg(msg: str, max_len: int = _MAX_ERR_MSG_LEN) -> str:
     """메시지 길이 제한 (초과 시 '…' 절단)."""

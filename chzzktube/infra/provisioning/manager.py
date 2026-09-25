@@ -11,39 +11,14 @@
 - Executor: provision 단계 (다운로드 → 추출/설치 → 검증)
 - Committer: commit 단계 (manifest 저장 + overlay/PATH 갱신)
 """
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-import asyncio
 
 from chzzktube.core import config
-from chzzktube.core.log_event import LogEvent
+import chzzktube.core.raw_log as raw_log
+from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.provisioning.planner import Planner, ProvisionPlan
 from chzzktube.infra.provisioning.executor import Executor, ProvisionResult
 from chzzktube.infra.provisioning.committer import Committer
-
-
-@dataclass
-class ProvisionPlan:
-    component: str
-    spec: 'ComponentSpec'
-    mirror_name: str
-    version: str
-    download_url: str
-    expected_sha256: Optional[str]
-    install_path: Path
-    is_update: bool
-    archive_type: str  # "whl", "zip", "tar.gz", "tar.xz", "server"
-
-
-@dataclass
-class ProvisionResult:
-    component: str
-    success: bool
-    version: Optional[str] = None
-    error: Optional[str] = None
-    action: str = ""
-    sha256: str = ""
 
 
 class ProvisioningManager:
@@ -97,13 +72,15 @@ class ProvisioningManager:
         return results
 
     def _emit(self, stage, status, scope, msg, is_status=False, is_error=False,
-              component_id: str | None = None, is_progress: bool = False):
+              component_id: str | None = None, is_progress: bool = False, to_tui: bool | None = None):
         """raw_log 버스 단일 경유 — 발행자만 raw_log.raw() 호출 (이중 적재 방지)."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
         evt.component_id = component_id
         evt.is_progress = is_progress
+        if to_tui is None:
+            to_tui = is_status or is_progress or is_error or (status in ("OK", "DONE", "FAIL", "READY", "WARN", "SKIP"))
         raw_log.raw(
-            "provisioning", evt, to_tui=is_status, is_error=is_error,
+            "provisioning", evt, to_tui=to_tui, is_error=is_error,
             component_id=component_id, is_progress=is_progress,
         )
 

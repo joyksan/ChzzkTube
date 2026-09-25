@@ -170,6 +170,8 @@ def bundled_npm_ok(node_path):
     candidates = (
         os.path.join(base, "node_modules", "npm", "package.json"),
         os.path.join(base, "..", "lib", "node_modules", "npm", "package.json"),
+        os.path.join(get_writable_base(), "node", "lib", "node_modules", "npm", "package.json"),
+        os.path.join(get_writable_base(), "node", "node_modules", "npm", "package.json"),
     )
     return any(os.path.isfile(os.path.normpath(p)) for p in candidates)
 
@@ -203,16 +205,20 @@ def ensure_node_runtime(log_func):
     try:
         from chzzktube.infra.provisioning.bridge import provision_component_sync
 
-        def _bridge_log(evt):
-            if isinstance(evt, str):
-                log_func(evt)
-            else:
-                msg = getattr(evt, "msg", str(evt))
-                if getattr(evt, "is_error", False):
-                    log_func(msg, False, True)
-                else:
+        def _bridge_log(evt, **kwargs):
+            is_status = kwargs.get("is_status", getattr(evt, "is_status", False))
+            is_error = kwargs.get("is_error", getattr(evt, "is_error", False))
+            component_id = kwargs.get("component_id", getattr(evt, "component_id", "deps_node"))
+            is_progress = kwargs.get("is_progress", getattr(evt, "is_progress", False))
+            msg = evt if isinstance(evt, str) else getattr(evt, "msg", str(evt))
+            try:
+                log_func(msg, is_status=is_status, is_error=is_error,
+                         component_id=component_id, is_progress=is_progress)
+            except TypeError:
+                try:
+                    log_func(msg, is_status=is_status, is_error=is_error)
+                except TypeError:
                     log_func(msg)
-
         result = provision_component_sync("node", log_func=_bridge_log, force=True)
         if result is None or not result.success:
             log_func(f"Node.js provisioning failed: {result.error if result else 'unavailable'}", False, True)

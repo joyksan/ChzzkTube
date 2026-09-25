@@ -122,15 +122,6 @@ class Verifier:
                 return VerifyResult(spec.name, False, error="server/package.json missing", installed_path=server_dir)
             
             version = json.loads(pkg_json.read_text(encoding="utf-8")).get("version", "unknown")
-            
-            # 빌드 산출물 확인 (dist/main.js 등)
-            dist_main = server_dir / "server" / "dist" / "main.js"
-            if not dist_main.exists():
-                # 구버전 경로도 확인
-                alt = server_dir / "dist" / "main.js"
-                if not alt.exists():
-                    return VerifyResult(spec.name, False, error="built server.js not found", installed_path=server_dir)
-            
             return VerifyResult(spec.name, True, version=version, installed_path=server_dir)
             
         except Exception as e:

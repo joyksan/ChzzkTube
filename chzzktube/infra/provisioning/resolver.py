@@ -41,19 +41,29 @@ class ComponentSpec:
 
 # 미러 레지스트리 — 외부 설정 파일로 분리 가능
 MIRROR_REGISTRY: dict[str, ComponentSpec] = {
+    "ytdlp": ComponentSpec(
+        name="yt-dlp",
+        type=ComponentType.BINARY,
+        version_strategy="latest_stable",
+        mirrors=(
+            Mirror("github_ytdl", "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest", priority=0),
+        ),
+        verify_cmd=("yt-dlp", "--version"),
+        install_rel_path="bin/yt-dlp.exe" if sys.platform == "win32" else "bin/yt-dlp",
+        asset_filters=("yt-dlp",),
+    ),
     "ffmpeg": ComponentSpec(
         name="ffmpeg",
         type=ComponentType.BINARY,
         version_strategy="latest_stable",
         mirrors=(
-            # [v3.8.4] 거버넌스 정합 — 검증 불가/타깃 아키텍처 미지원 공급원 배제.
-            # macOS는 Homebrew formulae bottle(SHA-256 + 실행 검증),
-            # Windows/Linux는 BtbN 정적 GPL 아카이브를 components.py가 담당한다.
+            # macOS는 Homebrew formulae bottle(SHA-256 + 실행 검증) 또는 호스트 부트스트랩,
+            # Windows/Linux는 BtbN 정적 GPL 아카이브
             Mirror("github_btb", "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", priority=0),
             Mirror("homebrew", "https://formulae.brew.sh/api/formula/ffmpeg.json", priority=1),
         ),
         verify_cmd=("ffmpeg", "-version"),
-        install_rel_path="ffmpeg/bin/ffmpeg",
+        install_rel_path="ffmpeg",
         asset_filters=("ffmpeg", "static"),
     ),
     "node": ComponentSpec(
@@ -65,7 +75,7 @@ MIRROR_REGISTRY: dict[str, ComponentSpec] = {
             Mirror("github_node", "https://api.github.com/repos/nodejs/node/releases/latest", priority=1),
         ),
         verify_cmd=("node", "--version"),
-        install_rel_path="node/bin/node",
+        install_rel_path="node",
         asset_filters=("node",),
     ),
     "bgutil": ComponentSpec(
@@ -93,13 +103,16 @@ def get_platform_asset_filters() -> tuple[str, ...]:
         raw_log.raw("DEPS", f"get_platform_asset_filters error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     if platform == "darwin":
-        if machine == "arm64":
-            return ("arm64", "macos", "darwin", "apple")
-        return ("x86_64", "macos", "darwin", "apple")
+        # 'arm64' 단독 키워드는 winarm64, linuxarm64에도 매칭되므로 배제
+        return ("macos", "darwin", "apple", "osx")
     elif platform == "win32":
+        if machine in ("arm64", "aarch64"):
+            return ("winarm64", "win-arm64", "windows-arm64")
         return ("win64", "windows", "x64")
     else:
-        return ("linux", "x86_64", "amd64")
+        if machine in ("arm64", "aarch64"):
+            return ("linuxarm64", "linux-arm64", "aarch64")
+        return ("linux64", "linux", "x86_64", "amd64")
 
 
 # [stdlib-only] 표준 라이브러리로 해제 불가능한 아카이브 — 수급 후보에서 배제.
@@ -119,10 +132,10 @@ def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
     for asset in assets:
         name = asset.get("name", "").lower()
         
-        # 플랫폼 키워드가 '반드시' 하나 이상 매칭되어야 함
-        # 단순히 'ffmpeg' 단어가 들어있다고 다른 OS 아카이브를 낚아채는 참사를 원천 차단
-        if platform_filters and not any(p in name for p in platform_filters):
-            continue
+        # SERVER 타입은 크로스플랫폼 순수 JS/TS이므로 플랫폼 필터 적용 생략
+        if spec.type != ComponentType.SERVER:
+            if platform_filters and not any(p in name for p in platform_filters):
+                continue
             
         if spec_filters and not any(s in name for s in spec_filters):
             continue

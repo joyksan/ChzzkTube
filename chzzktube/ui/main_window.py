@@ -3,7 +3,6 @@ import os
 import platform
 import re
 import sys
-import time
 from collections import deque
 
 from PySide6.QtCore import (
@@ -400,7 +399,7 @@ class MainWindow(QMainWindow):
         )
         self.activateWindow()
 
-        is_running = self.ctrl.state.get("running", False)
+        is_running = getattr(self.ctrl, "running", False)
         
         # 2. 수급 중(UpdateWorker/POTManager) 감지
         is_upgrading = (
@@ -1030,8 +1029,9 @@ class MainWindow(QMainWindow):
         self.update_worker.start(QThread.Priority.LowPriority)
 
     def _on_update_check_done(self, stale):
-        if stale:
-            for label, _, cur, latest in stale:
+        real_stale = [s for s in (stale or []) if s[2] and s[2] != "not installed"]
+        if real_stale:
+            for label, _, cur, latest in real_stale:
                 self.append_concise_log(
                     log_emitter.emit_event("DEPS", "WARN", label.upper(), f"update {cur}→{latest}"),
                     is_status=False,
@@ -1040,11 +1040,12 @@ class MainWindow(QMainWindow):
             self._stale_updates = True
         else:
             self._stale_updates = False
-            self.append_concise_log(
-                log_emitter.emit_event("DEPS", "OK", "-", "deps ok"),
-                is_status=False,
-                is_error=False,
-            )
+            if not getattr(self, "_deps_failed", []):
+                self.append_concise_log(
+                    log_emitter.emit_event("DEPS", "OK", "-", "deps ok"),
+                    is_status=False,
+                    is_error=False,
+                )
 
         self._retire_qthread(self.update_worker)
         self.update_worker = UpdateWorker(
@@ -1054,7 +1055,7 @@ class MainWindow(QMainWindow):
             channel=self.cfg.get("update_channel", "stable"),
             check_updates=self.cfg.get("auto_update_check", True),
         )
-        self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
+        self.update_worker.upgrade_done.connect(self._on_upgrade_done)
         # [P5] 수급 진행 하트비트 → 폴백 타이머 연장
         self.update_worker.start()
         # [P1] deps 게이트의 의미는 "검사 단계 완료"다 — stale(업데이트 대상) 존재는 게이트 사유가 아니다.
@@ -1066,7 +1067,16 @@ class MainWindow(QMainWindow):
             self._startup_coord.report_deps(False, "deps fail: " + ", ".join(self._deps_failed))
         else:
             self._startup_coord.report_deps(True, "deps ok" if not stale else "update")
-        self._pot_manager.ensure_ready("prewarm")
+            self._pot_manager.ensure_ready("prewarm")
+
+    def _on_upgrade_done(self, ok: bool, summary: str):
+        """업그레이드 완료 수신 — 실패 목록 리셋 및 POT prewarm/READY 게이트 진행."""
+        if ok:
+            self._deps_failed = []
+        self._startup_coord.report_upgrade(ok, summary)
+        if ok:
+            self._pot_manager.ensure_ready("prewarm")
+        self.update_ui_state()
 
     def _on_deps_failed(self, labels):
         """[Followup-5] DEPS 검사 FAIL 목록 수신 — 게이트 판정에 반영한다."""
@@ -1331,20 +1341,6 @@ class MainWindow(QMainWindow):
         # deps 재시도 트리거
         self._startup_coord.report_deps(False, "")  # 에러 상태 클리어용
         self.toggle_download()
-
-    def get_current_app_state(self) -> str:
-        # [P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
-        # toggle_download의 큐잉(_pending_download)이 맡는다. is_busy를 STARTUP 사유로
-        # 두면 프리웜 진행 중 ENTER가 큐잉 분기에 도달하지 못하고 무반응으로 끝났다.
-        if not getattr(self, "_startup_completed", False):
-            return "STARTUP"
-        if self.ctrl.running:
-            return "RUNNING"
-        if self.ctrl.analyzing:
-            return "ANALYZING"
-        if self.ctrl.picking:
-            return "PICKING"
-        return "IDLE"
 
     def update_ui_state(self):
         state = self.get_current_app_state()

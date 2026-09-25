@@ -165,6 +165,7 @@ def yt_dlp_path() -> str | None:
     except Exception:
         pass
 
+
     # 실행 가능 여부 확인 후 첫 번째 유효한 것 반환
     # 시스템 PATH 폴백 없음 — 앱 전용 경로에 없으면 None 반환 (FAIL)
     for c in candidates:

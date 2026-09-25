@@ -50,6 +50,15 @@ class QtPilotHook(QObject):
             else:
                 response = {"status": "error", "message": "Widget not found"}
 
+        elif action == "type":
+            target = self.window.findChild(QWidget, cmd.get("target"))
+            text = cmd.get("text", "")
+            if target:
+                target.setFocus()
+                QTest.keyClicks(target, text)
+            else:
+                response = {"status": "error", "message": "Widget not found"}
+
         socket.write(json.dumps(response).encode("utf-8"))
         socket.flush()
         socket.disconnectFromHost()

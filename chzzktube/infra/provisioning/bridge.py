@@ -36,23 +36,20 @@ def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
 def _run_sync(coro) -> object:
     """코루틴을 동기적으로 실행하며 루프 생명주기 관리.
 
-    - 실행 중인 루프가 있으면 재사용 (run_until_complete)
-    - 없으면 새로 생성 후 실행 뒤 close로 정리
+    - 실행 중인 루프가 있으면 ThreadPoolExecutor를 통해 격리된 스레드에서 asyncio.run 실행
+    - 없으면 asyncio.run으로 안전하게 단독 실행
     """
-    loop = _get_or_create_event_loop()
-    if loop.is_running():
-        # 이미 실행 중인 루프가 있으면 재사용
-        return loop.run_until_complete(coro)
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+
+    if running_loop and running_loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
     else:
-        # 우리가 만든 루프 - 실행 후 close로 정리
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop_id = id(loop)
-            if loop_id in _created_loops:
-                _created_loops.discard(loop_id)
-                if not loop.is_closed():
-                    loop.close()
+        return asyncio.run(coro)
 
 
 def provision_component_sync(
