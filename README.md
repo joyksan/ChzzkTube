@@ -4,7 +4,7 @@ Hyper-Minimalist Modern TUI 미디어 추출기 — YouTube / 치지직(Chzzk) �
 
 "fzf · lazygit" 감성의 모노스페이스 Flat TUI로, OS 순정 GUI 위젯 없이 콘솔만으로 모든 작업을 처리한다.
 
-**버전**: `v3.9.0` — 대규모 리팩토링(기술부채 해소 + 방향성 재정립): 게이트/워치독 상태 추출, 파이프라인 분기 분리, LogEvent deprecated 정리, 타임아웃/권한 일관화, 로그 인젝션 회귀 테스트
+**버전**: `v3.12.1` — 의존성 통합 프로비저닝 파이프라인 일원화·Cold Boot Ready 게이트 복원·실시간 다운로드 게이지 정상화
 
 ### 스택
 

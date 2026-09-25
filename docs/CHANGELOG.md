@@ -1,3 +1,34 @@
+### 2026-09-26 — v3.12.1 : 의존성 통합 프로비저닝 파이프라인 일원화·Cold Boot Ready 게이트 복원·실시간 다운로드 게이지 정상화 (patch)
+
+#### 배경 (v3.12.0 → v3.12.1)
+- **yt-dlp 및 4대 의존성 통합 프로비저닝 파이프라인 일원화**: 기존 `UpdateWorker`에서 `ensure_yt_dlp`를 별도로 직렬 호출하여 yt-dlp만 상이한 진행률 바와 수급 라이프사이클을 갖던 결함을 제거하고, `ProvisioningManager.ensure_all()` 단일 파이프라인으로 4개 컴포넌트(`ytdlp`, `ffmpeg`, `node`, `bgutil`) 일괄 병렬 수급 체계로 완전 일원화.
+- **첫 의존성 수급(Cold Boot) 시 Ready 판정 미발산 결함 해결**: 콜드 부팅 시 발생한 `deps_error_msg`가 업그레이드 완료 후에도 클리어되지 않아 영구적으로 입력 잠금이 해제되지 않던 결함 수정. `StartupCoordinator.report_upgrade()`에서 `deps_ok=True` 및 `deps_error_msg=""` 리셋, `MainWindow._on_upgrade_done()` 연결 및 `_deps_failed = []` 리셋, `report_pot()`에서 `staged` 상태도 `pot_ready=True`로 승격.
+- **실시간 프로비저닝 다운로드 진행률 및 TUI 제자리 갱신(In-Place) 정상화**: `downloader.py`에서 다운로드가 끝난 뒤 사후 루프를 돌며 비정상 속도(`28.9 GB/s`)를 찍던 결함을 완전히 제거하고 청크 수신 루프 내부에서 500ms/2% 틱 기반 실시간 경과 시간 속도 및 ETA 계산. `executor.py` 및 `manager.py`의 `_emit()`에서 TUI 이벤트 필터링 정규화 및 완료 마감 시 `is_status=False, is_progress=False, status="OK"`로 마감 확정(Commit)하여 진행 라인을 영구 히스토리 라인으로 승격.
+- **미설치 의존성의 중복 `update not installed→...` 경고 로그 제거**: `updater.py`의 `outdated_packages()`에서 미설치 패키지(`not cur`)를 배제(미설치는 `check_deps`가 FAIL로 전담)하고, `MainWindow._on_update_check_done()`에서 `real_stale` 필터링으로 중복 로그 원천 차단.
+- **UI/UX 세부 교정**: `DepsProvisioningDialog` 내 `btn_box.addStretch(1)` 제거로 `[ Stop && Exit ]`과 `[ Continue ]` 50:50 좌우 대칭 균등 정렬. `VerboseLogWindow` 제자리 갱신 라인의 마감 확정 치환 및 창 오픈 시 전체 버퍼 100% 동기화.
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `workers/update_worker.py` | 독립 `ensure_yt_dlp` 직렬 호출 제거, `ProvisioningManager.ensure_all()` 단일 파이프라인 일원화 |
+| `infra/provisioning/resolver.py` | `MIRROR_REGISTRY`에 `"ytdlp"` 정식 등록, darwin/win/linux 플랫폼 자산 필터 강화 |
+| `infra/provisioning/planner.py` | GitHub Releases 바이너리 자산 탐색(`archive_type="binary"`) 분기 추가, macOS Homebrew bottle 지원, TUI 이벤트 필터링 정규화 |
+| `infra/provisioning/downloader.py` | 사후 루프 및 비정상 속도 제거, 청크 수신 루프 내 실시간 500ms/2% 틱 `report()` 호출, ghcr.io 토큰 인증 보강 |
+| `infra/provisioning/executor.py` | `archive_type == "binary"`(바이너리 복사/chmod/quarantine 해제) 및 `server`(`.version` 마커 기록) 구현, 완료 시 마감 확정(Commit) |
+| `infra/provisioning/manager.py` | `_emit()` TUI 이벤트 필터링(`OK/DONE/FAIL/WARN/SKIP`) 정규화 |
+| `control/startup_coordinator.py` | `report_upgrade` 성공 시 `deps_ok=True` 및 `deps_error_msg=""` 리셋으로 콜드 부팅 Ready 발산 보장, `staged` 상태 `pot_ready=True` 승격 |
+| `ui/main_window.py` | `_on_upgrade_done()` 연결 및 `_deps_failed = []` 리셋, `_on_update_check_done` 내 `real_stale` 필터링, `toggle_verbose_log()` 100% 버퍼 동기화 |
+| `infra/updater.py` | `outdated_packages()`에서 `not cur` 배제하여 미설치 컴포넌트의 중복 WARN 차단 |
+| `ui/dialogs.py` | `DepsProvisioningDialog` 50:50 대칭 정렬, `VerboseLogWindow.append()` 마감 확정 치환 및 스크롤 동기화 |
+| `core/config.py`, `pyproject.toml`, `uv.lock` | 버전 `v3.12.1` 범프 및 패키지 메타 동기화 |
+
+#### 검증
+- `python sync_mirrors.py --check` → 전체 66개 모듈 미러 변경 0건/누락 0건 100% 일치
+- `python -m compileall chzzktube` → 전 모듈 문법/바이트코드 컴파일 통과
+- Cold Boot(`rm -rf ~/.chzzktube`) 실측 검증: 4개 컴포넌트 병렬 수급 -> 100% 제자리 갱신 마감 -> server staged -> `ready — input unlocked` 발산 완료
+
+---
+
 ### 2026-09-25 — v3.12.0 : GUI 아키텍처 대규모 리팩토링 및 5축 품질 게이트 90+ 달성 (minor)
 
 #### 배경 (v3.11.0 → v3.12.0)

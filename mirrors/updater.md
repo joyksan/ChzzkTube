@@ -115,21 +115,16 @@ def is_outdated(current, latest):
         return False
 
 def outdated_packages(channel="stable"):
-    """List of (label, pypi_name, cur, latest) needing update or not installed.
+    """List of (label, pypi_name, cur, latest) needing update.
     channel: stable / nightly (yt-dlp-nightly / GitHub builds).
-
-    [downgrade support] stable channel with yt-dlp-nightly installed (user
-    switched Nightly->Stable): force stale target=stable -- nightly version
-    string compares higher so plain version check would be never-stale.
+    미설치 상태는 check_deps가 FAIL로 처리하므로 stale 목록에 포함하지 않는다.
     """
     stale = []
     for label, pypi_name, pypi_nightly in PACKAGES:
         if channel == "nightly" and pypi_nightly:
             cur = installed_version(pypi_nightly) or installed_version(pypi_name)
             latest = latest_version(pypi_nightly)
-            if not cur:
-                stale.append((label, pypi_name, "not installed", latest or "unknown"))
-            elif latest and is_outdated(cur, latest):
+            if cur and latest and is_outdated(cur, latest):
                 stale.append((label, pypi_name, cur, latest))
             continue
         # stable channel: leftover nightly -> downgrade target
@@ -138,9 +133,7 @@ def outdated_packages(channel="stable"):
             continue
         cur = installed_version(pypi_name)
         latest = latest_version(pypi_name)
-        if not cur:
-            stale.append((label, pypi_name, "not installed", latest or "unknown"))
-        elif latest and is_outdated(cur, latest):
+        if cur and latest and is_outdated(cur, latest):
             stale.append((label, pypi_name, cur, latest))
     return stale
 
@@ -210,22 +203,16 @@ def check_deps(log_func=None):
     else:
         results.append(("node", "FAIL", "not installed"))
 
-    # 4. PO token 서버 — liveness가 아니라 readiness 판정
-    # 바이너리+빌드 산출물의 디스크 준비만 판정 (RAM 0MB·포트 미점유).
-    # 미기동 정상 상태는 SKIP standby, 산출물 미비는 SKIP + 사유.
+    # 4. bgutil 소스코드 무결성 검증 (POT 기동/readiness는 staging에서 별도 판정)
     try:
-        from chzzktube.infra.po_client import server_ping
-        from chzzktube.infra.pot_server import pot_readiness
-        if server_ping():
-            results.append(("pot", "OK", "running"))
+        from chzzktube.infra.pot_server import server_installed_ver, server_home
+        ver = server_installed_ver()
+        if ver:
+            results.append(("bgutil", "OK", f"v{ver} at {server_home()}"))
         else:
-            ready, reason = pot_readiness(log_func=log_func)
-            if ready:
-                results.append(("pot", "SKIP", "standby"))
-            else:
-                results.append(("pot", "SKIP", reason or "not ready"))
+            results.append(("bgutil", "FAIL", "not installed"))
     except Exception:
-        results.append(("pot", "SKIP", "unknown"))
+        results.append(("bgutil", "FAIL", "unknown"))
 
     return results
 
@@ -295,16 +282,13 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
     except Exception as e:
         missing.append(f"node (check error: {e})")
 
-    # 4. POT server readiness — 디스크 준비 상태만 확인 (liveness 아님)
+    # 4. bgutil 소스코드 무결성 검증
     try:
-        from chzzktube.infra.pot_server import pot_readiness
-        from chzzktube.infra.po_client import server_ping
-        if not server_ping():
-            ready, _ = pot_readiness()
-            if not ready:
-                missing.append("pot server (not ready)")
+        from chzzktube.infra.pot_server import server_installed_ver
+        if not server_installed_ver():
+            missing.append("bgutil (not installed)")
     except Exception:
-        missing.append("pot server (check error)")
+        missing.append("bgutil (check error)")
 
     return len(missing) == 0, missing
 

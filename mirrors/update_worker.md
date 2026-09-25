@@ -68,7 +68,8 @@ class UpdateWorker(QThread):
             )
         ))
         for label, status, ver in results:
-            raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
+            scope_map = {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT", "bgutil": "BGUT"}
+            raw_log.raw("deps", emit_component("DEPS", status, scope_map.get(label, label), ver), to_tui=True)
         for label, args in _RAW_VERSION_CMDS:
             cmdline, out = updater.cli_raw(label, *args)
             if cmdline and out:
@@ -134,6 +135,7 @@ class UpdateWorker(QThread):
         import asyncio
         from chzzktube.infra.provisioning import ProvisioningManager
 
+        # ProvisioningManager 단일 파이프라인으로 ytdlp, ffmpeg, node, bgutil 4개 컴포넌트 일괄 병렬 수급
         mgr = ProvisioningManager(log_func=lambda evt, **kwargs: self._provision_cb(
             evt,
             is_status=kwargs.get("is_status", getattr(evt, "is_status", False)),
@@ -146,6 +148,8 @@ class UpdateWorker(QThread):
             # [대역폭 수호] stale_only=True로 이미 정상인 의존성의 불필요한 재수급 차단
             results = asyncio.run(mgr.ensure_all(stale_only=True, channel=self.channel))
         except Exception as e:
+            import traceback
+            raw_log.raw("deps", f"provisioning error: {e}\n{traceback.format_exc()}", is_error=True)
             self.upgrade_done.emit(False, f"provisioning error: {e}")
             return
 
@@ -153,11 +157,11 @@ class UpdateWorker(QThread):
         failed = [r for r in results if not r.success]
 
         if ok:
-            raw_log.raw("deps", f"{', '.join(r.component for r in ok)} {'updated' if ok else 'installed'}")
+            raw_log.raw("deps", f"{len(ok)} provisioned components ready", to_tui=False)
         if failed:
             for r in failed:
                 raw_log.raw("deps", emit_error_standard("DEPS", r.component.upper(), r.error or "unknown", "check logs (F12)"), to_tui=True)
 
-        ok_overall = len(failed) == 0
+        ok_overall = (len(failed) == 0) and (len(ok) > 0 or len(results) == 0)
         summary = f"{len(ok)} ok, {len(failed)} failed" if failed else f"{len(ok)} components provisioned"
         self.upgrade_done.emit(ok_overall, summary)

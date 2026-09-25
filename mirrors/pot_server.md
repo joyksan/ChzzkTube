@@ -21,7 +21,7 @@ import urllib.request
 import tempfile
 
 import chzzktube.core.config as config
-from chzzktube.core import DOWNLOAD_TIMEOUT
+from chzzktube.core import DOWNLOAD_TIMEOUT, READ_TIMEOUT
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
@@ -123,12 +123,28 @@ def latest_server_ver(timeout=3):
 
 
 def server_installed_ver():
-    """로컬에 전개된 bgutil 서버 버전 (.version 마커). 없으면 None."""
+    """로컬에 전개된 bgutil 서버 버전 (.version 마커 또는 package.json). 없으면 None."""
+    for cand in (
+        os.path.join(server_home(), ".version"),
+        os.path.join(server_home(), "server", ".version"),
+    ):
+        try:
+            if os.path.isfile(cand):
+                with open(cand, encoding="utf-8") as f:
+                    v = f.read().strip()
+                    if v:
+                        return v
+        except OSError:
+            pass
+    # 폴백: server/package.json
     try:
-        with open(os.path.join(server_home(), ".version"), encoding="utf-8") as f:
-            return f.read().strip() or None
-    except OSError:
-        return None
+        pkg_json = os.path.join(server_home(), "server", "package.json")
+        if os.path.isfile(pkg_json):
+            with open(pkg_json, encoding="utf-8") as f:
+                return json.load(f).get("version")
+    except Exception:
+        pass
+    return None
 
 
 def clean_stale_plugin():
@@ -618,6 +634,13 @@ def download_and_install_source(want_ver, log_func=None):
 
         os.makedirs(dest_dir, exist_ok=True)
         shutil.copytree(inner, dest_dir, dirs_exist_ok=True)
+        try:
+            with open(os.path.join(dest_dir, ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(want_ver))
+            with open(os.path.join(dest_dir, "server", ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(want_ver))
+        except Exception:
+            pass
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -732,9 +755,15 @@ def _resolve_npm_command(curr_node) -> Result:
     """npm 명령어 결정 (npm-cli.js → npm_exe 우선순위)."""
     npm_cli = None
     node_base_dir = os.path.dirname(curr_node)
-    for root, dirs, files in os.walk(node_base_dir):
-        if "npm-cli.js" in files:
-            npm_cli = os.path.join(root, "npm-cli.js")
+    search_dirs = [node_base_dir]
+    if os.path.basename(node_base_dir) == "bin":
+        search_dirs.append(os.path.dirname(node_base_dir))
+    for s_dir in search_dirs:
+        for root, dirs, files in os.walk(s_dir):
+            if "npm-cli.js" in files:
+                npm_cli = os.path.join(root, "npm-cli.js")
+                break
+        if npm_cli:
             break
     if npm_cli:
         return Result(success=True, value=[curr_node, npm_cli])
@@ -874,6 +903,14 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
         verify_result = _verify_build_output()
         if not verify_result.success:
             return Result(success=False, error=verify_result.error)
+
+        try:
+            with open(os.path.join(server_home(), ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(ver))
+            with open(os.path.join(server_home(), "server", ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(ver))
+        except Exception:
+            pass
 
         return Result(success=True, value=server_dir)
 

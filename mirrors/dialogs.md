@@ -152,7 +152,7 @@ class DepsProvisioningDialog(QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(8)
 
-        btn_stop = QPushButton("Stop & Exit")
+        btn_stop = QPushButton("Stop && Exit")
         btn_stop.setStyleSheet(theme.BTN_EXIT_DANGER_QSS)
         btn_stop.clicked.connect(lambda: self.done(1))
 
@@ -160,7 +160,6 @@ class DepsProvisioningDialog(QDialog):
         btn_continue.setStyleSheet(theme.BTN_NEUTRAL_QSS)
         btn_continue.clicked.connect(lambda: self.done(0))
 
-        btn_box.addStretch(1)
         btn_box.addWidget(btn_stop)
         btn_box.addWidget(btn_continue)
         vbox.addLayout(btn_box)

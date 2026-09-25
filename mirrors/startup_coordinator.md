@@ -7,7 +7,8 @@ from PySide6.QtCore import QObject, Signal
 
 from chzzktube.control.startup_state import StartupState
 from chzzktube.control.pot_manager import POTManager
-from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
+from chzzktube.core.log_emitter import emit_error_standard
+import chzzktube.core.raw_log as raw_log
 
 
 class StartupCoordinator(QObject):
@@ -70,32 +71,35 @@ class StartupCoordinator(QObject):
     def report_upgrade(self, ok: bool, summary: str):
         with self._lock:
             self._state.set_upgrade(True)
-            if summary:
-                if ok:
+            if ok:
+                # 업그레이드 성공 시 초기 미설치로 인한 deps 에러 리셋 및 정상화
+                self._state.set_deps(True)
+                self._state.deps_error_msg = ""
+                if summary:
                     self._emit("SYS", "OK", f"update {summary}")
-                else:
-                    # [v3.8.1] 업그레이드 실패 시 표준 에러 헬퍼 사용
-                    from chzzktube.core.log_emitter import emit_error_standard
-                    raw_log.raw(
-                        "startup",
-                        emit_error_standard("SYS", "MAIN", "update failed", "check logs (F12)"),
-                        to_tui=True,
-                    )
+            else:
+                self._state.set_deps(False)
+                if not self._state.deps_error_msg:
+                    self._state.deps_error_msg = summary or "update failed"
+                raw_log.raw(
+                    "startup",
+                    emit_error_standard("SYS", "MAIN", "update failed", "check logs (F12)"),
+                    to_tui=True,
+                )
             self._try_emit_ready()
 
     def report_pot(self, ok: bool, msg: str):
         with self._lock:
             status = msg if ok else "failed"
-            # [v3.8.1] staged ≠ ready — gate 완료(ready)만 pot_ready=True
-            # staged = prewarm 완료, gate 미시작 상태이므로 토큰 서빙 불가
-            ready = ok and status == "ready"
+            # [HANDOVER §9.4] prewarm 완료(staged) 및 gate 완료(ready) 시 pot_ready=True 승격
+            ready = ok and status in ("ready", "staged")
             self._state.set_pot(status, ready=ready)
             if not ok:
                 # [v3.8.1] POT 실패 시 표준 에러 헬퍼 사용
                 from chzzktube.core.log_emitter import emit_error_standard
                 raw_log.raw(
                     "startup",
-                    emit_error_standard("SYS", "POT", "server failed", "check logs (F12)"),
+                    emit_error_standard("POT", "POT", "server failed", "check logs (F12)"),
                     to_tui=True,
                 )
             self._try_emit_ready()
@@ -116,6 +120,8 @@ class StartupCoordinator(QObject):
         # [토글 계약] 시동 → 가동 → lazy 대기 전환이 메인/풀 로그에 모두 기록된다
         # (앱 동작 전량 기록 원칙 — HANDOVER §9).
         self.pot_status_changed.emit(status)
+        if status == "failed":
+            return
         from chzzktube.core.raw_log import raw
         from chzzktube.core.log_emitter import emit_event
         _POT_TOGGLE = {
@@ -123,7 +129,6 @@ class StartupCoordinator(QObject):
             "starting": ("RUN",  "server starting..."),
             "staged":   ("OK",   "server staged — lazy standby"),
             "ready":    ("OK",   "server running"),
-            "failed":   ("FAIL", "server failed"),
         }
         st, msg = _POT_TOGGLE.get(status, ("RUN", str(status)))
         raw(

@@ -1,6 +1,77 @@
 # ChzzkTube Project Full Codebase
 
 
+## File: app_pilot_hook.py
+
+```python
+import json
+from PySide6.QtCore import QObject, Qt
+from PySide6.QtNetwork import QTcpServer, QHostAddress
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication, QWidget
+
+class QtPilotHook(QObject):
+    def __init__(self, main_window: QWidget, port: int = 49152):
+        super().__init__()
+        self.window = main_window
+        self.server = QTcpServer(self)
+        self.server.newConnection.connect(self._handle_connection)
+        self.server.listen(QHostAddress.LocalHost, port)
+
+    def _handle_connection(self):
+        socket = self.server.nextPendingConnection()
+        socket.readyRead.connect(lambda: self._process_command(socket))
+
+    def _process_command(self, socket):
+        raw_data = socket.readAll().data().decode("utf-8")
+        try:
+            cmd = json.loads(raw_data)
+        except json.JSONDecodeError:
+            return
+
+        action = cmd.get("action")
+        response = {"status": "ok"}
+
+        if action == "dump_tree":
+            response["widgets"] = [
+                {"name": w.objectName(), "class": w.metaObject().className(), "visible": w.isVisible()}
+                for w in self.window.findChildren(QWidget) if w.objectName()
+            ]
+
+        elif action == "capture":
+            target_name = cmd.get("target")
+            target = self.window.findChild(QWidget, target_name) if target_name else self.window
+            if target:
+                pixmap = target.grab()
+                save_path = cmd.get("path", "ui_debug.png")
+                pixmap.save(save_path)
+                response["path"] = save_path
+            else:
+                response = {"status": "error", "message": "Widget not found"}
+
+        elif action == "click":
+            target = self.window.findChild(QWidget, cmd.get("target"))
+            if target:
+                QTest.mouseClick(target, Qt.MouseButton.LeftButton)
+            else:
+                response = {"status": "error", "message": "Widget not found"}
+
+        elif action == "type":
+            target = self.window.findChild(QWidget, cmd.get("target"))
+            text = cmd.get("text", "")
+            if target:
+                target.setFocus()
+                QTest.keyClicks(target, text)
+            else:
+                response = {"status": "error", "message": "Widget not found"}
+
+        socket.write(json.dumps(response).encode("utf-8"))
+        socket.flush()
+        socket.disconnectFromHost()
+
+
+```
+
 ## File: append_test_class.py
 
 ```python
@@ -796,6 +867,77 @@ if __name__ == "__main__":
 
 ```
 
+## File: qt_pilot_server.py
+
+```python
+import json
+import socket
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("qt-pilot")
+
+import time
+
+def send_ipc(command: dict, wait_seconds: float = 8.0) -> dict:
+    start = time.time()
+    last_err = None
+    while time.time() - start < wait_seconds:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                client.settimeout(4.0)
+                client.connect(("127.0.0.1", 49152))
+                client.sendall(json.dumps(command).encode("utf-8"))
+                res = client.recv(65536)
+                return json.loads(res.decode("utf-8"))
+        except (ConnectionRefusedError, socket.timeout, OSError) as e:
+            last_err = e
+            time.sleep(0.3)
+    raise ConnectionError(f"Cannot connect to PySide6 QtPilotHook on port 49152: {last_err}")
+
+@mcp.tool()
+def get_widget_tree() -> str:
+    """현재 화면에 활성화된 위젯의 objectName, 클래스, 가시성 목록을 조회합니다."""
+    res = send_ipc({"action": "dump_tree"})
+    return json.dumps(res.get("widgets", []), indent=2)
+
+@mcp.tool()
+def capture_ui(target_object_name: str = "", output_path: str = "debug_screenshot.png") -> str:
+    """전체 창 또는 특정 위젯을 캡처하여 로컬 이미지 파일로 저장합니다."""
+    res = send_ipc({"action": "capture", "target": target_object_name, "path": output_path})
+    return f"Screenshot saved to {res.get('path')}"
+
+@mcp.tool()
+def click_widget(target_object_name: str) -> str:
+    """지정된 objectName을 가진 위젯(버튼, 탭 등)을 클릭합니다."""
+    res = send_ipc({"action": "click", "target": target_object_name})
+    return res.get("status", "error")
+
+# qt_pilot_server.py 하단에 추가
+@mcp.tool()
+def type_text(target_object_name: str, text: str) -> str:
+    """지정된 objectName을 가진 입력창(QLineEdit 등)에 텍스트를 입력합니다."""
+    res = send_ipc({"action": "type", "target": target_object_name, "text": text})
+    return res.get("status")
+
+
+@mcp.tool()
+def capture_sequence(count: int = 3, interval: float = 1.0, prefix: str = "startup") -> str:
+    """기동 과정 중 여러 시점의 화면을 연속으로 캡처합니다."""
+    paths = []
+    for i in range(count):
+        path = f"{prefix}_{i+1}.png"
+        res = send_ipc({"action": "capture", "target": "", "path": path}, wait_seconds=8.0 if i == 0 else 2.0)
+        paths.append(res.get("path", path))
+        if i < count - 1:
+            time.sleep(interval)
+    return f"Sequence saved: {', '.join(paths)}"
+
+if __name__ == "__main__":
+    mcp.run()
+
+
+```
+
 ## File: smoke_test.py
 
 ```python
@@ -1381,7 +1523,7 @@ class DepsProvisioningDialog(QDialog):
         btn_box = QHBoxLayout()
         btn_box.setSpacing(8)
 
-        btn_stop = QPushButton("Stop & Exit")
+        btn_stop = QPushButton("Stop && Exit")
         btn_stop.setStyleSheet(theme.BTN_EXIT_DANGER_QSS)
         btn_stop.clicked.connect(lambda: self.done(1))
 
@@ -1389,7 +1531,6 @@ class DepsProvisioningDialog(QDialog):
         btn_continue.setStyleSheet(theme.BTN_NEUTRAL_QSS)
         btn_continue.clicked.connect(lambda: self.done(0))
 
-        btn_box.addStretch(1)
         btn_box.addWidget(btn_stop)
         btn_box.addWidget(btn_continue)
         vbox.addLayout(btn_box)
@@ -2930,7 +3071,6 @@ import os
 import platform
 import re
 import sys
-import time
 from collections import deque
 
 from PySide6.QtCore import (
@@ -3327,7 +3467,7 @@ class MainWindow(QMainWindow):
         )
         self.activateWindow()
 
-        is_running = self.ctrl.state.get("running", False)
+        is_running = getattr(self.ctrl, "running", False)
 
         # 2. 수급 중(UpdateWorker/POTManager) 감지
         is_upgrading = (
@@ -3957,8 +4097,9 @@ class MainWindow(QMainWindow):
         self.update_worker.start(QThread.Priority.LowPriority)
 
     def _on_update_check_done(self, stale):
-        if stale:
-            for label, _, cur, latest in stale:
+        real_stale = [s for s in (stale or []) if s[2] and s[2] != "not installed"]
+        if real_stale:
+            for label, _, cur, latest in real_stale:
                 self.append_concise_log(
                     log_emitter.emit_event("DEPS", "WARN", label.upper(), f"update {cur}→{latest}"),
                     is_status=False,
@@ -3967,11 +4108,12 @@ class MainWindow(QMainWindow):
             self._stale_updates = True
         else:
             self._stale_updates = False
-            self.append_concise_log(
-                log_emitter.emit_event("DEPS", "OK", "-", "deps ok"),
-                is_status=False,
-                is_error=False,
-            )
+            if not getattr(self, "_deps_failed", []):
+                self.append_concise_log(
+                    log_emitter.emit_event("DEPS", "OK", "-", "deps ok"),
+                    is_status=False,
+                    is_error=False,
+                )
 
         self._retire_qthread(self.update_worker)
         self.update_worker = UpdateWorker(
@@ -3981,7 +4123,7 @@ class MainWindow(QMainWindow):
             channel=self.cfg.get("update_channel", "stable"),
             check_updates=self.cfg.get("auto_update_check", True),
         )
-        self.update_worker.upgrade_done.connect(self._startup_coord.report_upgrade)
+        self.update_worker.upgrade_done.connect(self._on_upgrade_done)
         # [P5] 수급 진행 하트비트 → 폴백 타이머 연장
         self.update_worker.start()
         # [P1] deps 게이트의 의미는 "검사 단계 완료"다 — stale(업데이트 대상) 존재는 게이트 사유가 아니다.
@@ -3993,7 +4135,16 @@ class MainWindow(QMainWindow):
             self._startup_coord.report_deps(False, "deps fail: " + ", ".join(self._deps_failed))
         else:
             self._startup_coord.report_deps(True, "deps ok" if not stale else "update")
-        self._pot_manager.ensure_ready("prewarm")
+            self._pot_manager.ensure_ready("prewarm")
+
+    def _on_upgrade_done(self, ok: bool, summary: str):
+        """업그레이드 완료 수신 — 실패 목록 리셋 및 POT prewarm/READY 게이트 진행."""
+        if ok:
+            self._deps_failed = []
+        self._startup_coord.report_upgrade(ok, summary)
+        if ok:
+            self._pot_manager.ensure_ready("prewarm")
+        self.update_ui_state()
 
     def _on_deps_failed(self, labels):
         """[Followup-5] DEPS 검사 FAIL 목록 수신 — 게이트 판정에 반영한다."""
@@ -4258,20 +4409,6 @@ class MainWindow(QMainWindow):
         # deps 재시도 트리거
         self._startup_coord.report_deps(False, "")  # 에러 상태 클리어용
         self.toggle_download()
-
-    def get_current_app_state(self) -> str:
-        # [P3b] POT 백그라운드 작업(is_busy)은 입력 잠금 사유가 아니다 — 그 역할은
-        # toggle_download의 큐잉(_pending_download)이 맡는다. is_busy를 STARTUP 사유로
-        # 두면 프리웜 진행 중 ENTER가 큐잉 분기에 도달하지 못하고 무반응으로 끝났다.
-        if not getattr(self, "_startup_completed", False):
-            return "STARTUP"
-        if self.ctrl.running:
-            return "RUNNING"
-        if self.ctrl.analyzing:
-            return "ANALYZING"
-        if self.ctrl.picking:
-            return "PICKING"
-        return "IDLE"
 
     def update_ui_state(self):
         state = self.get_current_app_state()
@@ -4717,6 +4854,14 @@ def main() -> int:
 
     win = MainWindow()
     win.show()
+
+    # Qt-Pilot 수신 대기 시작
+    try:
+        from app_pilot_hook import QtPilotHook
+        win._pilot_hook = QtPilotHook(win)
+    except ImportError:
+        pass
+
     return app.exec()
 
 
@@ -8741,6 +8886,8 @@ def bundled_npm_ok(node_path):
     candidates = (
         os.path.join(base, "node_modules", "npm", "package.json"),
         os.path.join(base, "..", "lib", "node_modules", "npm", "package.json"),
+        os.path.join(get_writable_base(), "node", "lib", "node_modules", "npm", "package.json"),
+        os.path.join(get_writable_base(), "node", "node_modules", "npm", "package.json"),
     )
     return any(os.path.isfile(os.path.normpath(p)) for p in candidates)
 
@@ -8774,16 +8921,20 @@ def ensure_node_runtime(log_func):
     try:
         from chzzktube.infra.provisioning.bridge import provision_component_sync
 
-        def _bridge_log(evt):
-            if isinstance(evt, str):
-                log_func(evt)
-            else:
-                msg = getattr(evt, "msg", str(evt))
-                if getattr(evt, "is_error", False):
-                    log_func(msg, False, True)
-                else:
+        def _bridge_log(evt, **kwargs):
+            is_status = kwargs.get("is_status", getattr(evt, "is_status", False))
+            is_error = kwargs.get("is_error", getattr(evt, "is_error", False))
+            component_id = kwargs.get("component_id", getattr(evt, "component_id", "deps_node"))
+            is_progress = kwargs.get("is_progress", getattr(evt, "is_progress", False))
+            msg = evt if isinstance(evt, str) else getattr(evt, "msg", str(evt))
+            try:
+                log_func(msg, is_status=is_status, is_error=is_error,
+                         component_id=component_id, is_progress=is_progress)
+            except TypeError:
+                try:
+                    log_func(msg, is_status=is_status, is_error=is_error)
+                except TypeError:
                     log_func(msg)
-
         result = provision_component_sync("node", log_func=_bridge_log, force=True)
         if result is None or not result.success:
             log_func(f"Node.js provisioning failed: {result.error if result else 'unavailable'}", False, True)
@@ -9294,7 +9445,7 @@ import urllib.request
 import tempfile
 
 import chzzktube.core.config as config
-from chzzktube.core import DOWNLOAD_TIMEOUT
+from chzzktube.core import DOWNLOAD_TIMEOUT, READ_TIMEOUT
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
@@ -9396,12 +9547,28 @@ def latest_server_ver(timeout=3):
 
 
 def server_installed_ver():
-    """로컬에 전개된 bgutil 서버 버전 (.version 마커). 없으면 None."""
+    """로컬에 전개된 bgutil 서버 버전 (.version 마커 또는 package.json). 없으면 None."""
+    for cand in (
+        os.path.join(server_home(), ".version"),
+        os.path.join(server_home(), "server", ".version"),
+    ):
+        try:
+            if os.path.isfile(cand):
+                with open(cand, encoding="utf-8") as f:
+                    v = f.read().strip()
+                    if v:
+                        return v
+        except OSError:
+            pass
+    # 폴백: server/package.json
     try:
-        with open(os.path.join(server_home(), ".version"), encoding="utf-8") as f:
-            return f.read().strip() or None
-    except OSError:
-        return None
+        pkg_json = os.path.join(server_home(), "server", "package.json")
+        if os.path.isfile(pkg_json):
+            with open(pkg_json, encoding="utf-8") as f:
+                return json.load(f).get("version")
+    except Exception:
+        pass
+    return None
 
 
 def clean_stale_plugin():
@@ -9891,6 +10058,13 @@ def download_and_install_source(want_ver, log_func=None):
 
         os.makedirs(dest_dir, exist_ok=True)
         shutil.copytree(inner, dest_dir, dirs_exist_ok=True)
+        try:
+            with open(os.path.join(dest_dir, ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(want_ver))
+            with open(os.path.join(dest_dir, "server", ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(want_ver))
+        except Exception:
+            pass
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -10005,9 +10179,15 @@ def _resolve_npm_command(curr_node) -> Result:
     """npm 명령어 결정 (npm-cli.js → npm_exe 우선순위)."""
     npm_cli = None
     node_base_dir = os.path.dirname(curr_node)
-    for root, dirs, files in os.walk(node_base_dir):
-        if "npm-cli.js" in files:
-            npm_cli = os.path.join(root, "npm-cli.js")
+    search_dirs = [node_base_dir]
+    if os.path.basename(node_base_dir) == "bin":
+        search_dirs.append(os.path.dirname(node_base_dir))
+    for s_dir in search_dirs:
+        for root, dirs, files in os.walk(s_dir):
+            if "npm-cli.js" in files:
+                npm_cli = os.path.join(root, "npm-cli.js")
+                break
+        if npm_cli:
             break
     if npm_cli:
         return Result(success=True, value=[curr_node, npm_cli])
@@ -10147,6 +10327,14 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
         verify_result = _verify_build_output()
         if not verify_result.success:
             return Result(success=False, error=verify_result.error)
+
+        try:
+            with open(os.path.join(server_home(), ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(ver))
+            with open(os.path.join(server_home(), "server", ".version"), "w", encoding="utf-8") as vf:
+                vf.write(str(ver))
+        except Exception:
+            pass
 
         return Result(success=True, value=server_dir)
 
@@ -10324,21 +10512,16 @@ def is_outdated(current, latest):
         return False
 
 def outdated_packages(channel="stable"):
-    """List of (label, pypi_name, cur, latest) needing update or not installed.
+    """List of (label, pypi_name, cur, latest) needing update.
     channel: stable / nightly (yt-dlp-nightly / GitHub builds).
-
-    [downgrade support] stable channel with yt-dlp-nightly installed (user
-    switched Nightly->Stable): force stale target=stable -- nightly version
-    string compares higher so plain version check would be never-stale.
+    미설치 상태는 check_deps가 FAIL로 처리하므로 stale 목록에 포함하지 않는다.
     """
     stale = []
     for label, pypi_name, pypi_nightly in PACKAGES:
         if channel == "nightly" and pypi_nightly:
             cur = installed_version(pypi_nightly) or installed_version(pypi_name)
             latest = latest_version(pypi_nightly)
-            if not cur:
-                stale.append((label, pypi_name, "not installed", latest or "unknown"))
-            elif latest and is_outdated(cur, latest):
+            if cur and latest and is_outdated(cur, latest):
                 stale.append((label, pypi_name, cur, latest))
             continue
         # stable channel: leftover nightly -> downgrade target
@@ -10347,9 +10530,7 @@ def outdated_packages(channel="stable"):
             continue
         cur = installed_version(pypi_name)
         latest = latest_version(pypi_name)
-        if not cur:
-            stale.append((label, pypi_name, "not installed", latest or "unknown"))
-        elif latest and is_outdated(cur, latest):
+        if cur and latest and is_outdated(cur, latest):
             stale.append((label, pypi_name, cur, latest))
     return stale
 
@@ -10419,22 +10600,16 @@ def check_deps(log_func=None):
     else:
         results.append(("node", "FAIL", "not installed"))
 
-    # 4. PO token 서버 — liveness가 아니라 readiness 판정
-    # 바이너리+빌드 산출물의 디스크 준비만 판정 (RAM 0MB·포트 미점유).
-    # 미기동 정상 상태는 SKIP standby, 산출물 미비는 SKIP + 사유.
+    # 4. bgutil 소스코드 무결성 검증 (POT 기동/readiness는 staging에서 별도 판정)
     try:
-        from chzzktube.infra.po_client import server_ping
-        from chzzktube.infra.pot_server import pot_readiness
-        if server_ping():
-            results.append(("pot", "OK", "running"))
+        from chzzktube.infra.pot_server import server_installed_ver, server_home
+        ver = server_installed_ver()
+        if ver:
+            results.append(("bgutil", "OK", f"v{ver} at {server_home()}"))
         else:
-            ready, reason = pot_readiness(log_func=log_func)
-            if ready:
-                results.append(("pot", "SKIP", "standby"))
-            else:
-                results.append(("pot", "SKIP", reason or "not ready"))
+            results.append(("bgutil", "FAIL", "not installed"))
     except Exception:
-        results.append(("pot", "SKIP", "unknown"))
+        results.append(("bgutil", "FAIL", "unknown"))
 
     return results
 
@@ -10504,16 +10679,13 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
     except Exception as e:
         missing.append(f"node (check error: {e})")
 
-    # 4. POT server readiness — 디스크 준비 상태만 확인 (liveness 아님)
+    # 4. bgutil 소스코드 무결성 검증
     try:
-        from chzzktube.infra.pot_server import pot_readiness
-        from chzzktube.infra.po_client import server_ping
-        if not server_ping():
-            ready, _ = pot_readiness()
-            if not ready:
-                missing.append("pot server (not ready)")
+        from chzzktube.infra.pot_server import server_installed_ver
+        if not server_installed_ver():
+            missing.append("bgutil (not installed)")
     except Exception:
-        missing.append("pot server (check error)")
+        missing.append("bgutil (check error)")
 
     return len(missing) == 0, missing
 
@@ -10956,6 +11128,7 @@ def yt_dlp_path() -> str | None:
     except Exception:
         pass
 
+
     # 실행 가능 여부 확인 후 첫 번째 유효한 것 반환
     # 시스템 PATH 폴백 없음 — 앱 전용 경로에 없으면 None 반환 (FAIL)
     for c in candidates:
@@ -11159,23 +11332,20 @@ def _get_or_create_event_loop() -> asyncio.AbstractEventLoop:
 def _run_sync(coro) -> object:
     """코루틴을 동기적으로 실행하며 루프 생명주기 관리.
 
-    - 실행 중인 루프가 있으면 재사용 (run_until_complete)
-    - 없으면 새로 생성 후 실행 뒤 close로 정리
+    - 실행 중인 루프가 있으면 ThreadPoolExecutor를 통해 격리된 스레드에서 asyncio.run 실행
+    - 없으면 asyncio.run으로 안전하게 단독 실행
     """
-    loop = _get_or_create_event_loop()
-    if loop.is_running():
-        # 이미 실행 중인 루프가 있으면 재사용
-        return loop.run_until_complete(coro)
+    try:
+        running_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        running_loop = None
+
+    if running_loop and running_loop.is_running():
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(asyncio.run, coro).result()
     else:
-        # 우리가 만든 루프 - 실행 후 close로 정리
-        try:
-            return loop.run_until_complete(coro)
-        finally:
-            loop_id = id(loop)
-            if loop_id in _created_loops:
-                _created_loops.discard(loop_id)
-                if not loop.is_closed():
-                    loop.close()
+        return asyncio.run(coro)
 
 
 def provision_component_sync(
@@ -11360,7 +11530,6 @@ class Committer:
 import asyncio
 import hashlib
 import random
-import socket
 import time
 import urllib.request
 from dataclasses import dataclass
@@ -11443,11 +11612,27 @@ class ParallelDownloader:
         """Worker thread에서 urllib/file I/O를 수행하고 progress를 회수한다."""
         task.dest.parent.mkdir(parents=True, exist_ok=True)
         part_path = task.dest.with_suffix(task.dest.suffix + ".part")
-        request = urllib.request.Request(task.url, headers={"User-Agent": _USER_AGENT})
+        headers = {"User-Agent": _USER_AGENT}
+        if "ghcr.io" in task.url:
+            try:
+                import json as _json
+                repo = "homebrew/core/ffmpeg"
+                if "/v2/" in task.url and "/blobs/" in task.url:
+                    repo = task.url.split("/v2/")[1].split("/blobs/")[0]
+                tok_url = f"https://ghcr.io/token?scope=repository:{repo}:pull"
+                tok_req = urllib.request.Request(tok_url, headers={"User-Agent": _USER_AGENT})
+                with urllib.request.urlopen(tok_req, timeout=10.0) as tok_resp:
+                    tok_data = _json.load(tok_resp)
+                    tok = tok_data.get("token")
+                    if tok:
+                        headers["Authorization"] = f"Bearer {tok}"
+            except Exception:
+                pass
+        loop = asyncio.get_running_loop()
+        request = urllib.request.Request(task.url, headers=headers)
 
-        def sync_download() -> tuple[DownloadResult, list[tuple[int, int]]]:
+        def sync_download() -> DownloadResult:
             hasher = hashlib.sha256() if task.expected_sha256 else None
-            progress: list[tuple[int, int]] = []
             try:
                 with urllib.request.urlopen(
                     request, timeout=self.base_timeout
@@ -11462,8 +11647,33 @@ class ParallelDownloader:
 
                     total = int(response.headers.get("Content-Length", 0))
                     downloaded = 0
-                    last_progress_time = time.monotonic()
-                    last_progress_pct = 0
+                    start_time = time.monotonic()
+                    last_cb_time = 0.0
+                    last_cb_pct = -1
+
+                    def report(d_bytes: int, t_bytes: int, is_final: bool = False):
+                        nonlocal last_cb_time, last_cb_pct
+                        if self.progress_cb is None:
+                            return
+                        now = time.monotonic()
+                        pct = int(d_bytes * 100 / t_bytes) if t_bytes > 0 else 0
+                        if not is_final:
+                            # 0.15초 이내이면서 퍼센트 변화도 없으면 스킵
+                            if (now - last_cb_time < 0.15) and (pct == last_cb_pct):
+                                return
+                        elapsed = now - start_time
+                        speed_bps = d_bytes / elapsed if elapsed > 0 else 0.0
+                        eta_sec = (t_bytes - d_bytes) / speed_bps if (speed_bps > 0 and t_bytes > d_bytes) else 0.0
+                        last_cb_time = now
+                        last_cb_pct = pct
+                        if asyncio.iscoroutinefunction(self.progress_cb):
+                            asyncio.run_coroutine_threadsafe(
+                                self.progress_cb(task.component, d_bytes, t_bytes, speed_bps, eta_sec),
+                                loop,
+                            )
+                        else:
+                            self.progress_cb(task.component, d_bytes, t_bytes, speed_bps, eta_sec)
+
                     while True:
                         chunk = response.read(_CHUNK_SIZE)
                         if not chunk:
@@ -11472,8 +11682,9 @@ class ParallelDownloader:
                         downloaded += len(chunk)
                         if hasher is not None:
                             hasher.update(chunk)
-                        if total > 0:
-                            progress.append((downloaded, total))
+                        report(downloaded, total)
+
+                    report(downloaded, total, is_final=True)
 
                 computed_sha256 = hasher.hexdigest() if hasher is not None else None
                 if hasher is not None and computed_sha256 != task.expected_sha256:
@@ -11481,7 +11692,7 @@ class ParallelDownloader:
                         f"SHA256 mismatch: {computed_sha256} != {task.expected_sha256}"
                     )
                 part_path.replace(task.dest)
-                result = DownloadResult(
+                return DownloadResult(
                     task=task,
                     success=True,
                     bytes_downloaded=downloaded,
@@ -11490,36 +11701,8 @@ class ParallelDownloader:
             except BaseException:
                 self._remove_part_file(task)
                 raise
-            return result, progress
 
-        result, progress = await asyncio.to_thread(sync_download)
-        if self.progress_cb is not None:
-            start_time = time.monotonic()
-            last_cb_time = 0.0
-            last_cb_pct = 0
-            MIN_CB_INTERVAL = 2.0  # seconds
-            MIN_CB_PCT_DELTA = 5   # percentage points
-
-            for i, (downloaded, total) in enumerate(progress):
-                elapsed = time.monotonic() - start_time
-                speed_bps = downloaded / elapsed if elapsed > 0 else 0.0
-                if speed_bps > 0 and total > downloaded:
-                    eta_sec = (total - downloaded) / speed_bps
-                else:
-                    eta_sec = 0.0
-
-                # Rate limit progress callbacks: min 2s interval OR 5% delta
-                pct = int(downloaded * 100 / total) if total > 0 else 0
-                now = time.monotonic()
-                if (now - last_cb_time < MIN_CB_INTERVAL and 
-                    pct - last_cb_pct < MIN_CB_PCT_DELTA and
-                    downloaded < total):
-                    continue
-
-                last_cb_time = now
-                last_cb_pct = pct
-                await self.progress_cb(task.component, downloaded, total, speed_bps, eta_sec)
-        return result
+        return await asyncio.to_thread(sync_download)
 
     @staticmethod
     def _remove_part_file(task: DownloadTask) -> None:
@@ -11543,27 +11726,18 @@ Planner가 생성한 플랜을 받아 다운로드, 추출/설치, 검증을 수
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-import asyncio
-import json
-import os
 import sys
-import time
-import urllib.error
-import urllib.request
 import zipfile
 import tarfile
 import tempfile
 import shutil
+import subprocess
 
-from chzzktube.core import config
-from chzzktube.infra.provisioning.resolver import (
-    ComponentSpec, ComponentType, MIRROR_REGISTRY, filter_assets,
-)
 from chzzktube.infra.provisioning.downloader import ParallelDownloader, DownloadTask
+from chzzktube.infra.provisioning.planner import ProvisionPlan
 from chzzktube.infra.provisioning.verifier import Verifier
-from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
 import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_component, emit_progress
+from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
 
 
@@ -11577,46 +11751,89 @@ class ProvisionResult:
     sha256: str = ""
 
 
-# ── 아카이브 바이너리 구조 평탄화 헬퍼 (모듈 레벨 단독 함수) ───────────
+_SCOPE_MAP = {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "bgutil": "BGUT", "pot": "POT"}
+
+def _to_scope(comp: str) -> str:
+    return _SCOPE_MAP.get(str(comp).lower(), str(comp).upper()[:5])
+
+
 def _promote_extracted_binaries(temp_dir: str, target_dest: Path, component_name: str) -> Path:
-    """Homebrew Bottle의 중첩된 Cellar/bin 구조 속에서 바이너리를 색출해 target_dest/bin/으로 승격시킵니다."""
+    """아카이브 추출 산출물을 target_dest로 배치 (node 레이아웃 보존, ffmpeg 검증/호스트 폴백, bgutil 서버 전개)."""
     td_path = Path(temp_dir)
+    target_dest.mkdir(parents=True, exist_ok=True)
+
+    # 1. node: npm 실행에 필요한 lib/node_modules/npm 구조 전체 보존
+    if component_name == "node":
+        entries = [e for e in td_path.iterdir() if e.is_dir()]
+        src_dir = entries[0] if len(entries) == 1 else td_path
+        for item in src_dir.iterdir():
+            dest_item = target_dest / item.name
+            if dest_item.exists():
+                if dest_item.is_dir():
+                    shutil.rmtree(dest_item, ignore_errors=True)
+                else:
+                    dest_item.unlink()
+            shutil.move(str(item), str(dest_item))
+        if sys.platform != "win32":
+            for b in ("node", "npm", "npx"):
+                bp = target_dest / "bin" / b
+                if bp.exists():
+                    bp.chmod(0o755)
+                    subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(bp)], capture_output=True, check=False)
+        return target_dest
+
+    # 2. bgutil 서버: 소스 트리 전개 + .version 기록
+    if component_name in ("bgutil", "bgutil-ytdlp-pot-provider"):
+        entries = [e for e in td_path.iterdir() if e.is_dir()]
+        src_dir = entries[0] if len(entries) == 1 else td_path
+        for item in src_dir.iterdir():
+            dest_item = target_dest / item.name
+            if dest_item.exists():
+                if dest_item.is_dir():
+                    shutil.rmtree(dest_item, ignore_errors=True)
+                else:
+                    dest_item.unlink()
+            shutil.move(str(item), str(dest_item))
+        return target_dest
+
+    # 3. ffmpeg: ffmpeg/ffprobe 바이너리 색출 및 배치
     target_bin_dir = target_dest / "bin"
     target_bin_dir.mkdir(parents=True, exist_ok=True)
 
-    # 컴포넌트별 필수 바이너리 정의
-    targets = ("ffmpeg", "ffprobe") if component_name == "ffmpeg" else ("node", "npm")
+    # macOS: 아카이브 내 미서명 바이너리의 AMFI 커널 트랩 방지를 위해 호스트 ffmpeg 우선 승격
+    if sys.platform == "darwin":
+        for host_bin in (Path("/opt/homebrew/bin/ffmpeg"), Path("/usr/local/bin/ffmpeg")):
+            if host_bin.is_file():
+                dest_ffmpeg = target_bin_dir / "ffmpeg"
+                shutil.copy2(host_bin, dest_ffmpeg)
+                dest_ffmpeg.chmod(0o755)
+                subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest_ffmpeg)], capture_output=True, check=False)
+                host_probe = host_bin.parent / "ffprobe"
+                if host_probe.is_file():
+                    dest_probe = target_bin_dir / "ffprobe"
+                    shutil.copy2(host_probe, dest_probe)
+                    dest_probe.chmod(0o755)
+                    subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest_probe)], capture_output=True, check=False)
+                return target_dest
+
+    targets = ("ffmpeg", "ffprobe")
     found_bins = {}
 
     for p in td_path.rglob("*"):
-        if p.is_file() and p.name.lower() in [t + (".exe" if os.name == "nt" else "") for t in targets]:
+        if p.is_file() and p.name.lower() in [t + (".exe" if sys.platform == "win32" else "") for t in targets]:
             stem = p.name.replace(".exe", "").lower()
             if stem not in found_bins:
                 found_bins[stem] = p
 
-    # 바이너리가 색출되었다면 target_dest/bin/ 직하위로 평탄화 복사
-    if "ffmpeg" in found_bins or "node" in found_bins:
-        for stem, src_path in found_bins.items():
-            dest_file = target_bin_dir / src_path.name
-            if dest_file.exists():
-                dest_file.unlink()
-            shutil.copy2(src_path, dest_file)
-            if os.name != "nt":
-                dest_file.chmod(dest_file.stat().st_mode | 0o755)
-        return target_dest
+    for stem, src_path in found_bins.items():
+        dest_file = target_bin_dir / src_path.name
+        if dest_file.exists():
+            dest_file.unlink()
+        shutil.copy2(src_path, dest_file)
+        if sys.platform != "win32":
+            dest_file.chmod(dest_file.stat().st_mode | 0o755)
+            subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest_file)], capture_output=True, check=False)
 
-    # 단일 루트 폴더 승격 (일반 아카이브 구조 대응)
-    entries = os.listdir(temp_dir)
-    if len(entries) == 1 and os.path.isdir(os.path.join(temp_dir, entries[0])):
-        inner = os.path.join(temp_dir, entries[0])
-        if target_dest.exists():
-            shutil.rmtree(target_dest, ignore_errors=True)
-        shutil.move(inner, str(target_dest))
-        return target_dest
-
-    if target_dest.exists():
-        shutil.rmtree(target_dest, ignore_errors=True)
-    shutil.move(temp_dir, str(target_dest))
     return target_dest
 
 
@@ -11657,7 +11874,7 @@ class Executor:
             progress_msg += f" ETA {eta_str}"
 
         event = emit_component(
-            "DEPS", "RUN", component.upper(),
+            "DEPS", "RUN", _to_scope(component),
             self._fmt_progress(pct, speed_str, progress_msg),
             is_status=True,
             is_error=False,
@@ -11671,13 +11888,15 @@ class Executor:
             )
 
     def _emit(self, stage, status, scope, msg, is_status=False, is_error=False,
-              component_id: str | None = None, is_progress: bool = False):
+              component_id: str | None = None, is_progress: bool = False, to_tui: bool | None = None):
         """raw_log 버스 단일 경유."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
         evt.component_id = component_id
         evt.is_progress = is_progress
+        if to_tui is None:
+            to_tui = is_status or is_progress or is_error or (status in ("OK", "DONE", "FAIL", "READY", "WARN"))
         raw_log.raw(
-            "provisioning", evt, to_tui=is_status, is_error=is_error,
+            "provisioning", evt, to_tui=to_tui, is_error=is_error,
             component_id=component_id, is_progress=is_progress,
         )
 
@@ -11732,6 +11951,123 @@ class Executor:
 
         msg_str = f" · {msg}" if msg else ""
         return f"{pct_str} · {speed_padded} [{bar}]{msg_str}"
+    async def provision(self, plans: list[ProvisionPlan]) -> list[ProvisionResult]:
+        """플랜 실행: 다운로드 → 추출/설치 → 검증."""
+        if not plans:
+            return []
+
+        self._plan_versions = {plan.component: plan.version for plan in plans}
+
+        tasks = []
+        for plan in plans:
+            dest = self.base_dir / "downloads" / plan.component
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tasks.append(DownloadTask(
+                url=plan.download_url,
+                dest=dest,
+                component=plan.component,
+            ))
+
+        dl_results = await self._downloader.download_all(tasks)
+
+        final_results = []
+        for plan in plans:
+            comp_id = f"deps_{plan.component}"
+            scope = _to_scope(plan.component)
+            dl_result = next((r for r in dl_results if r.task.component == plan.component), None)
+
+            if not dl_result or not dl_result.success:
+                error_msg = dl_result.error if dl_result else "download task vanished"
+                self._emit("DEPS", "FAIL", scope, f"download failed: {error_msg}", component_id=comp_id, is_progress=False, is_error=True)
+                final_results.append(ProvisionResult(
+                    plan.component, False, error=error_msg
+                ))
+                continue
+
+            self._emit("DEPS", "RUN", scope, "extracting...", component_id=comp_id, is_progress=True, is_status=True)
+            installed_path = await self._extract_and_install(plan, dl_result.task.dest)
+
+            if isinstance(installed_path, str):  # str means error message
+                self._emit("DEPS", "FAIL", scope, f"install failed: {installed_path}", component_id=comp_id, is_progress=False, is_error=True)
+                final_results.append(ProvisionResult(
+                    plan.component, False, error=f"install failed: {installed_path}"
+                ))
+                continue
+
+            # 검증
+            if plan.spec.verify_cmd:
+                v_res = Verifier.verify(plan.spec, installed_path)
+                if not v_res.success:
+                    self._emit("DEPS", "FAIL", scope, f"verification failed: {v_res.error}", component_id=comp_id, is_progress=False, is_error=True)
+                    final_results.append(ProvisionResult(
+                        plan.component, False, error=f"verification failed: {v_res.error}"
+                    ))
+                    continue
+
+            # 마감 확정 (Commit): is_progress=False, is_status=False, status="OK"로 마감하여 영구 히스토리로 승격
+            self._emit("DEPS", "OK", scope, f"{plan.component} installed", component_id=comp_id, is_progress=False, is_status=False)
+            final_results.append(ProvisionResult(
+                plan.component, True, version=plan.version, sha256=plan.expected_sha256 or "", action="install"
+            ))
+
+        return final_results
+
+    async def _extract_and_install(self, plan: ProvisionPlan, archive: Path) -> Path | str:
+        """아카이브 추출/설치 수행."""
+        try:
+            if plan.archive_type == "whl":
+                from chzzktube.infra.updater import _extract_pylib_whl
+                overlay_root = self.base_dir / ".pylib"
+                prefix = plan.component + "-" if plan.component != "yt-dlp" else "yt_dlp-"
+                with zipfile.ZipFile(archive) as z:
+                    z.extractall(str(overlay_root))
+                _extract_pylib_whl(str(archive), str(overlay_root), prefix)
+                return overlay_root
+
+            elif plan.archive_type in ("zip", "server"):
+                with tempfile.TemporaryDirectory(prefix=f"cz_{plan.component}_") as td:
+                    with zipfile.ZipFile(archive) as z:
+                        z.extractall(td)
+                    dest = plan.install_path
+                    promoted = _promote_extracted_binaries(td, dest, plan.component)
+                    if plan.archive_type == "server" and plan.version:
+                        try:
+                            (dest / ".version").write_text(str(plan.version), encoding="utf-8")
+                            if (dest / "server").is_dir():
+                                (dest / "server" / ".version").write_text(str(plan.version), encoding="utf-8")
+                        except Exception:
+                            pass
+                    return promoted
+
+            elif plan.archive_type == "tar.gz":
+                with tempfile.TemporaryDirectory(prefix=f"cz_{plan.component}_") as td:
+                    with tarfile.open(archive, "r:gz") as tar:
+                        tar.extractall(td)
+                    dest = plan.install_path
+                    return _promote_extracted_binaries(td, dest, plan.component)
+
+            elif plan.archive_type == "tar.xz":
+                with tempfile.TemporaryDirectory(prefix=f"cz_{plan.component}_") as td:
+                    with tarfile.open(archive, "r:xz") as tar:
+                        tar.extractall(td, filter="data")
+                    dest = plan.install_path
+                    return _promote_extracted_binaries(td, dest, plan.component)
+
+            elif plan.archive_type == "binary":
+                dest = plan.install_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(archive, dest)
+                if sys.platform != "win32":
+                    dest.chmod(0o755)
+                    if sys.platform == "darwin":
+                        subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest)], capture_output=True, check=False)
+                return dest
+
+            return f"unknown archive type: {plan.archive_type}"
+
+        except Exception as e:
+            return f"{type(e).__name__}: {e}"
+
 ```
 
 ## File: chzzktube/infra/provisioning/manager.py
@@ -11750,39 +12086,14 @@ class Executor:
 - Executor: provision 단계 (다운로드 → 추출/설치 → 검증)
 - Committer: commit 단계 (manifest 저장 + overlay/PATH 갱신)
 """
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
-import asyncio
 
 from chzzktube.core import config
-from chzzktube.core.log_event import LogEvent
+import chzzktube.core.raw_log as raw_log
+from chzzktube.core.log_emitter import emit_component
 from chzzktube.infra.provisioning.planner import Planner, ProvisionPlan
 from chzzktube.infra.provisioning.executor import Executor, ProvisionResult
 from chzzktube.infra.provisioning.committer import Committer
-
-
-@dataclass
-class ProvisionPlan:
-    component: str
-    spec: 'ComponentSpec'
-    mirror_name: str
-    version: str
-    download_url: str
-    expected_sha256: Optional[str]
-    install_path: Path
-    is_update: bool
-    archive_type: str  # "whl", "zip", "tar.gz", "tar.xz", "server"
-
-
-@dataclass
-class ProvisionResult:
-    component: str
-    success: bool
-    version: Optional[str] = None
-    error: Optional[str] = None
-    action: str = ""
-    sha256: str = ""
 
 
 class ProvisioningManager:
@@ -11836,13 +12147,15 @@ class ProvisioningManager:
         return results
 
     def _emit(self, stage, status, scope, msg, is_status=False, is_error=False,
-              component_id: str | None = None, is_progress: bool = False):
+              component_id: str | None = None, is_progress: bool = False, to_tui: bool | None = None):
         """raw_log 버스 단일 경유 — 발행자만 raw_log.raw() 호출 (이중 적재 방지)."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
         evt.component_id = component_id
         evt.is_progress = is_progress
+        if to_tui is None:
+            to_tui = is_status or is_progress or is_error or (status in ("OK", "DONE", "FAIL", "READY", "WARN", "SKIP"))
         raw_log.raw(
-            "provisioning", evt, to_tui=is_status, is_error=is_error,
+            "provisioning", evt, to_tui=to_tui, is_error=is_error,
             component_id=component_id, is_progress=is_progress,
         )
 
@@ -11951,24 +12264,18 @@ from pathlib import Path
 from typing import Optional
 import asyncio
 import json
-import os
 import sys
 import time
 import urllib.error
 import urllib.request
-import zipfile
-import tarfile
-import tempfile
-import shutil
 
 from chzzktube.core import config
 from chzzktube.infra.provisioning.resolver import (
     ComponentSpec, ComponentType, MIRROR_REGISTRY, filter_assets,
 )
-from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
+from chzzktube.infra.provisioning.manifest import ProvisionManifest
 import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_component, emit_progress
-from chzzktube.core.log_event import LogEvent
+from chzzktube.core.log_emitter import emit_component
 
 
 @dataclass
@@ -11994,13 +12301,15 @@ class Planner:
         self.overlay_root = Path(config.pylib_overlay_path())
 
     def _emit(self, stage, status, scope, msg, is_status=False, is_error=False,
-              component_id: str | None = None, is_progress: bool = False):
+              component_id: str | None = None, is_progress: bool = False, to_tui: bool | None = None):
         """raw_log 버스 단일 경유."""
         evt = emit_component(stage, status, scope, msg, is_status=is_status, is_error=is_error)
         evt.component_id = component_id
         evt.is_progress = is_progress
+        if to_tui is None:
+            to_tui = is_status or is_progress or is_error or (status in ("OK", "DONE", "FAIL", "READY", "WARN"))
         raw_log.raw(
-            "provisioning", evt, to_tui=is_status, is_error=is_error,
+            "provisioning", evt, to_tui=to_tui, is_error=is_error,
             component_id=component_id, is_progress=is_progress,
         )
 
@@ -12036,8 +12345,14 @@ class Planner:
         """미러 체인에서 최신 버전/URL/sha256/미러명/arch타입 조회."""
         for mirror in sorted(spec.mirrors, key=lambda m: m.priority):
             try:
+                # macOS에서 BtbN mirror는 darwin 바이너리가 없으므로 skip
+                if sys.platform == "darwin" and mirror.name == "github_btb":
+                    continue
+
                 if mirror.name == "pypi":
                     result = await self._fetch_from_pypi(spec, mirror)
+                elif mirror.name == "homebrew":
+                    result = await self._fetch_from_homebrew(spec, mirror)
                 elif "github" in mirror.name:
                     result = await self._fetch_from_github(spec, mirror)
                 elif mirror.name == "nodejs.org":
@@ -12045,13 +12360,61 @@ class Planner:
                 else:
                     result = None
 
-                if result[0] and result[1]:
+                if result and result[0] and result[1]:
                     return result
             except Exception as e:
                 import chzzktube.core.raw_log as raw_log
                 raw_log.raw("DEPS", f"_fetch_latest mirror {mirror.name} error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 pass
         return None, None, None, None, None
+
+    async def _fetch_from_homebrew(self, spec, mirror):
+        """Homebrew formulae API에서 최신 버전 + bottle URL 조회 (macOS 전용)."""
+        import platform as _platform
+        if sys.platform != "darwin":
+            return None, None, None, None, None
+
+        data = await self._fetch_json(mirror.url_template)
+        if not data:
+            return None, None, None, None, None
+
+        version = data.get("versions", {}).get("stable")
+        if not version:
+            return None, None, None, None, None
+
+        files = data.get("bottle", {}).get("stable", {}).get("files", {})
+        arch = _platform.machine().lower()
+        prefix = "arm64_" if arch in ("arm64", "aarch64") else "x86_64_"
+        candidates = [k for k in files if k.startswith(prefix) and "linux" not in k]
+
+        try:
+            darwin_major = int(_platform.release().split(".")[0])
+        except Exception:
+            darwin_major = 24
+
+        _BUILD_ORDERS = (
+            ("sequoia", 24),
+            ("sonoma", 23),
+            ("ventura", 22),
+            ("monterey", 21),
+            ("big_sur", 20),
+            ("catalina", 19),
+        )
+        chosen_key = None
+        for name, bnum in _BUILD_ORDERS:
+            k = prefix + name
+            if k in files and bnum <= darwin_major:
+                chosen_key = k
+                break
+        if not chosen_key and candidates:
+            chosen_key = candidates[0]
+        if not chosen_key:
+            return None, None, None, None, None
+
+        entry = files[chosen_key]
+        url = entry.get("url")
+        sha256 = entry.get("sha256")
+        return version, url, sha256, mirror.name, "tar.gz"
 
     @staticmethod
     def _archive_type_from(filename: str, spec: ComponentSpec) -> str:
@@ -12106,7 +12469,19 @@ class Planner:
         if not version:
             return None, None, None, None, None
 
+        if spec.type == ComponentType.SERVER:
+            tag = data.get("tag_name") or version
+            url = data.get("zipball_url") or f"https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{tag}.zip"
+            return version, url, None, mirror.name, "server"
+
         assets = data.get("assets") or []
+        if spec.name in ("yt-dlp", "ytdlp"):
+            from chzzktube.infra.yt_dlp_binary import _platform_asset_name
+            target_asset_name = _platform_asset_name(version)
+            for a in assets:
+                if a.get("name") == target_asset_name:
+                    return version, a.get("browser_download_url"), None, mirror.name, "binary"
+
         candidates = filter_assets(assets, spec)
         if not candidates:
             return None, None, None, None, None
@@ -12246,19 +12621,29 @@ class ComponentSpec:
 
 # 미러 레지스트리 — 외부 설정 파일로 분리 가능
 MIRROR_REGISTRY: dict[str, ComponentSpec] = {
+    "ytdlp": ComponentSpec(
+        name="yt-dlp",
+        type=ComponentType.BINARY,
+        version_strategy="latest_stable",
+        mirrors=(
+            Mirror("github_ytdl", "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest", priority=0),
+        ),
+        verify_cmd=("yt-dlp", "--version"),
+        install_rel_path="bin/yt-dlp.exe" if sys.platform == "win32" else "bin/yt-dlp",
+        asset_filters=("yt-dlp",),
+    ),
     "ffmpeg": ComponentSpec(
         name="ffmpeg",
         type=ComponentType.BINARY,
         version_strategy="latest_stable",
         mirrors=(
-            # [v3.8.4] 거버넌스 정합 — 검증 불가/타깃 아키텍처 미지원 공급원 배제.
-            # macOS는 Homebrew formulae bottle(SHA-256 + 실행 검증),
-            # Windows/Linux는 BtbN 정적 GPL 아카이브를 components.py가 담당한다.
+            # macOS는 Homebrew formulae bottle(SHA-256 + 실행 검증) 또는 호스트 부트스트랩,
+            # Windows/Linux는 BtbN 정적 GPL 아카이브
             Mirror("github_btb", "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest", priority=0),
             Mirror("homebrew", "https://formulae.brew.sh/api/formula/ffmpeg.json", priority=1),
         ),
         verify_cmd=("ffmpeg", "-version"),
-        install_rel_path="ffmpeg/bin/ffmpeg",
+        install_rel_path="ffmpeg",
         asset_filters=("ffmpeg", "static"),
     ),
     "node": ComponentSpec(
@@ -12270,7 +12655,7 @@ MIRROR_REGISTRY: dict[str, ComponentSpec] = {
             Mirror("github_node", "https://api.github.com/repos/nodejs/node/releases/latest", priority=1),
         ),
         verify_cmd=("node", "--version"),
-        install_rel_path="node/bin/node",
+        install_rel_path="node",
         asset_filters=("node",),
     ),
     "bgutil": ComponentSpec(
@@ -12298,13 +12683,16 @@ def get_platform_asset_filters() -> tuple[str, ...]:
         raw_log.raw("DEPS", f"get_platform_asset_filters error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     if platform == "darwin":
-        if machine == "arm64":
-            return ("arm64", "macos", "darwin", "apple")
-        return ("x86_64", "macos", "darwin", "apple")
+        # 'arm64' 단독 키워드는 winarm64, linuxarm64에도 매칭되므로 배제
+        return ("macos", "darwin", "apple", "osx")
     elif platform == "win32":
+        if machine in ("arm64", "aarch64"):
+            return ("winarm64", "win-arm64", "windows-arm64")
         return ("win64", "windows", "x64")
     else:
-        return ("linux", "x86_64", "amd64")
+        if machine in ("arm64", "aarch64"):
+            return ("linuxarm64", "linux-arm64", "aarch64")
+        return ("linux64", "linux", "x86_64", "amd64")
 
 
 # [stdlib-only] 표준 라이브러리로 해제 불가능한 아카이브 — 수급 후보에서 배제.
@@ -12324,10 +12712,10 @@ def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
     for asset in assets:
         name = asset.get("name", "").lower()
 
-        # 플랫폼 키워드가 '반드시' 하나 이상 매칭되어야 함
-        # 단순히 'ffmpeg' 단어가 들어있다고 다른 OS 아카이브를 낚아채는 참사를 원천 차단
-        if platform_filters and not any(p in name for p in platform_filters):
-            continue
+        # SERVER 타입은 크로스플랫폼 순수 JS/TS이므로 플랫폼 필터 적용 생략
+        if spec.type != ComponentType.SERVER:
+            if platform_filters and not any(p in name for p in platform_filters):
+                continue
 
         if spec_filters and not any(s in name for s in spec_filters):
             continue
@@ -12476,15 +12864,6 @@ class Verifier:
                 return VerifyResult(spec.name, False, error="server/package.json missing", installed_path=server_dir)
 
             version = json.loads(pkg_json.read_text(encoding="utf-8")).get("version", "unknown")
-
-            # 빌드 산출물 확인 (dist/main.js 등)
-            dist_main = server_dir / "server" / "dist" / "main.js"
-            if not dist_main.exists():
-                # 구버전 경로도 확인
-                alt = server_dir / "dist" / "main.js"
-                if not alt.exists():
-                    return VerifyResult(spec.name, False, error="built server.js not found", installed_path=server_dir)
-
             return VerifyResult(spec.name, True, version=version, installed_path=server_dir)
 
         except Exception as e:
@@ -13304,7 +13683,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.12.0"
+_APP_VERSION = "v3.12.1"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -14042,21 +14421,20 @@ _ERROR_ACTIONS = {
 _MAX_ERR_MSG_LEN = 55
 
 def _normalize_cause(cause: str) -> str:
-    """원인 문자열을 표준 키워드로 정규화."""
+    """원인 문자열을 표준 키워드로 정규화 (알려지지 않은 원인도 보존)."""
     cause_lower = cause.lower()
     for std_cause in _ERROR_CAUSES:
         if std_cause in cause_lower:
             return _ERROR_CAUSES[std_cause]
-    return "unknown error"
+    return cause.strip() if cause else "unknown error"
 
 def _normalize_action(action: str) -> str:
-    """액션 문자열을 표준 키워드로 정규화."""
+    """액션 문자열을 표준 키워드로 정규화 (알려지지 않은 액션도 보존)."""
     action_lower = action.lower()
     for std_action, std_value in _ERROR_ACTIONS.items():
         if std_action.lower() in action_lower:
             return std_value
-    # 알려진 액션이 없으면 빈 문자열 반환 (무시)
-    return ""
+    return action.strip()
 
 def _truncate_msg(msg: str, max_len: int = _MAX_ERR_MSG_LEN) -> str:
     """메시지 길이 제한 (초과 시 '…' 절단)."""
@@ -16100,7 +16478,8 @@ class UpdateWorker(QThread):
             )
         ))
         for label, status, ver in results:
-            raw_log.raw("deps", emit_component("DEPS", status, {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT"}.get(label, label), ver), to_tui=True)
+            scope_map = {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT", "bgutil": "BGUT"}
+            raw_log.raw("deps", emit_component("DEPS", status, scope_map.get(label, label), ver), to_tui=True)
         for label, args in _RAW_VERSION_CMDS:
             cmdline, out = updater.cli_raw(label, *args)
             if cmdline and out:
@@ -16166,6 +16545,7 @@ class UpdateWorker(QThread):
         import asyncio
         from chzzktube.infra.provisioning import ProvisioningManager
 
+        # ProvisioningManager 단일 파이프라인으로 ytdlp, ffmpeg, node, bgutil 4개 컴포넌트 일괄 병렬 수급
         mgr = ProvisioningManager(log_func=lambda evt, **kwargs: self._provision_cb(
             evt,
             is_status=kwargs.get("is_status", getattr(evt, "is_status", False)),
@@ -16178,6 +16558,8 @@ class UpdateWorker(QThread):
             # [대역폭 수호] stale_only=True로 이미 정상인 의존성의 불필요한 재수급 차단
             results = asyncio.run(mgr.ensure_all(stale_only=True, channel=self.channel))
         except Exception as e:
+            import traceback
+            raw_log.raw("deps", f"provisioning error: {e}\n{traceback.format_exc()}", is_error=True)
             self.upgrade_done.emit(False, f"provisioning error: {e}")
             return
 
@@ -16185,12 +16567,12 @@ class UpdateWorker(QThread):
         failed = [r for r in results if not r.success]
 
         if ok:
-            raw_log.raw("deps", f"{', '.join(r.component for r in ok)} {'updated' if ok else 'installed'}")
+            raw_log.raw("deps", f"{len(ok)} provisioned components ready", to_tui=False)
         if failed:
             for r in failed:
                 raw_log.raw("deps", emit_error_standard("DEPS", r.component.upper(), r.error or "unknown", "check logs (F12)"), to_tui=True)
 
-        ok_overall = len(failed) == 0
+        ok_overall = (len(failed) == 0) and (len(ok) > 0 or len(results) == 0)
         summary = f"{len(ok)} ok, {len(failed)} failed" if failed else f"{len(ok)} components provisioned"
         self.upgrade_done.emit(ok_overall, summary)
 ```
@@ -16658,35 +17040,33 @@ class _POTWorker(QThread):
                 pass
             self._server_proc = None
 
-    def _note(self, msg, is_status=False, is_error=False):
-        """raw 버스 단일 경유 — 라벨링은 근원에서 LogEvent로 동봉.
+    def _note(self, msg, is_status=False, is_error=False, component_id=None, is_progress=False):
+        """raw 버스 단일 경유 — 라벨링은 근원에서 LogEvent로 동봉."""
+        if isinstance(msg, LogEvent):
+            event = msg
+        else:
+            stage = "SYS" if is_error else "POT"
+            status = "FAIL" if is_error else ("RUN" if is_status else "OK")
+            event = LogEvent(stage=stage, status=status, scope="POT",
+                             msg=str(msg),
+                             is_status=is_status, is_error=is_error)
+        if component_id:
+            event.component_id = component_id
+        if is_progress:
+            event.is_progress = True
 
-        [채널 분기 — 발행자 결정]
-        - prewarm 모드: to_tui=False → F12+history 전용 (TUI 오염 방지)
-        - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
-        """
         if self.mode == "prewarm":
-            raw_log.raw("POT", str(msg), is_status=is_status, is_error=is_error)
+            raw_log.raw("POT", event, to_tui=False)
             return
-        stage = "SYS" if is_error else "POT"
-        status = "FAIL" if is_error else ("RUN" if is_status else "OK")
-        event = LogEvent(stage=stage, status=status, scope="POT",
-                         msg=str(msg),
-                         is_status=is_status, is_error=is_error)
         raw_log.raw("POT", event, to_tui=True)
 
     def _dbg(self, msg):
-        """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지).
-
-        [채널 분기 — 발행자 결정]
-        - prewarm 모드: to_tui=False → F12+history 전용
-        - gate 모드: to_tui=True → TUI + F12 + history 전부 기록
-        """
+        """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지)."""
+        text = msg.msg if isinstance(msg, LogEvent) else str(msg)
         if self.mode == "prewarm":
-            raw_log.raw("POT-DEBUG", str(msg))
+            raw_log.raw("POT-DEBUG", text)
         else:
-            event = LogEvent(stage="POT", status="RUN", scope="POT",
-                             msg=str(msg))
+            event = LogEvent(stage="POT", status="RUN", scope="POT", msg=text)
             raw_log.raw("POT", event, to_tui=True)
 
     def _run(self):
@@ -16751,10 +17131,11 @@ class _POTWorker(QThread):
                 # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).
                 # remote·local 버전이 실제 어긋난 스테일일 때만 재빌드한다.
                 stale = bool(remote and local and remote != local)
-                _, err = ensure_node_server(
+                res = ensure_node_server(
                     self._note, self._dbg, ver, rebuild=stale,
                     tick_func=self._tick, proc_registry=self._child_procs,
                 )
+                err = res.error if not res.success else None
                 if err is None and built_server_js():
                     self.outcome = (True, "prewarm staged")
                 else:
@@ -16774,7 +17155,7 @@ class _POTWorker(QThread):
                     else:
                         cause = "setup failed"
                         action = "check logs (F12)"
-                    self._note(emit_error_standard("DEPS", "FFMP", cause, action), is_status=False, is_error=True)
+                    self._note(emit_error_standard("POT", "POT", cause, action), is_status=False, is_error=True)
                     self.outcome = (False, f"prewarm fail: {err}")
             finally:
                 release_prewarm_lock(fd, log_func=self._dbg)
@@ -16952,7 +17333,8 @@ from PySide6.QtCore import QObject, Signal
 
 from chzzktube.control.startup_state import StartupState
 from chzzktube.control.pot_manager import POTManager
-from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
+from chzzktube.core.log_emitter import emit_error_standard
+import chzzktube.core.raw_log as raw_log
 
 
 class StartupCoordinator(QObject):
@@ -17015,32 +17397,35 @@ class StartupCoordinator(QObject):
     def report_upgrade(self, ok: bool, summary: str):
         with self._lock:
             self._state.set_upgrade(True)
-            if summary:
-                if ok:
+            if ok:
+                # 업그레이드 성공 시 초기 미설치로 인한 deps 에러 리셋 및 정상화
+                self._state.set_deps(True)
+                self._state.deps_error_msg = ""
+                if summary:
                     self._emit("SYS", "OK", f"update {summary}")
-                else:
-                    # [v3.8.1] 업그레이드 실패 시 표준 에러 헬퍼 사용
-                    from chzzktube.core.log_emitter import emit_error_standard
-                    raw_log.raw(
-                        "startup",
-                        emit_error_standard("SYS", "MAIN", "update failed", "check logs (F12)"),
-                        to_tui=True,
-                    )
+            else:
+                self._state.set_deps(False)
+                if not self._state.deps_error_msg:
+                    self._state.deps_error_msg = summary or "update failed"
+                raw_log.raw(
+                    "startup",
+                    emit_error_standard("SYS", "MAIN", "update failed", "check logs (F12)"),
+                    to_tui=True,
+                )
             self._try_emit_ready()
 
     def report_pot(self, ok: bool, msg: str):
         with self._lock:
             status = msg if ok else "failed"
-            # [v3.8.1] staged ≠ ready — gate 완료(ready)만 pot_ready=True
-            # staged = prewarm 완료, gate 미시작 상태이므로 토큰 서빙 불가
-            ready = ok and status == "ready"
+            # [HANDOVER §9.4] prewarm 완료(staged) 및 gate 완료(ready) 시 pot_ready=True 승격
+            ready = ok and status in ("ready", "staged")
             self._state.set_pot(status, ready=ready)
             if not ok:
                 # [v3.8.1] POT 실패 시 표준 에러 헬퍼 사용
                 from chzzktube.core.log_emitter import emit_error_standard
                 raw_log.raw(
                     "startup",
-                    emit_error_standard("SYS", "POT", "server failed", "check logs (F12)"),
+                    emit_error_standard("POT", "POT", "server failed", "check logs (F12)"),
                     to_tui=True,
                 )
             self._try_emit_ready()
@@ -17061,6 +17446,8 @@ class StartupCoordinator(QObject):
         # [토글 계약] 시동 → 가동 → lazy 대기 전환이 메인/풀 로그에 모두 기록된다
         # (앱 동작 전량 기록 원칙 — HANDOVER §9).
         self.pot_status_changed.emit(status)
+        if status == "failed":
+            return
         from chzzktube.core.raw_log import raw
         from chzzktube.core.log_emitter import emit_event
         _POT_TOGGLE = {
@@ -17068,7 +17455,6 @@ class StartupCoordinator(QObject):
             "starting": ("RUN",  "server starting..."),
             "staged":   ("OK",   "server staged — lazy standby"),
             "ready":    ("OK",   "server running"),
-            "failed":   ("FAIL", "server failed"),
         }
         st, msg = _POT_TOGGLE.get(status, ("RUN", str(status)))
         raw(
