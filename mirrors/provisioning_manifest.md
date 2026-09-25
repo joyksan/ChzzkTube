@@ -46,8 +46,9 @@ class ProvisionManifest:
                     last_check=data.get("last_check", 0),
                     last_full_update=data.get("last_full_update", 0),
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("DEPS", f"manifest load error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return cls()
 
     def save(self, base_dir: Path) -> None:

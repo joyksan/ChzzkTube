@@ -136,6 +136,12 @@ class TestParallelDownloaderStdlib:
 
 
 class TestProvisioningManagerStdlib:
+    def test_manager_imports_without_httpx(self):
+        manager_module = _import_without_httpx(
+            "chzzktube.infra.provisioning.manager"
+        )
+        assert hasattr(manager_module, "ProvisioningManager")
+
     @pytest.mark.parametrize(
         ("method_name", "payload", "expected"),
         [
@@ -145,11 +151,7 @@ class TestProvisioningManagerStdlib:
                     "info": {"version": "1.2.3"},
                     "releases": {
                         "1.2.3": [
-                            {
-                                "filename": "demo-1.2.3-py3-none-any.whl",
-                                "url": "https://packages.invalid/demo.whl",
-                                "digests": {"sha256": "a" * 64},
-                            }
+                            {"filename": "demo-1.2.3-py3-none-any.whl", "url": "https://packages.invalid/demo.whl", "digests": {"sha256": "a" * 64}},
                         ]
                     },
                 },
@@ -166,14 +168,11 @@ class TestProvisioningManagerStdlib:
                 {
                     "tag_name": "v1.2.3",
                     "assets": [
-                        {
-                            "name": "demo-1.2.3-darwin-arm64.zip",
-                            "browser_download_url": "https://releases.invalid/demo.zip",
-                        }
+                        {"name": "demo-1.2.3-darwin-arm64.zip", "browser_download_url": "https://releases.invalid/demo.zip"},
                     ],
                 },
                 (
-                    "v1.2.3",
+                    "1.2.3",
                     "https://releases.invalid/demo.zip",
                     None,
                     "github",
@@ -196,13 +195,17 @@ class TestProvisioningManagerStdlib:
     def test_metadata_fetchers_work_without_httpx(
         self, method_name, payload, expected
     ):
-        manager_module = _import_without_httpx(
-            "chzzktube.infra.provisioning.manager"
+        # 이제 Planner 클래스에서 테스트 (리팩토링 후)
+        planner_module = _import_without_httpx(
+            "chzzktube.infra.provisioning.planner"
         )
-        manager = manager_module.ProvisioningManager.__new__(
-            manager_module.ProvisioningManager
-        )
-        method = getattr(manager, method_name)
+        planner = planner_module.Planner.__new__(planner_module.Planner)
+        from pathlib import Path
+        planner.base_dir = Path("/tmp")
+        from chzzktube.infra.provisioning.manifest import ProvisionManifest
+        planner.manifest = ProvisionManifest()
+        planner.overlay_root = Path("/tmp/.pylib")
+        method = getattr(planner, method_name)
         spec = SimpleNamespace(name="demo", asset_filters=())
         mirror = SimpleNamespace(
             name="github" if method_name == "_fetch_from_github" else (
@@ -212,19 +215,23 @@ class TestProvisioningManagerStdlib:
         )
 
         async def run_fetch():
-            manager._fetch_json = AsyncMock(return_value=payload)
-            manager._fetch_text = AsyncMock(return_value="93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57  node-v22.1.0-darwin-arm64.tar.gz")
+            planner._fetch_json = AsyncMock(return_value=payload)
+            planner._fetch_text = AsyncMock(return_value="93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57  node-v22.1.0-darwin-arm64.tar.gz")
             return await method(spec, mirror)
 
         assert asyncio.run(run_fetch()) == expected
 
     def test_fetch_latest_falls_back_to_next_mirror(self):
-        manager_module = _import_without_httpx(
-            "chzzktube.infra.provisioning.manager"
+        # Planner.resolve() 메서드 테스트 (리팩토링 후)
+        planner_module = _import_without_httpx(
+            "chzzktube.infra.provisioning.planner"
         )
-        manager = manager_module.ProvisioningManager.__new__(
-            manager_module.ProvisioningManager
-        )
+        planner = planner_module.Planner.__new__(planner_module.Planner)
+        from pathlib import Path
+        planner.base_dir = Path("/tmp")
+        from chzzktube.infra.provisioning.manifest import ProvisionManifest
+        planner.manifest = ProvisionManifest()
+        planner.overlay_root = Path("/tmp/.pylib")
         mirrors = (
             Mirror(
                 name="pypi",
@@ -261,9 +268,9 @@ class TestProvisioningManagerStdlib:
                     "zip",
                 )
 
-            manager._fetch_from_pypi = fetch_from_pypi
-            manager._fetch_from_github = fetch_from_github
-            return await manager._fetch_latest(spec)
+            planner._fetch_from_pypi = fetch_from_pypi
+            planner._fetch_from_github = fetch_from_github
+            return await planner._fetch_latest(spec)
 
         assert asyncio.run(run_resolve()) == (
             "1.2.3",
@@ -272,4 +279,3 @@ class TestProvisioningManagerStdlib:
             "github",
             "zip",
         )
-

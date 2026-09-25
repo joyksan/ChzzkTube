@@ -199,7 +199,7 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
 
-        # 구성요소(yt-dlp/streamlink) 자동 업데이트 확인 — 기동 직후 비동기 1회
+        # 구성요소(yt-dlp/ffmpeg/node) 자동 업데이트 확인 — 기동 직후 비동기 1회
         QTimer.singleShot(500, self._start_update_check)
 
         # [v3.8.1] 폴백 타이머 제거 — deps 수급 실패 시 영구 잠금, 사용자 재시도(ENTER) 대기

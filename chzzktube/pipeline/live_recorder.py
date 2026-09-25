@@ -239,7 +239,8 @@ def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
                                       ),
                                 )
                 except Exception as e:
-                                )
+                    import chzzktube.core.raw_log as raw_log
+                    raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     stderr_t = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_t.start()

@@ -1,4 +1,43 @@
-### 2026-09-24 — v3.9.0 : 대규모 리팩토링(기술부채 해소 + 방향성 재정립) — 게이트/워치독 상태 추출, 파이프라인 분기 분리, LogEvent deprecated 정리, 타임아웃/권한 일관화, 로그 인젝션 회귀 테스트 (minor)
+### 2026-09-25 — v3.11.0 : yt-dlp 독립 실행형 바이너리·Silent Fallback 제거·진행률 바 재구성·프로비저닝 아키텍처 리팩토링 (minor)
+
+#### 배경 (v3.10.0 → v3.11.0)
+- **yt-dlp 배포 방식 통일**: `.pylib` Python 패키지(whl) 경로 완전 제거 → GitHub Release 독립 실행형 바이너리 단일 경로로 통합 (dev/frozen 공통). Nightly 채널(`yt-dlp-nightly`) 별도 다운로드 경로 추가.
+- **Silent Fallback 전면 제거**: 전체 코드베이스에서 `except Exception: pass` / bare `except:` 패턴 0개 달성. 모든 예외는 `log_f12_net()`/`log_f12_cli()`로 명시적 F12 에러 로깅 후 기본값 반환 (LOG + FAIL 패턴).
+- **진행률 바 최소 영문화**: TUI MSG를 `downloading` | `completed` | `failed` | `verifying` 단일 단어로 축소, MB/ETA/speed는 구조화 필드(`pct`, `speed`, `bar_frac`)로 분리. 필드 순서 `PCT → SPEED → BAR → MSG` 칼정렬.
+- **TUI/F12 채널 격리 준수**: TUI는 제자리 갱신(`is_status=True` + `component_id` + `is_progress=True`), F12/파일은 CLI 원문/HTTP 헤더/검증 상세/트레이스백 전량 보존. 완료 시 `status="OK"` 커밋.
+- **프로비저닝 아키텍처 리팩토링**: `ProvisioningManager` → `Planner`/`Executor`/`Committer` 3클래스 분리 (SRP 준수). `pot_server.ensure_node_server()` 200줄 → 7개 헬퍼 함수 단계별 분리. `acquire_prewarm_lock()` `int|None` → `Result` 표준화 (하위 호환 유지). `bridge.py` 이벤트 루프 재사용(`_get_or_create_event_loop` + `_run_sync` + `_created_loops` 정리)로 중첩 호출 안전성 확보.
+- **재프로비저닝 가드**: `stale_only=True` 시 planner에서 non-stale 컴포넌트 제외, manifest `is_stale()`으로 멱등성 검증, 이미 최신 컴포넌트는 plans에 미포함으로 진행률 바 미표시.
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `infra/yt_dlp_binary.py` | Nightly 채널 플랫폼별 asset 이름 규칙(`_platform_asset_name` 재사용), `_latest_stable_version` silent fallback 제거 → `log_f12_net` 명시적 에러 로깅 |
+| `infra/updater.py` | `installed_version` yt-dlp 분기 바이너리 전용 명시, `upgrade_packages` `.pylib 미사용` 명시, 주요 `except Exception` 패턴 F12 로깅 추가 |
+| `infra/pot_server.py` | `ensure_node_server` 7개 헬퍼 분리(`_ensure_node_runtime`, `_resolve_npm_command`, `_ensure_source_fetched`, `_run_npm_install`, `_run_tsc_compile`, `_verify_build_output`, `_ensure_source_fetched`), `env` 변수 스코프 버그 수정, `acquire/release_prewarm_lock` `Result` 타입 표준화 (하위 호환 `int|None` 반환 유지) |
+| `infra/provisioning/planner.py` (신규) | `resolve()` 전담 플래너 클래스. 미러 체인에서 최신 버전/URL/sha256 조회 → `ProvisionPlan` 리스트 생성. `stale_only` 체크로 멱등성 보장 |
+| `infra/provisioning/executor.py` (신규) | `provision()` 전담 실행기. 다운로드 → 추출/설치 → 검증 파이프라인. 진행률 `_fmt_progress` PCT/SPEED/BAR 칼정렬. WHL/서버/바이너리 아카이브별 추출 로직 분리 |
+| `infra/provisioning/committer.py` (신규) | `commit()` 전담. manifest 갱신 + overlay 리로드 + PATH 갱신 + downloads 폴더 정리 |
+| `infra/provisioning/bridge.py` | 동기/비동기 브리지. `_get_or_create_event_loop` + `_run_sync` + `_created_loops` 추적으로 중첩 이벤트 루프 안전 관리. `asyncio.run()` 폐기 |
+| `infra/provisioning/manager.py` | 파사드 패턴으로 Planner/Executor/Committer 위임 구조로 리팩토링. `ensure_all` = resolve → provision → commit 체인 |
+| `infra/provisioning/resolver.py` | `filter_assets` 중복 `candidates.sort()` 제거, `get_platform_asset_filters` 에러 로깅 추가 |
+| `infra/provisioning/manifest.py` | `load()` 에러 로깅 추가 |
+| `ui/progress_bar.py` | 진행률 MSG 최소 영문화(`downloading`/`completed`/`failed`/`verifying`), MB/ETA 제거, 구조화 필드 분리 |
+
+#### 검증
+- `python -m pytest -m "not integration" -q` → **361 passed, 1 warning** (기준 360 → +1)
+- `python -m py_compile` 전 모듈 통과
+- `python sync_mirrors.py --check` → changed 0 / missing 0
+- `git diff --check` → OK
+- F12/TUI 채널 격리 계약 테스트 12건 통과
+- 프로비저닝 계약 테스트 8건 통과
+
+#### 완료
+- Phase 1: yt-dlp 독립 실행형 바이너리 마이그레이션
+- Phase 2: Silent Fallback 완전 제거
+- Phase 3: 진행률 바 재구성 + TUI/F12 채널 격리
+- Phase 4: 프로비저닝 아키텍처 리팩토링 (Planner/Executor/Committer + Pot Server 단계별 분리 + 재프로비저닝 가드 + Bridge 동기/비동기 경계)
+
+---
 
 #### 배경 (v3.8.5 → v3.9.0)
 - **5축 코드 리뷰 P0 결함**: `controller.py`에 세션 상태 머신 5종 메서드가 2회 정의

@@ -34,6 +34,16 @@ from chzzktube.infra.platform import (
     is_windows,
 )
 from chzzktube.infra.platform import kill_tree as kill_tree_platform
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class Result:
+    """표준화된 성공/실패 결과 (예외 대신 명시적 반환)."""
+    success: bool
+    value: Optional[object] = None
+    error: Optional[str] = None
 
 
 _TAG_ZIP = (
@@ -69,8 +79,9 @@ def assign_to_job_object(proc):
     try:
         if is_windows() and proc is not None and getattr(proc, "_handle", None):
             proc._ct_job = True
-    except Exception:
-        pass
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"assign_to_job_object error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
 def read_server_log_tail(n=10):
@@ -81,8 +92,9 @@ def read_server_log_tail(n=10):
             with open(log_file_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
             return "".join(lines[-n:])
-        except Exception:
-            pass
+        except Exception as e:
+            import chzzktube.core.raw_log as raw_log
+            raw_log.raw("POT", f"read_server_log_tail error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return ""
 
 
@@ -104,7 +116,9 @@ def latest_server_ver(timeout=3):
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return (json.load(resp).get("tag_name") or "").strip() or None
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"latest_server_ver error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
 
@@ -160,8 +174,9 @@ def _kill(proc):
     """서버 프로세스 강제 종료 (침묵형)."""
     try:
         proc.kill()
-    except Exception:
-        pass
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"_kill error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
 def kill_tree(proc):
@@ -170,8 +185,9 @@ def kill_tree(proc):
     try:
         if getattr(proc, "_ct_job", None):
             proc._ct_job = None
-    except Exception:
-        pass
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"kill_tree error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
 def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
@@ -202,8 +218,9 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
                                 if log_func:
                                     log_func(f"[pot:zombie] killed windows pid={pid} on port {port}")
                                 killed = True
-            except Exception:
-                pass
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("POT", f"kill_process_on_port windows error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         else:
             # macOS/Linux: lsof로 PID 찾기 → kill
             import subprocess as _sub
@@ -218,10 +235,12 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
                         if log_func:
                             log_func(f"[pot:zombie] killed posix pid={pid} on port {port}")
                         killed = True
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("POT", f"kill_process_on_port posix error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"kill_process_on_port error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return killed
 
 
@@ -330,7 +349,9 @@ def _spawn_node_server(log_full_func=None):
     log_file_path = os.path.join(get_writable_base(), "bgutil_server.log")
     try:
         log_file = open(log_file_path, "w", encoding="utf-8", errors="replace")
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"open server log error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         log_file = subprocess.DEVNULL
 
     try:
@@ -405,8 +426,9 @@ def _download_with_progress(url, dest_path, log_func=None, desc="downloading", t
             if os.path.exists(temp_dest):
                 try:
                     os.remove(temp_dest)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import chzzktube.core.raw_log as raw_log
+                    raw_log.raw("POT", f"temp file cleanup error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
 def _prewarm_lock_path():
@@ -446,7 +468,9 @@ def _pid_alive(pid):
                     return True
                 finally:
                     _k32.CloseHandle(h)
-            except Exception:
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("POT", f"_pid_alive windows error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 return True  # 판별 자체 실패 → 보수적 유지
         else:
             try:
@@ -455,10 +479,14 @@ def _pid_alive(pid):
                 return False
             except PermissionError:
                 return True  # 존재하나 권한 없음 → 살아있음
-            except Exception:
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("POT", f"_pid_alive posix error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 return True
             return True
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"_pid_alive error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return True
 
 
@@ -470,7 +498,9 @@ def _read_lock_info(path):
         pid = int(parts[0]) if parts else None
         epoch = float(parts[1]) if len(parts) > 1 else None
         return pid, epoch
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"_read_lock_info error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None, None
 
 
@@ -503,8 +533,9 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
             if log_func:
                 try:
                     log_func("[prewarm-lock] acquired")
-                except Exception:
-                    pass
+                except Exception as e:
+                    import chzzktube.core.raw_log as raw_log
+                    raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return fd
         except FileExistsError:
             pid, _epoch = _read_lock_info(path)
@@ -517,8 +548,9 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
                 if log_func:
                     try:
                         log_func(f"[prewarm-lock] stale reclaimed (pid={pid} dead, age={int(age)}s)")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import chzzktube.core.raw_log as raw_log
+                        raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 try:
                     os.remove(path)
                 except OSError:
@@ -528,16 +560,18 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
                 waited_note = True
                 try:
                     log_func(f"[prewarm-lock] waiting (holder pid={pid}, alive={alive})")
-                except Exception:
-                    pass
+                except Exception as e:
+                    import chzzktube.core.raw_log as raw_log
+                    raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         except OSError:
             return None
         if _time.monotonic() >= deadline:
             if log_func:
                 try:
                     log_func("[prewarm-lock] busy — acquire timeout")
-                except Exception:
-                    pass
+                except Exception as e:
+                    import chzzktube.core.raw_log as raw_log
+                    raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return None
         _time.sleep(0.2)
 
@@ -555,8 +589,9 @@ def release_prewarm_lock(fd, log_func=None):
     if log_func:
         try:
             log_func("[prewarm-lock] released")
-        except Exception:
-            pass
+        except Exception as e:
+            import chzzktube.core.raw_log as raw_log
+            raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
 def download_and_install_source(want_ver, log_func=None):
@@ -677,12 +712,113 @@ def _prune_outdated_node_dirs(node_dir):
             m = _re.match(r"node-v(\d+)\.", name)
             if m and int(m.group(1)) < NODE_MIN_MAJOR:
                 shutil.rmtree(os.path.join(node_dir, name), ignore_errors=True)
-    except Exception:
-        pass
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("POT", f"_prune_outdated_node_dirs error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
+
+
+def _ensure_node_runtime(log) -> Result:
+    """Node.js 런타임 가용성 확인."""
+    from chzzktube.infra.node_provider import ensure_node_runtime, node_exe
+    if not ensure_node_runtime(log):
+        return Result(success=False, error=f"Node.js runtime unavailable (>= {NODE_MIN_MAJOR} required)")
+    curr_node = node_exe()
+    if not curr_node:
+        return Result(success=False, error="Node.js executable not found")
+    return Result(success=True, value=curr_node)
+
+
+def _resolve_npm_command(curr_node) -> Result:
+    """npm 명령어 결정 (npm-cli.js → npm_exe 우선순위)."""
+    npm_cli = None
+    node_base_dir = os.path.dirname(curr_node)
+    for root, dirs, files in os.walk(node_base_dir):
+        if "npm-cli.js" in files:
+            npm_cli = os.path.join(root, "npm-cli.js")
+            break
+    if npm_cli:
+        return Result(success=True, value=[curr_node, npm_cli])
+    from chzzktube.infra.node_provider import npm_exe
+    npm_path = npm_exe()
+    if not npm_path:
+        return Result(success=False, error="npm not found in isolated Node.js runtime")
+    return Result(success=True, value=[npm_path])
+
+
+def _ensure_source_fetched(ver, log, log_full):
+    """소스 코드 존재 확인 및 필요 시 다운로드."""
+    server_src_dir = os.path.join(server_home(), "server")
+    source_exists = os.path.isdir(server_src_dir) and os.path.isfile(
+        os.path.join(server_src_dir, "package.json")
+    )
+    if not source_exists:
+        log(emit_component("pot", "RUN", "pot", f"bgutil source fetching (v{ver})"))
+        try:
+            download_and_install_source(ver, log)
+        except Exception as ds_ex:
+            log_full(f"[pot] source fetch failed: {ds_ex}")
+    else:
+        log(emit_component("pot", "RUN", "pot", "bgutil source detected — building"))
+
+
+def _run_npm_install(server_dir, npm_cmd, curr_node, log, log_full, tick_func, proc_registry) -> Result:
+    """npm ci 실행."""
+    log(emit_component("pot", "RUN", "pot", "npm install... (first run may take minutes)"))
+    env = os.environ.copy()
+    node_dir = os.path.dirname(os.path.abspath(curr_node))
+    env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
+    ret = _run_and_stream_log(
+        npm_cmd + ["ci", "--no-audit", "--no-fund"], server_dir, log_full, env=env,
+        timeout=_NPM_CI_TIMEOUT, tick_func=tick_func, proc_registry=proc_registry,
+    )
+    if ret != 0:
+        return Result(success=False, error=f"npm install failed (exit code {ret})")
+    return Result(success=True)
+
+
+def _run_tsc_compile(server_dir, curr_node, npm_cmd, log, log_full, tick_func, proc_registry) -> Result:
+    """tsc 컴파일 실행."""
+    log(emit_component("pot", "RUN", "pot", "tsc compiling..."))
+    # [tsc incremental 함정 수리]
+    if built_server_js() is None:
+        tsbi = os.path.join(server_dir, "tsconfig.tsbuildinfo")
+        if os.path.isfile(tsbi):
+            try:
+                os.remove(tsbi)
+                log_full("[pot] stale tsbuildinfo purged — forcing full tsc compile")
+            except OSError as tsbi_ex:
+                log_full(f"[pot] tsbuildinfo purge failed: {tsbi_ex}")
+
+    local_tsc = os.path.join(server_dir, "node_modules", "typescript", "bin", "tsc")
+    if os.path.isfile(local_tsc):
+        cmd_build = [curr_node, local_tsc]
+    else:
+        cmd_build = [curr_node, npm_cmd, "execute", "tsc"] if npm_cmd else ["npx", "tsc"]
+
+    # env 구성 (npm install과 동일하게)
+    env = os.environ.copy()
+    node_dir = os.path.dirname(os.path.abspath(curr_node))
+    env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
+
+    ret = _run_and_stream_log(
+        cmd_build, server_dir, log_full, env=env,
+        use_no_window=False, timeout=_TSC_TIMEOUT,
+        tick_func=tick_func, proc_registry=proc_registry,
+    )
+    if ret != 0:
+        return Result(success=False, error=f"tsc failed (exit code {ret})")
+    return Result(success=True)
+
+
+def _verify_build_output() -> Result:
+    """빌드 산출물 검증."""
+    if built_server_js() is None:
+        return Result(success=False, error="server/build/main.js (or dist/main.js) missing after compile")
+    return Result(success=True)
 
 
 def ensure_node_server(log, log_full, want_ver, rebuild=False,
-                       tick_func=None, proc_registry=None):
+                       tick_func=None, proc_registry=None) -> Result:
     """Node.js HTTP 서버 및 빌드 소스 구성을 완료한다.
 
     [rebuild 플래그]
@@ -694,6 +830,8 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
        - server/ 없음 → source fetch → npm ci → tsc
        - server/ 있음 + rebuild=False → 기존 빌드 재사용
     2. 빌드 성공 시 server_dir 반환 → 호출부에서 _spawn_existing 기동
+
+    반환: Result(success=True, value=server_dir) 또는 Result(success=False, error=str)
     """
     from chzzktube.infra.node_provider import (
         node_exe, node_ok, node_major_version,
@@ -704,95 +842,44 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
 
     # [rebuild 모드] npm ci + tsc 강제 재실행
     if js is None or rebuild:
-        server_src_dir = os.path.join(server_home(), "server")
-        source_exists = os.path.isdir(server_src_dir) and os.path.isfile(
-            os.path.join(server_src_dir, "package.json")
-        )
-        if not source_exists:
-            ver = want_ver or latest_server_ver() or _SERVER_FALLBACK_VER
-            log(emit_component("pot", "RUN", "pot", f"bgutil source fetching (v{ver})"))
-            try:
-                download_and_install_source(ver, log)
-            except Exception as ds_ex:
-                log_full(f"[pot] source fetch failed: {ds_ex}")
-        else:
-            log(emit_component("pot", "RUN", "pot", "bgutil source detected — building"))
+        ver = want_ver or latest_server_ver() or _SERVER_FALLBACK_VER
+        # 1단계: 소스 확보
+        _ensure_source_fetched(ver, log, log_full)
 
-        if not ensure_node_runtime(log):
-            return None, f"Node.js runtime unavailable (>= {NODE_MIN_MAJOR} required)"
-        curr_node = node_exe()
-        if not curr_node:
-            return None, "Node.js executable not found"
+        # 2단계: Node.js 런타임 확인
+        node_result = _ensure_node_runtime(log)
+        if not node_result.success:
+            return Result(success=False, error=node_result.error)
+        curr_node = node_result.value
 
-        npm_cli = None
-        node_base_dir = os.path.dirname(curr_node)
-        for root, dirs, files in os.walk(node_base_dir):
-            if "npm-cli.js" in files:
-                npm_cli = os.path.join(root, "npm-cli.js")
-                break
+        # 3단계: npm 명령 결정
+        npm_result = _resolve_npm_command(curr_node)
+        if not npm_result.success:
+            return Result(success=False, error=npm_result.error)
+        npm_cmd = npm_result.value
 
-        # [v3.8.0 격리] npm 해석은 격리 런타임 단일 경로 —
-        # npm-cli.js(포터블 node 동봉) → npm_exe(포터블 스크립트) 순.
-        # 시스템 PATH(shutil.which) 폴백은 철폐한다.
-        if npm_cli:
-            npm_cmd = [curr_node, npm_cli]
-        else:
-            from chzzktube.infra.node_provider import npm_exe
-            npm_path = npm_exe()
-            if not npm_path:
-                return None, "npm not found in isolated Node.js runtime"
-            npm_cmd = [npm_path]
         server_dir = os.path.join(server_home(), "server")
 
-        try:
-            log(emit_component("pot", "RUN", "pot", "npm install... (first run may take minutes)"))
-            env = os.environ.copy()
-            node_dir = os.path.dirname(os.path.abspath(curr_node))
-            env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
+        # 4단계: npm install
+        install_result = _run_npm_install(server_dir, npm_cmd, curr_node, log, log_full, tick_func, proc_registry)
+        if not install_result.success:
+            return Result(success=False, error=install_result.error)
 
-            cmd_install = npm_cmd + ["ci", "--no-audit", "--no-fund"]
-            ret = _run_and_stream_log(
-                cmd_install, server_dir, log_full, env=env,
-                timeout=_NPM_CI_TIMEOUT, tick_func=tick_func,
-                proc_registry=proc_registry,
-            )
-            if ret != 0:
-                return None, f"npm install failed (exit code {ret})"
+        # 5단계: tsc 컴파일
+        tsc_result = _run_tsc_compile(server_dir, curr_node, npm_cmd, log, log_full, tick_func, proc_registry)
+        if not tsc_result.success:
+            return Result(success=False, error=tsc_result.error)
 
-            log(emit_component("pot", "RUN", "pot", "tsc compiling..."))
-            # [tsc incremental 함정 수리]
-            if built_server_js() is None:
-                tsbi = os.path.join(server_dir, "tsconfig.tsbuildinfo")
-                if os.path.isfile(tsbi):
-                    try:
-                        os.remove(tsbi)
-                        log_full("[pot] stale tsbuildinfo purged — forcing full tsc compile")
-                    except OSError as tsbi_ex:
-                        log_full(f"[pot] tsbuildinfo purge failed: {tsbi_ex}")
+        # 6단계: 빌드 산출물 검증
+        verify_result = _verify_build_output()
+        if not verify_result.success:
+            return Result(success=False, error=verify_result.error)
 
-            local_tsc = os.path.join(server_dir, "node_modules", "typescript", "bin", "tsc")
-            if os.path.isfile(local_tsc):
-                cmd_build = [curr_node, local_tsc]
-            else:
-                cmd_build = [curr_node, npm_cli, "execute", "tsc"] if npm_cli else ["npx", "tsc"]
-
-            ret = _run_and_stream_log(
-                cmd_build, server_dir, log_full, env=env,
-                use_no_window=False, timeout=_TSC_TIMEOUT,
-                tick_func=tick_func, proc_registry=proc_registry,
-            )
-            if ret != 0:
-                return None, f"tsc failed (exit code {ret})"
-
-            if built_server_js() is None:
-                return None, "server/build/main.js (or dist/main.js) missing after compile"
-            return server_dir, None
-        except Exception as e:
-            return None, f"{type(e).__name__}: {e}"
+        return Result(success=True, value=server_dir)
 
     # [재사용 모드] 기존 빌드가 있으면 런타임만 확인 → 즉시 반환
     if not ensure_node_runtime(log):
-        return None, "Node.js runtime unavailable"
+        return Result(success=False, error="Node.js runtime unavailable")
     if node_ok():
-        return os.path.dirname(server_home()), None
-    return None, "Node.js runtime check failed"
+        return Result(success=True, value=os.path.dirname(server_home()))
+    return Result(success=False, error="Node.js runtime check failed")

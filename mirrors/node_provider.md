@@ -54,8 +54,10 @@ def node_major_version(node_path, timeout=10):
         m = re.match(r"v?(\d+)", version_out)
         if m:
             major = int(m.group(1))
-    except Exception:
+    except Exception as e:
         major = None
+        # [Silent fallback 제거] 버전 판별 실패 로그
+        log_f12_cli(f"{node_path} --version", f"Exception: {e}", is_error=True)
     _node_ver_cache[node_path] = major
     return major
 

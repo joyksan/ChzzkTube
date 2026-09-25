@@ -5,7 +5,7 @@
     - Stable channel: python -m pip install -U <pkg>
     - Nightly channel: python -m pip install -U yt-dlp-nightly (yt-dlp only)
 *  frozen(PyInstaller) builds — pip이 없으므로 직접 다운로드:
-    - yt-dlp: GitHub release에서 yt-dlp 바이너리 직접 다운로드 후 교체 (yt_dlp_binary 위임)
+    - yt-dlp: GitHub release에서 yt-dlp 바이너리 직접 다운로드 후 교체 (yt_dlp_binary 위임, .pylib 미사용)
     - 업데이트 실패 시 기존 버전 유지, 다음 실행 시 재시도
 *  네트워크 의존은 이 앱에서 본질적이다 (웹 미디어 추출기). """
 import concurrent.futures
@@ -32,11 +32,21 @@ PACKAGES = [("ytdlp", "yt-dlp", "yt-dlp-nightly")]
 _PYPI_API = "https://pypi.org/pypi/{pkg}/json"
 
 def installed_version(pypi_name):
-    """Installed version string from .pylib overlay only, or None if not installed.
+    """Installed version string from binary (yt-dlp) or .pylib overlay (others).
 
-    SSOT: 오직 .pylib 내부 dist-info만 스캔하여 버전 판정.
+    SSOT: yt-dlp는 yt_dlp_binary.yt_dlp_version() 사용 (바이너리 전용), 나머지는 .pylib 내부 dist-info만 스캔.
     .venv나 시스템 site-packages에 존재하더라도 무시한다.
     """
+    # yt-dlp는 독립 실행형 바이너리 사용
+    if pypi_name == "yt-dlp":
+        from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+        exe = yt_dlp_path()
+        if exe:
+            ver = yt_dlp_version(exe)
+            if ver:
+                return ".".join(map(str, ver))
+        return None
+
     import glob
     import os
     from chzzktube.core.config import pylib_overlay_path
@@ -57,7 +67,9 @@ def installed_version(pypi_name):
                     for line in f:
                         if line.startswith("Version:"):
                             return line.split(":", 1)[1].strip()
-            except Exception:
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("DEPS", f"installed_version metadata read error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 continue
     return None
 
@@ -80,7 +92,9 @@ def latest_version(pypi_name, timeout=1.5):
             fut = ex.submit(_fetch)
             data = fut.result(timeout=timeout + 0.5)
             return (data.get("info") or {}).get("version")
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("DEPS", f"latest_version PyPI fetch error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
 def _ver_tuple(version):
@@ -95,7 +109,9 @@ def is_outdated(current, latest):
     """True if latest > current (numeric tuple compare avoids string pitfalls)."""
     try:
         return _ver_tuple(latest) > _ver_tuple(current)
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("DEPS", f"is_outdated version compare error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False
 
 def outdated_packages(channel="stable"):
@@ -140,19 +156,33 @@ def check_deps(log_func=None):
     import os
     results = []
 
-    # 1. yt-dlp (PyPI 패키지) — nightly 채널 설치물 인지
-    # yt-dlp-nightly는 dist 명이 달라 im.version("yt-dlp")가 실패하므로
+    # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로 확인
+    # yt-dlp-nightly는 dist 명이 달라 .pylib 체크가 실패하므로
     # nightly 설치물로 폴백 표기 (정상 설치 판정 유지)
     label = "ytdlp"
     pypi_name = "yt-dlp"
     pypi_nightly = "yt-dlp-nightly"
-    ver = installed_version(pypi_name)
+    
+    # yt-dlp는 독립 실행형 바이너리 사용 (yt_dlp_binary 모듈)
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+    exe = yt_dlp_path()
+    if exe:
+        ver_tuple = yt_dlp_version(exe)
+        if ver_tuple:
+            ver = ".".join(map(str, ver_tuple))
+        else:
+            ver = None
+    else:
+        ver = None
+    
+    # nightly 채널 설치물 인지 (pypi overlay 체크)
     if not ver and pypi_nightly:
         nver = installed_version(pypi_nightly)
         if nver:
             ver = f"{nver} (nightly)"
+    
     if ver:
-        results.append((label, "OK", f"{ver} at .pylib overlay"))
+        results.append((label, "OK", f"{ver} at {exe}"))
     else:
         results.append((label, "FAIL", "not installed"))
 
@@ -210,15 +240,25 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
     import chzzktube.infra.components as components
     import chzzktube.infra.pot_provider as pot_provider
     import subprocess
-    import sys
+    from chzzktube.infra.platform import spawn_kwargs
 
     missing = []
 
-    # 1. Python packages (yt-dlp) — .pylib overlay에서 import 시도
-    try:
-        import yt_dlp  # noqa: F401
-    except ImportError:
-        missing.append("yt-dlp (not importable from .pylib)")
+    # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로에서 실행 확인
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
+    exe = yt_dlp_path()
+    if not exe:
+        missing.append("yt-dlp (not found in app binary path)")
+    else:
+        # 실행 테스트
+        result = subprocess.run(
+            [exe, "--version"],
+            capture_output=True,
+            timeout=5,
+            **spawn_kwargs(),
+        )
+        if result.returncode != 0:
+            missing.append("yt-dlp (execution failed)")
 
     # 2. ffmpeg — 격리 캐시에서 실행 가능 확인
     try:
@@ -276,15 +316,16 @@ def _cli_base(label):
     """라벨 → 실제 CLI 명령 배열 (없으면 None). F12 상세 로그용 원문 실행.
 
     [v3.8.0 격리] 실행체 해석은 앱 전용 저장소 단일 경로로 일원화:
-    - ytdlp: dev/frozen 공통 — 앱이 실제로 사용하는 인터프리터 + .pylib
-      오버레이(항상 sys.path 선두)를 타는 `python -m yt_dlp`. 시스템 PATH의
-      yt-dlp는 절대 참조하지 않는다.
+    - ytdlp: dev/frozen 공통 — OS 표준 경로(%LOCALAPPDATA%/ChzzkTube/bin/ 등)에
+      설치된 yt-dlp 바이너리 직접 실행. 시스템 PATH의 yt-dlp는 절대 참조하지 않는다.
     - ffmpeg/node/npm: components.ffmpeg_exe / pot_provider.node_exe·npm_exe
       (writable_base 격리 캐시) 단일 참조 — shutil.which 폴백 철폐.
     """
     if label == "ytdlp":
-        # dev/frozen 공통: 앱 런타임 인터프리터로 오버레이 모듈 실행 (PATH 무관)
-        return [sys.executable, "-m", "yt_dlp"]
+        # dev/frozen 공통: OS 표준 경로에 설치된 yt-dlp 바이너리 직접 실행
+        from chzzktube.infra.yt_dlp_binary import yt_dlp_path
+        p = yt_dlp_path()
+        return [p] if p else None
     if label == "ffmpeg":
         try:
             from chzzktube.infra.components import ffmpeg_exe

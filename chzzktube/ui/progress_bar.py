@@ -52,7 +52,7 @@ class ProgressBar:
         self._last_update = 0
         self._last_downloaded = 0
         self._finished = False
-        self._emit(0, 0.0, "starting...")
+        self._emit(0, 0.0, "starting", speed="")
 
     def update(self, downloaded: int, total: int):
         if self._finished:
@@ -88,21 +88,8 @@ class ProgressBar:
             pct = 0
             bar_frac = 0.0
 
-        if speed_bps > 0 and self.total and self.total > downloaded:
-            eta_sec = (self.total - downloaded) / speed_bps
-            eta_str = self._format_eta(eta_sec)
-        else:
-            eta_str = ""
-
-        downloaded_mb = downloaded / (1024 * 1024)
-        total_mb = self.total / (1024 * 1024) if self.total else 0
-        msg_parts = [f"{downloaded_mb:.1f}/{total_mb:.1f} MB"]
-        if speed_str:
-            msg_parts.append(speed_str)
-        if eta_str:
-            msg_parts.append(f"ETA {eta_str}")
-
-        msg = " ".join(msg_parts)
+        # Minimal MSG for TUI: just "downloading"
+        msg = "downloading"
         self._emit(pct, bar_frac, msg, speed=speed_str)
 
     def finish(self, status: str = "completed"):
@@ -121,10 +108,8 @@ class ProgressBar:
         speed_bps = self.total / elapsed if self.total and elapsed > 0 else 0
         speed_str = self._format_speed(speed_bps)
 
-        msg = f"{status} ({self.total / (1024 * 1024):.1f} MB in {elapsed:.1f}s)"
-        if speed_str:
-            msg += f" @ {speed_str}"
-
+        # Minimal MSG for TUI
+        msg = status  # "completed" | "failed" | "verifying"
         # 완료 로그는 is_status=False (히스토리만, 상태 줄 덮어쓰기 방지)
         self._emit(pct, bar_frac, msg, speed=speed_str, status="OK", is_status=False)
 

@@ -1,7 +1,7 @@
 """yt-dlp 바이너리 경로 관리 모듈 (SRP: yt-dlp 실행 파일 탐색·수급·갱신만 담당).
 
 - system PATH의 yt-dlp 최우선 사용
-- 없으면 OS 표준 경로(%LOCALAPPDATA%\ChzzkTube\bin\ 또는 ~/.local/bin/)에서 탐색
+- 없으면 OS 표준 경로(%LOCALAPPDATA%\\ChzzkTube\\bin\\ 또는 ~/.local/bin/)에서 탐색
 - 없으면 GitHub releases에서 yt-dlp 바이너리 직접 다운로드
 - 업데이트는 동일 경로에 덮어쓰기
 """
@@ -29,7 +29,8 @@ _YTDLP_FALLBACK_VER = "2024.12.19"  # GitHub API 조회 실패 시 폴백
 
 # GitHub releases URL 템플릿
 _YTDLP_RELEASE_API = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
-_YTDLP_NIGHTLY_API = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp{_ext}"
+# Nightly builds: 플랫폼별 asset 이름 사용 (stable과 동일 패턴)
+_YTDLP_NIGHTLY_BASE = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download"
 
 
 def _exe_suffix() -> str:
@@ -83,8 +84,8 @@ def _latest_stable_version() -> str:
             tag = data.get("tag_name", "").lstrip("v")
             if tag:
                 return tag
-    except Exception:
-        pass
+    except Exception as e:
+        log_f12_net(f"GitHub API failed for latest yt-dlp version: {e}")
     return _YTDLP_FALLBACK_VER
 
 
@@ -220,7 +221,9 @@ def ensure_yt_dlp(log_func=None, channel: str = "stable") -> bool:
 
     # 채널별 다운로드 URL 결정
     if channel == "nightly":
-        url = _YTDLP_NIGHTLY_API.format(_ext=suffix)
+        # Nightly도 플랫폼별 asset 이름 사용 (macOS는 _macos 접미사 필요)
+        asset = _platform_asset_name("nightly")
+        url = f"{_YTDLP_NIGHTLY_BASE}/{asset}"
     else:
         ver = _latest_stable_version()
         url = _platform_asset_url(ver)
@@ -263,8 +266,8 @@ def upgrade_yt_dlp(channel: str = "stable", log_func=None) -> tuple[int, str]:
     current = yt_dlp_version()
     # 최신 버전 확인
     if channel == "nightly":
-        # nightly는 항상 최신으로 간주
-        return 0, f"updated to nightly (overlay)"
+        # nightly는 항상 최신으로 간주 (버전 번호 없음)
+        return 0, f"updated to nightly"
     else:
         latest = _latest_stable_version()
         if current:

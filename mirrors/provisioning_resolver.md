@@ -12,7 +12,7 @@ import sys
 
 
 class ComponentType(Enum):
-    PYTHON_PKG = "python_pkg"      # yt-dlp, streamlink → .pylib (whl)
+    PYTHON_PKG = "python_pkg"      # yt-dlp → .pylib (whl)
     BINARY = "binary"              # ffmpeg, node → writable_base/bin (tar.gz/zip)
     SERVER = "server"              # bgutil → writable_base/bgutil (npm build)
 
@@ -41,30 +41,6 @@ class ComponentSpec:
 
 # 미러 레지스트리 — 외부 설정 파일로 분리 가능
 MIRROR_REGISTRY: dict[str, ComponentSpec] = {
-    "yt-dlp": ComponentSpec(
-        name="yt-dlp",
-        type=ComponentType.PYTHON_PKG,
-        version_strategy="latest_stable",
-        channel="stable",
-        mirrors=(
-            Mirror("pypi", "https://pypi.org/pypi/yt-dlp/json", priority=0),
-            Mirror("github", "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest", priority=1),
-        ),
-        verify_cmd=("python", "-m", "yt_dlp", "--version"),
-        install_rel_path=".pylib",
-    ),
-    "streamlink": ComponentSpec(
-        name="streamlink",
-        type=ComponentType.PYTHON_PKG,
-        version_strategy="latest_stable",
-        channel="stable",
-        mirrors=(
-            Mirror("pypi", "https://pypi.org/pypi/streamlink/json", priority=0),
-            Mirror("github", "https://api.github.com/repos/streamlink/streamlink/releases/latest", priority=1),
-        ),
-        verify_cmd=("python", "-m", "streamlink", "--version"),
-        install_rel_path=".pylib",
-    ),
     "ffmpeg": ComponentSpec(
         name="ffmpeg",
         type=ComponentType.BINARY,
@@ -112,8 +88,9 @@ def get_platform_asset_filters() -> tuple[str, ...]:
     try:
         import platform as _platform
         machine = _platform.machine().lower()
-    except Exception:
-        pass
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("DEPS", f"get_platform_asset_filters error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     if platform == "darwin":
         if machine == "arm64":
@@ -162,9 +139,5 @@ def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
         )
         candidates.append((rank, asset))
 
-    candidates.sort(key=lambda pair: pair[0])
-    return [asset for _, asset in candidates]
-
-    # 안정 정렬 — 동순위는 원래 순서 보존
     candidates.sort(key=lambda pair: pair[0])
     return [asset for _, asset in candidates]

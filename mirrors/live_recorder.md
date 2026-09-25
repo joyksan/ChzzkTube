@@ -1,7 +1,7 @@
-##### live_recorder.py - 라이브 녹화 파이프라인 (streamlink/ffmpeg)
+##### live_recorder.py - 라이브 녹화 파이프라인 (yt-dlp + ffmpeg)
 """유튜브·치지직 라이브를 ffmpeg 자식 프로세스로 녹화한다.
 
-- yt-dlp/streamlink 로 포맷 URL만 추출하고, 실제 수신은 ffmpeg로 위임
+- yt-dlp로 포맷 URL만 추출하고, 실제 수신은 ffmpeg로 위임
 - **릴레이 계측**: ffmpeg stdout(파이프) 을 Python 이 256KB 청크로 읽어
   최종 파일에 실기록하며, 그 바이트 수 = 네트워크 실수신량 → ctx.speed_win(add) 로 속도 측정
 - stderr 는 별도 스레드로 상세 로그 유지
@@ -179,8 +179,8 @@ _READ_CHUNK = 256 * 1024
 _TICK_INTERVAL = 1.0
 
 
-def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
-    """ffmpeg/streamlink 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리.
+def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
+    """ffmpeg 자식 프로세스 녹화 — 릴레이 계측 + stderr 로그 + 취소 처리.
 
     [결함 2 수리] reader 스레드 + Queue로 논블로킹 릴레이
     - Windows 파이프에서 selectors/select 미지원 문제 회피
@@ -211,8 +211,10 @@ def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
                 stdout_queue.put(chunk)
                 if not chunk:
                     break
-        except Exception:
-            # reader 스레드 예외도 메인 루프가 종료할 수 있도록 EOF sentinel 주입
+        except Exception as e:
+            # [Silent fallback 제거] reader 스레드 예외 로그 후 EOF sentinel 주입
+            import chzzktube.core.raw_log as raw_log
+            raw_log.raw("LIVE", f"_read_stdout error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             stdout_queue.put(b"")
 
     reader_t = threading.Thread(target=_read_stdout, daemon=True)
@@ -229,13 +231,16 @@ def record_live_stream(ctx, cmd, out_file, log_tag="Streamlink"):
         from chzzktube.core.log_event import LogEvent
         for raw in iter(proc.stderr.readline, b""):
             if raw:
-                with suppress(Exception):
+                try:
                     raw_log.raw("ffmpeg",
                                 LogEvent(stage="LIVE", status="RUN",
                                          scope="FFMP",
                                          msg=raw.decode("utf-8", "replace").strip(),
-                                     ),
+                                      ),
                                 )
+                except Exception as e:
+                    import chzzktube.core.raw_log as raw_log
+                    raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     stderr_t = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_t.start()
@@ -324,6 +329,7 @@ def _try_watchdog_heartbeat(ctx, last_heartbeat_time):
         if wd and hasattr(wd, "heartbeat"):
             try:
                 wd.heartbeat()
-            except Exception:
-                pass
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("LIVE", f"_try_watchdog_heartbeat error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             break

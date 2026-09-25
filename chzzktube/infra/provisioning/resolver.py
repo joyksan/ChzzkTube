@@ -88,8 +88,9 @@ def get_platform_asset_filters() -> tuple[str, ...]:
     try:
         import platform as _platform
         machine = _platform.machine().lower()
-    except Exception:
-        pass
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("DEPS", f"get_platform_asset_filters error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     if platform == "darwin":
         if machine == "arm64":
@@ -138,9 +139,5 @@ def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
         )
         candidates.append((rank, asset))
 
-    candidates.sort(key=lambda pair: pair[0])
-    return [asset for _, asset in candidates]
-
-    # 안정 정렬 — 동순위는 원래 순서 보존
     candidates.sort(key=lambda pair: pair[0])
     return [asset for _, asset in candidates]

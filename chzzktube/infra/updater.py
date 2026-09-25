@@ -5,7 +5,7 @@
     - Stable channel: python -m pip install -U <pkg>
     - Nightly channel: python -m pip install -U yt-dlp-nightly (yt-dlp only)
 *  frozen(PyInstaller) builds — pip이 없으므로 직접 다운로드:
-    - yt-dlp: GitHub release에서 yt-dlp 바이너리 직접 다운로드 후 교체 (yt_dlp_binary 위임)
+    - yt-dlp: GitHub release에서 yt-dlp 바이너리 직접 다운로드 후 교체 (yt_dlp_binary 위임, .pylib 미사용)
     - 업데이트 실패 시 기존 버전 유지, 다음 실행 시 재시도
 *  네트워크 의존은 이 앱에서 본질적이다 (웹 미디어 추출기). """
 import concurrent.futures
@@ -34,7 +34,7 @@ _PYPI_API = "https://pypi.org/pypi/{pkg}/json"
 def installed_version(pypi_name):
     """Installed version string from binary (yt-dlp) or .pylib overlay (others).
 
-    SSOT: yt-dlp는 yt_dlp_binary.yt_dlp_version() 사용, 나머지는 .pylib 내부 dist-info만 스캔.
+    SSOT: yt-dlp는 yt_dlp_binary.yt_dlp_version() 사용 (바이너리 전용), 나머지는 .pylib 내부 dist-info만 스캔.
     .venv나 시스템 site-packages에 존재하더라도 무시한다.
     """
     # yt-dlp는 독립 실행형 바이너리 사용
@@ -67,7 +67,9 @@ def installed_version(pypi_name):
                     for line in f:
                         if line.startswith("Version:"):
                             return line.split(":", 1)[1].strip()
-            except Exception:
+            except Exception as e:
+                import chzzktube.core.raw_log as raw_log
+                raw_log.raw("DEPS", f"installed_version metadata read error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 continue
     return None
 
@@ -90,7 +92,9 @@ def latest_version(pypi_name, timeout=1.5):
             fut = ex.submit(_fetch)
             data = fut.result(timeout=timeout + 0.5)
             return (data.get("info") or {}).get("version")
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("DEPS", f"latest_version PyPI fetch error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
 def _ver_tuple(version):
@@ -105,7 +109,9 @@ def is_outdated(current, latest):
     """True if latest > current (numeric tuple compare avoids string pitfalls)."""
     try:
         return _ver_tuple(latest) > _ver_tuple(current)
-    except Exception:
+    except Exception as e:
+        import chzzktube.core.raw_log as raw_log
+        raw_log.raw("DEPS", f"is_outdated version compare error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False
 
 def outdated_packages(channel="stable"):
