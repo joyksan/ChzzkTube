@@ -20,10 +20,24 @@ def bootstrap(clear_caches=True):
         path = os.path.abspath(pylib_overlay_path())
     except Exception:  # noqa: BLE001 — 경로 계산 실패 시 부트스트랩 중단
         return ""
-    try:
-        os.makedirs(path, exist_ok=True)
-    except OSError:  # 디렉터리 생성 실패는 OSError로 좁힘
+    # [v3.12.6] 빈 .pylib 디렉터리 무단 생성(os.makedirs) 전면 차단.
+    # yt-dlp 등 의존성이 bin/ 바이너리로 전환되었으므로 오버레이 내용물이 존재할 때만 sys.path에 추가.
+    if not os.path.isdir(path):
         return ""
+
+    try:
+        entries = os.listdir(path)
+    except OSError:
+        return ""
+
+    if not entries:
+        # 빈 디렉터리 잔재는 안전하게 정리
+        try:
+            os.rmdir(path)
+        except OSError:
+            pass
+        return ""
+
     if path not in sys.path:
         sys.path.insert(0, path)
     if clear_caches:

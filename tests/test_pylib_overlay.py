@@ -70,6 +70,9 @@ def test_pylib_bootstrap_inserts_first(tmp_path, monkeypatch):
     from chzzktube.infra.pylib_bootstrap import bootstrap
 
     target = os.path.abspath(str(tmp_path / "ov"))
+    os.makedirs(target, exist_ok=True)
+    with open(os.path.join(target, "dummy.txt"), "w") as f:
+        f.write("content")
     monkeypatch.setenv("CHZZKTUBE_PYLIB_DIR", target)
     got = bootstrap(clear_caches=False)
     assert os.path.abspath(got) == target
@@ -77,26 +80,39 @@ def test_pylib_bootstrap_inserts_first(tmp_path, monkeypatch):
     sys.path.remove(target)
 
 
-def test_pylib_bootstrap_frozen_mode_creates_writable_base_pylib(tmp_path, monkeypatch):
-    """Frozen 모드에서 bootstrap()이 writable_base()/.pylib 생성하고 sys.path에 삽입하는지 검증."""
-    from chzzktube.core.config import writable_base
+def test_pylib_bootstrap_does_not_create_empty_dir(tmp_path, monkeypatch):
+    """오버레이가 존재하지 않으면 빈 디렉터리를 생성하지 않고 빈 문자열을 반환해야 함."""
     from chzzktube.infra.pylib_bootstrap import bootstrap
 
+    target = os.path.abspath(str(tmp_path / "non_existent"))
+    monkeypatch.setenv("CHZZKTUBE_PYLIB_DIR", target)
+    got = bootstrap(clear_caches=False)
+    assert got == ""
+    assert not os.path.exists(target)
+
+
+def test_pylib_bootstrap_frozen_mode_handles_writable_base(tmp_path, monkeypatch):
+    """Frozen 모드에서 실제 사용자 AppData를 오염시키지 않고 tmp_path 격리 환경에서 계약 검증."""
+    fake_base = str(tmp_path / "mock_appdata")
+    monkeypatch.setattr("chzzktube.core.config.writable_base", lambda: fake_base)
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.delenv("CHZZKTUBE_PYLIB_DIR", raising=False)
 
-    expected_path = os.path.join(writable_base(), ".pylib")
-    # 기존 경로 정리
-    if expected_path in sys.path:
-        sys.path.remove(expected_path)
-    if os.path.exists(expected_path):
-        import shutil
-        shutil.rmtree(expected_path, ignore_errors=True)
+    from chzzktube.infra.pylib_bootstrap import bootstrap
 
+    # 1) 디렉터리가 없을 때: 무단 생성하지 않아야 함
+    got = bootstrap(clear_caches=False)
+    assert got == ""
+    expected_path = os.path.join(fake_base, ".pylib")
+    assert not os.path.exists(expected_path)
+
+    # 2) 내용물이 존재하는 유효 오버레이일 때: sys.path에 정상 삽입
+    os.makedirs(expected_path, exist_ok=True)
+    with open(os.path.join(expected_path, "pkg.txt"), "w") as f:
+        f.write("pkg")
     got = bootstrap(clear_caches=False)
     assert os.path.abspath(got) == os.path.abspath(expected_path)
     assert sys.path[0] == os.path.abspath(expected_path)
-    assert os.path.isdir(expected_path)
     sys.path.remove(os.path.abspath(expected_path))
 
 

@@ -77,14 +77,15 @@ class Committer:
             shutil.rmtree(downloads_dir, ignore_errors=True)
 
     def _refresh_overlay(self):
-        """.pylib overlay 리로드."""
+        """.pylib overlay 리로드 (존재 시에만)."""
         try:
             from chzzktube.infra.pylib_bootstrap import bootstrap
             path = bootstrap(clear_caches=True)
-            self._emit(
-                "DEPS", "OK", "PY", f"overlay refreshed: {path}",
-                component_id="deps_PY", is_progress=False,
-            )
+            if path:
+                self._emit(
+                    "DEPS", "OK", "PY", f"overlay refreshed: {path}",
+                    component_id="deps_PY", is_progress=False,
+                )
         except Exception as e:  # noqa: BLE001 — overlay 리로드 실패는 WARN 발행
             self._emit(
                 "DEPS", "WARN", "PY", f"overlay refresh failed: {e}",
