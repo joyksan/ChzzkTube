@@ -64,12 +64,18 @@ class ProvisionManifest:
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
 
-    def is_stale(self, name: str, latest_version: str) -> bool:
-        """manifest 버전 vs 최신 버전 비교."""
+    def is_stale(self, name: str, latest_version: str, base_dir: Optional[Path] = None) -> bool:
+        """manifest 버전 vs 최신 버전 비교 및 디스크 실존 확인."""
         rec = self.components.get(name)
         if not rec:
             return True
-        return rec.version != latest_version
+        if rec.version != latest_version:
+            return True
+        if base_dir is not None and rec.install_path:
+            full_path = base_dir / rec.install_path
+            if not full_path.exists():
+                return True
+        return False
 
     def get_record(self, name: str) -> Optional[ComponentRecord]:
         return self.components.get(name)

@@ -204,11 +204,27 @@ def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str =
     """
     if not cmd:
         return
-    raw(tag, f"$ {cmd}", is_error=is_error, to_tui=False)
+    raw(
+        tag,
+        LogEvent(stage="DEPS", status="RUN", scope="CLI", msg=f"$ {cmd}", is_error=is_error, rendered=True),
+        to_tui=False,
+    )
     if output:
         from chzzktube.infra.updater import truncate_for_full_log
-        for line in truncate_for_full_log(output).splitlines():
-            raw(tag, line, is_error=is_error, to_tui=False)
+        clean_out = truncate_for_full_log(output, max_lines=6, max_width=160)
+        for line in clean_out.splitlines():
+            raw(
+                tag,
+                LogEvent(
+                    stage="DEPS",
+                    status="FAIL" if is_error else "OK",
+                    scope="CLI",
+                    msg=line,
+                    is_error=is_error,
+                    rendered=True,
+                ),
+                to_tui=False,
+            )
 
 
 def log_f12_net(msg: str, is_error: bool = False, tag: str = "deps-net"):
@@ -218,5 +234,16 @@ def log_f12_net(msg: str, is_error: bool = False, tag: str = "deps-net"):
     """
     if not msg:
         return
-    raw(tag, str(msg), is_error=is_error, to_tui=False)
+    raw(
+        tag,
+        LogEvent(
+            stage="DEPS",
+            status="FAIL" if is_error else "RUN",
+            scope="NET",
+            msg=str(msg),
+            is_error=is_error,
+            rendered=True,
+        ),
+        to_tui=False,
+    )
 

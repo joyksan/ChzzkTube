@@ -822,7 +822,7 @@ def _run_tsc_compile(server_dir, curr_node, npm_cmd, log, log_full, tick_func, p
     if os.path.isfile(local_tsc):
         cmd_build = [curr_node, local_tsc]
     else:
-        cmd_build = [curr_node, npm_cmd, "execute", "tsc"] if npm_cmd else ["npx", "tsc"]
+        cmd_build = [*npm_cmd, "exec", "tsc"] if npm_cmd else ["npx", "tsc"]
 
     # env 구성 (npm install과 동일하게)
     env = os.environ.copy()

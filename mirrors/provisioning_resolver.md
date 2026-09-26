@@ -64,7 +64,7 @@ MIRROR_REGISTRY: dict[str, ComponentSpec] = {
         ),
         verify_cmd=("ffmpeg", "-version"),
         install_rel_path="ffmpeg",
-        asset_filters=("ffmpeg", "static"),
+        asset_filters=("ffmpeg", "gpl"),
     ),
     "node": ComponentSpec(
         name="node",
@@ -108,11 +108,12 @@ def get_platform_asset_filters() -> tuple[str, ...]:
     elif platform == "win32":
         if machine in ("arm64", "aarch64"):
             return ("winarm64", "win-arm64", "windows-arm64")
-        return ("win64", "windows", "x64")
+        # 'x64' 단독 키워드는 linux64에도 매칭되므로 win 접두가 있는 키워드만 사용
+        return ("win64", "windows", "win-x64", "win_x64")
     else:
         if machine in ("arm64", "aarch64"):
             return ("linuxarm64", "linux-arm64", "aarch64")
-        return ("linux64", "linux", "x86_64", "amd64")
+        return ("linux64", "linux-x64", "linux_x64", "linux")
 
 
 # [stdlib-only] 표준 라이브러리로 해제 불가능한 아카이브 — 수급 후보에서 배제.
@@ -127,21 +128,30 @@ def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
     """플랫폼·스펙 필터 + 아카이브 확장자 선호 정렬로 asset 선별."""
     platform_filters = get_platform_asset_filters()
     spec_filters = spec.asset_filters
+    cur_platform = sys.platform
 
     candidates = []
     for asset in assets:
         name = asset.get("name", "").lower()
         
         # SERVER 타입은 크로스플랫폼 순수 JS/TS이므로 플랫폼 필터 적용 생략
-        if spec.type != ComponentType.SERVER:
+        if getattr(spec, "type", None) != ComponentType.SERVER:
+            # 타 OS 키워드 명시적 차단 (크로스 플랫폼 유출 방지)
+            if cur_platform == "win32" and any(p in name for p in ("linux", "darwin", "macos", "osx")):
+                continue
+            if cur_platform == "darwin" and any(p in name for p in ("windows", "win32", "win64", "win-", "linux")):
+                continue
+            if cur_platform.startswith("linux") and any(p in name for p in ("windows", "win32", "win64", "win-", "darwin", "macos", "osx")):
+                continue
+
             if platform_filters and not any(p in name for p in platform_filters):
                 continue
             
-        if spec_filters and not any(s in name for s in spec_filters):
+        if spec_filters and not all(s in name for s in spec_filters):
             continue
 
-        # 제외 키워드
-        if any(x in name for x in ("debug", "symbols", "pdb", ".sig", ".asc")):
+        # 제외 키워드: shared(동적 라이브러리 미포함 바이너리 방지), lgpl(GPL 정적 빌드 선호)
+        if any(x in name for x in ("debug", "symbols", "pdb", ".sig", ".asc", "shared", "lgpl")):
             continue
         if any(name.endswith(ext) for ext in ARCHIVE_UNSUPPORTED_EXT):
             continue

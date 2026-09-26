@@ -138,9 +138,18 @@ def node_exe():
     local_node_dir = os.path.join(get_writable_base(), "node")
     if os.path.isdir(local_node_dir):
         exe_name = f"node{_exe_suffix}"
+        direct_bin = os.path.join(local_node_dir, exe_name)
+        if os.path.isfile(direct_bin):
+            cands.append(direct_bin)
+        direct_subbin = os.path.join(local_node_dir, "bin", exe_name)
+        if os.path.isfile(direct_subbin):
+            cands.append(direct_subbin)
         for root, dirs, files in os.walk(local_node_dir):
+            dirs[:] = [d for d in dirs if not d.startswith(("cz_", ".tmp", "temp"))]
             if exe_name in files:
-                cands.append(os.path.join(root, exe_name))
+                p = os.path.join(root, exe_name)
+                if p not in cands:
+                    cands.append(p)
 
     # [macOS] tar.gz 추출 시 실행 비트 누락 방지
     if not _np_is_win():

@@ -42,6 +42,7 @@ from chzzktube.core import (
 )
 from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
+from chzzktube.infra.platform import strip_macos_quarantine
 from chzzktube.ui import ProgressBar
 
 _UA = "ChzzkTube-Components/1.0"
@@ -410,13 +411,7 @@ def _atomic_install(binaries, dest_dir):
         shutil.copy2(src, target)
         if os.name != "nt":
             target.chmod(target.stat().st_mode | 0o755)
-            try:
-                subprocess.run(
-                    ["xattr", "-dr", "com.apple.quarantine", str(target)],
-                    capture_output=True, check=False,
-                )
-            except Exception:
-                pass
+            strip_macos_quarantine(str(target))
 
     if bin_dir.exists():
         try:
@@ -595,8 +590,11 @@ def _ensure_ffmpeg_windows(log, force):
             time.sleep(2 ** attempt)
 
         try:
+            log_f12_net("resolving BtbN ffmpeg release via GitHub API")
             log(emit_component("DEPS", "RUN", "FFMP", "resolving latest (github)..."))
             plan = _resolve_btbn_ffmpeg()
+            log_f12_net(f"resolved BtbN asset: {plan['asset_name']} (sha256: {plan['sha256'][:16]}...)")
+            log_f12_net(f"HTTP GET {plan['url']}")
             log(emit_component("DEPS", "RUN", "FFMP", f"downloading {plan['version']}..."))
 
             os.makedirs(dest, exist_ok=True)
@@ -605,11 +603,13 @@ def _ensure_ffmpeg_windows(log, force):
                     plan["url"], os.path.join(td, plan["asset_name"]),
                     log, "ffmpeg", expected_sha256=plan["sha256"],
                 )
+                log_f12_net(f"extracting {plan['asset_name']} ({plan['archive_type']}) -> {td}/x")
                 staging = _safe_extract(archive, plan["archive_type"], Path(td) / "x")
                 binaries = _locate_binaries(staging)
 
             if "ffmpeg" not in binaries:
                 last_err = f"ffmpeg binary not found in {plan['asset_name']}"
+                log_f12_net(last_err, is_error=True)
                 log(emit_error_warn("DEPS", "FFMP", "binary missing", "retry mirror (1/3)"))
                 continue
 
@@ -617,17 +617,21 @@ def _ensure_ffmpeg_windows(log, force):
             exe_path = bin_dir / exe_name
             if not exe_path.is_file():
                 last_err = "ffmpeg.exe not installed"
+                log_f12_net(last_err, is_error=True)
                 continue
             if not _verify_ffmpeg(str(exe_path)):
                 last_err = "ffmpeg.exe install verification failed"
+                log_f12_net(last_err, is_error=True)
                 continue
 
             _wire_ffmpeg_path(str(bin_dir))
+            log_f12_net(f"verified ffmpeg binary -> {exe_path}")
             log(emit_component("DEPS", "OK", "FFMP", f"ok ({plan['version']})"))
             _record_provision_plan(plan, str(exe_path))
             return None
         except Exception as e:
             last_err = f"{type(e).__name__}: {e}"
+            log_f12_net(f"ffmpeg windows install error: {e}", is_error=True)
             log(emit_error_warn("DEPS", "FFMP", "download failed", f"{type(e).__name__} (F12)"))
 
     return f"ffmpeg install failed after {max_retries} attempts: {last_err}"
@@ -691,6 +695,7 @@ def _ensure_ffmpeg_macos(log, force):
     dest = os.path.join(config.writable_base(), FFMPEG_DIRNAME)
 
     try:
+        log_f12_net(f"HTTP GET {_FFMPEG_BREW_API}")
         log(emit_component("DEPS", "RUN", "FFMP", "resolving (homebrew formula)..."))
         with urllib.request.urlopen(_FFMPEG_BREW_API, timeout=SHORT_API_TIMEOUT) as resp:
             data = json.load(resp)
@@ -707,33 +712,44 @@ def _ensure_ffmpeg_macos(log, force):
             if not url or not sha256:
                 continue
 
+            log_f12_net(f"resolved bottle: {key} (sha256: {sha256})")
+            log_f12_net(f"HTTP GET {url}")
+
             try:
                 with tempfile.TemporaryDirectory(prefix="cz_ffmpeg_") as td:
                     tar_path = os.path.join(td, "ffmpeg.tar.gz")
                     _write_bottle_payload(url, tar_path, sha256)
 
                     staging = _safe_extract(tar_path, "tar.gz", Path(td) / "x")
+                    log_f12_net(f"tar -xzf ffmpeg.tar.gz -C {td}/x")
                     binaries = _locate_binaries(staging)
                     if "ffmpeg" not in binaries or "ffprobe" not in binaries:
                         continue
 
                     staged = str(binaries["ffmpeg"])
                     os.chmod(staged, 0o755)
-                    subprocess.run(["xattr", "-dr", "com.apple.quarantine", staged], capture_output=True, check=False)
+                    strip_macos_quarantine(staged)
 
                     # [핵심 교정 1] Bottle 내부의 lib 디렉터리를 찾아 dyld 경로로 주입!
                     # 임시 폴더에 풀린 libavcodec 등을 바이너리가 인식할 수 있도록 길을 열어줍니다.
                     lib_dirs = [str(p) for p in Path(staging).rglob("lib") if p.is_dir()]
                     env_extra = {"DYLD_FALLBACK_LIBRARY_PATH": ":".join(lib_dirs)} if lib_dirs else {}
 
-                    if not _verify_ffmpeg(staged, env_extra=env_extra):
+                    try:
+                        verified = _verify_ffmpeg(staged, env_extra=env_extra)
+                    except TypeError:
+                        verified = _verify_ffmpeg(staged)
+
+                    if not verified:
                         last_err = f"ffmpeg [{key}] execution test failed (dyld incompatible)"
+                        log_f12_net(f"ffmpeg [{key}] execution test failed (dyld incompatible)", is_error=True)
                         log(emit_error_warn("DEPS", "FFMP", "binary incompatible", "trying next bottle (F12)"))
                         continue
 
                     # 검증 성공 시 원자 교체 및 라이브러리 동반 복사
                     bin_dir = _atomic_install(binaries, Path(dest))
                     _wire_ffmpeg_path(str(bin_dir))
+                    log_f12_net(f"verified ffmpeg binary -> {bin_dir}/ffmpeg")
                     log(_ffmpeg_done_event(f"bottle [{key}] verified"))
                     return None
 

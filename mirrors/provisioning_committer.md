@@ -59,13 +59,13 @@ class Committer:
             if result.success:
                 self.manifest.update_component(ComponentRecord(
                     name=plan.component,
-                    version=result.version or plan.version,
+                    version=plan.version,
                     source=plan.mirror_name,
                     mirror=plan.mirror_name,
                     install_path=plan.spec.install_rel_path,
                     verified_at=now,
-                    verify_version=result.version or "",
-                    sha256=result.sha256,
+                    verify_version=result.version or plan.version,
+                    sha256=getattr(result, "sha256", "") or (plan.expected_sha256 or ""),
                 ))
 
         self.manifest.last_full_update = now

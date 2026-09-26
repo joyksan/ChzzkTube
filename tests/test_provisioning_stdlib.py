@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chzzktube.infra.provisioning.resolver import ComponentSpec, ComponentType, Mirror
+from chzzktube.infra.provisioning.resolver import ComponentSpec, ComponentType, Mirror, get_platform_asset_filters
+from chzzktube.infra.node_provider import _platform_node_url
 
 
 def _import_without_httpx(module_name):
@@ -135,6 +136,12 @@ class TestParallelDownloaderStdlib:
         assert not destination.with_name(destination.name + ".part").exists()
 
 
+_test_platform_token = get_platform_asset_filters()[0]
+_test_node_url = _platform_node_url("v22.1.0")
+_test_node_file = _test_node_url.split("/")[-1]
+_test_node_archive = "tar.gz" if "darwin" in _test_node_url else "zip"
+
+
 class TestProvisioningManagerStdlib:
     def test_manager_imports_without_httpx(self):
         manager_module = _import_without_httpx(
@@ -168,7 +175,7 @@ class TestProvisioningManagerStdlib:
                 {
                     "tag_name": "v1.2.3",
                     "assets": [
-                        {"name": "demo-1.2.3-darwin-arm64.zip", "browser_download_url": "https://releases.invalid/demo.zip"},
+                        {"name": f"demo-1.2.3-{_test_platform_token}.zip", "browser_download_url": "https://releases.invalid/demo.zip"},
                     ],
                 },
                 (
@@ -184,10 +191,10 @@ class TestProvisioningManagerStdlib:
                 [{"version": "v22.1.0"}],
                 (
                     "v22.1.0",
-                    "https://nodejs.org/dist/v22.1.0/node-v22.1.0-darwin-arm64.tar.gz",
+                    _test_node_url,
                     "93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57",
                     "nodejs.org",
-                    "tar.gz",
+                    _test_node_archive,
                 ),
             ),
         ],
@@ -216,7 +223,7 @@ class TestProvisioningManagerStdlib:
 
         async def run_fetch():
             planner._fetch_json = AsyncMock(return_value=payload)
-            planner._fetch_text = AsyncMock(return_value="93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57  node-v22.1.0-darwin-arm64.tar.gz")
+            planner._fetch_text = AsyncMock(return_value=f"93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57  {_test_node_file}")
             return await method(spec, mirror)
 
         assert asyncio.run(run_fetch()) == expected

@@ -42,22 +42,43 @@ class Verifier:
                     capture_output=True, check=False
                 )
             
-            # 실행 테스트
+            # 실행 테스트 (바이너리 경로를 PATH 및 cwd에 주입하여 companion DLL 탐색 보장)
+            env = os.environ.copy()
+            bin_dir = str(binary_path.parent)
+            env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
+
             result = subprocess.run(
                 [str(binary_path), *spec.verify_cmd[1:]],
                 capture_output=True, text=True, timeout=15,
+                cwd=bin_dir,
+                env=env,
+                encoding="utf-8",
+                errors="replace",
                 **spawn_kwargs()
             )
             
             if result.returncode != 0:
+                err_detail = (result.stderr or result.stdout or "").strip()
+                if result.returncode in (3221225781, -1073741515, 0xC0000135):
+                    err_msg = f"exit code {result.returncode} (STATUS_DLL_NOT_FOUND: required DLL missing): {err_detail[:300]}"
+                else:
+                    err_msg = f"exit code {result.returncode}: {err_detail[:300]}"
                 return VerifyResult(
                     spec.name, False,
-                    error=f"exit code {result.returncode}: {result.stderr[:300]}",
+                    error=err_msg,
                     installed_path=binary_path
                 )
             
-            # 버전 추출 (첫 줄에서)
-            version_line = result.stdout.splitlines()[0] if result.stdout else ""
+            # 버전 추출
+            version_line = ""
+            stdout_text = result.stdout or ""
+            if spec.name == "ffmpeg":
+                import re
+                m = re.search(r"ffmpeg version\s+([^\s,]+)", stdout_text)
+                if m:
+                    version_line = m.group(1)
+            if not version_line:
+                version_line = stdout_text.splitlines()[0] if stdout_text else ""
             return VerifyResult(
                 spec.name, True,
                 version=version_line.strip(),

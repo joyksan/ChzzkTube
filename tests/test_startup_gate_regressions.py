@@ -126,6 +126,9 @@ class _CheckDoneFake:
     def _retire_qthread(self, worker):
         pass
 
+    def _on_upgrade_done(self, ok: bool, summary: str):
+        pass
+
 
 class _DlFake:
     """`get_current_app_state`/`toggle_download`만 실제 구현으로 바인딩한 대역."""

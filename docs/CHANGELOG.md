@@ -1,3 +1,39 @@
+### 2026-09-26 — v3.12.2 : Windows 의존성 정합성 루프 정비·다운로드 진행률 규격 개편·F12 터미널 원문 로깅 체계 구축 (patch)
+
+#### 배경 (v3.12.1 → v3.12.2)
+- **Windows 환경 의존성 정합성 루프 및 수급 무결성 전면 정비**: Windows x64 환경에서 linux64/shared/lgpl 자산 오탐 방지, 동반 DLL 자동 수급 및 `STATUS_DLL_NOT_FOUND`(exit code 3221225781) 감지, Git snapshot(`N-xxx`) 빌드 버전 정규식 파싱, `manifest.is_stale()`의 디스크 파일 실존 여부 검증 및 `committer`의 `plan.version` 확정 기록으로 무한 재다운로드 루프 완전 차단.
+- **다운로드 Progress Bar 규격 개편 및 수치 영구 보존**: ETA 항목을 삭제하고 `[bar] pct · speed · n/m · msg` 순으로 칼정렬 포맷팅. 다운로드 중에는 msg 공백, 완료 후 `extracting...`, `installed` / `updated` 상태 메시지로 전환되며, **100% 완료 후에도 bar, pct, speed, n/m 수치가 날아가지 않고 영구 유지**되도록 개편. 신규 설치와 업데이트 분기 명확화.
+- **bgutil 다운로드 지연 원인 해결**: `ParallelDownloader`의 동시 다운로드 세마포어(`max_concurrent`)가 3으로 제한되어 4번째 컴포넌트인 `bgutil`이 대기 상태에 걸리던 병목을 확인하고, `max_concurrent`를 5로 확장하여 4개 의존성(`ytdlp`, `ffmpeg`, `node`, `bgutil`) 동시 병렬 수급 보장.
+- **F12 상세로그 터미널 원문 로깅 체계 구축**: 메인 TUI 콘솔 오염 없이(`to_tui=False`) 터미널 풍미의 원문(`$ cmdline` 및 HTTP GET, 해시 검증, 아카이브 전개 등)을 F12에만 발행하는 `log_f12_cli`, `log_f12_net` 헬퍼 고도화 및 의존성 수급/검증 계층(`updater`, `downloader`, `executor`, `planner`, `components`) 전면 배선.
+- **의존성 엣지케이스 대응 및 명시적 사용자 안내**: 네트워크 연결 끊김, 소켓 타임아웃, HTTP 404/429/503 미러 오류, Windows `WinError 32`(파일 잠금) 및 `PermissionError` 발생 시 사용자에게 네트워크 확인 및 재시작 액션 가이드를 담은 명시적 안내 메시지 제공.
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `core/raw_log.py` | `log_f12_cli`, `log_f12_net`을 명시적 `LogEvent(to_tui=False, rendered=True)` 기반으로 고도화 |
+| `infra/provisioning/downloader.py` | `max_concurrent` 3 → 5 상향, `_format_network_error()` 엣지케이스 헬퍼, HTTP GET/응답/해시 원문 로깅 |
+| `infra/provisioning/executor.py` | ETA 제거 및 `bar, pct, speed, n/m, msg` 포맷 개편, 100% 완료 후에도 수치 보존, 신규/업데이트 분기, Windows 동반 DLL 복사 및 F12 로깅 |
+| `infra/provisioning/manager.py` | `ensure_all` 신규/업데이트 요약 로그 및 실패 시 명시적 액션 가이드(`check network/F12 logs and restart app`) 제공 |
+| `infra/provisioning/planner.py` | `_fetch_json_sync` / `_fetch_text_sync` / `_fetch_latest` F12 네트워크 원문 로깅, `is_stale(base_dir)` 전달 |
+| `infra/provisioning/resolver.py` | Windows 에셋 필터 bare `x64` 제거, BtbN shared/lgpl 배제, 타 OS 키워드 차단 및 AND 필터링 교정 |
+| `infra/provisioning/verifier.py` | `STATUS_DLL_NOT_FOUND` exit code 대응, bin_dir PATH/CWD 주입, Git snapshot(`N-xxx`) 빌드 파싱 |
+| `infra/provisioning/manifest.py` | `is_stale`에 `base_dir` 파라미터 추가하여 파일 실존 여부까지 디스크 검증 |
+| `infra/provisioning/committer.py` | `plan.version` 확정 기록으로 무한 재다운로드 방지, VerifyResult 호환성 보강 |
+| `infra/updater.py` | `check_deps`에 F12 CLI/NET 로깅 배선, `_parse_ffmpeg_version_text` git snapshot 지원, ffmpeg FAIL 정확 판정 |
+| `infra/components.py` | macOS Homebrew bottle 및 Windows BtbN 수급 단계에 `log_f12_net` 배선, darwin xattr 가드 |
+| `infra/cleanup.py` | `cz_*` 임시 디렉터리 자동 정리 로직 추가 |
+| `infra/node_provider.py` | 루트 `node.exe` 우선 탐색 및 `cz_*` 디렉터리 탐색 제외 |
+| `infra/pot_server.py` | `tsc` 빌드 명령 중첩 리스트 언팩 버그 수정 |
+| `control/startup_coordinator.py` | `_on_pot_status` failed 상태 매핑 및 발행, `report_upgrade` 실패 시 재시작 가이드 보강 |
+| `core/config.py`, `pyproject.toml`, `uv.lock` | 버전 `v3.12.2` 패치 범프 및 패키지 메타 동기화 |
+| `tests/test_deps_windows_loop.py` | Windows 루프 정합성, progress bar 규격, 동시성, F12 로깅 11개 단위 테스트 신설 |
+
+#### 검증
+- `pytest tests/test_deps_windows_loop.py tests/test_provisioning_stdlib.py tests/test_ffmpeg_resolver_contract.py tests/test_ffmpeg_archive_contract.py tests/test_cleanup.py tests/test_startup_gate_regressions.py tests/test_coordinator.py tests/test_download_pipeline.py` → 전체 85개 테스트 100% 통과
+- `git diff --stat` 디스크 플러시 검증 완료
+
+---
+
 ### 2026-09-26 — v3.12.1 : 의존성 통합 프로비저닝 파이프라인 일원화·Cold Boot Ready 게이트 복원·실시간 다운로드 게이지 정상화 (patch)
 
 #### 배경 (v3.12.0 → v3.12.1)

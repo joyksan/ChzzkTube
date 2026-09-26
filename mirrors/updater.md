@@ -18,6 +18,7 @@ import tempfile
 import socket
 import urllib.request
 from chzzktube.infra.platform import spawn_kwargs
+from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 
 # (log_label, pypi_name, pypi_nightly) — log_label is shown in the DEPS PLATFORM column
 # pypi_nightly: Nightly 채널 사용 시 설치할 PyPI 패키지명 (None이면 Stable only)
@@ -176,8 +177,10 @@ def check_deps(log_func=None):
     
     if ver:
         results.append((label, "OK", f"{ver} at {exe}"))
+        log_f12_cli(f"{exe} --version", ver)
     else:
         results.append((label, "FAIL", "not installed"))
+        log_f12_net("yt-dlp binary not found", is_error=True)
 
     # 2. ffmpeg — 앱 전용 캐시 단일 참조 (시스템 PATH 탐색 철폐)
     try:
@@ -186,10 +189,16 @@ def check_deps(log_func=None):
     except Exception:
         path = None
     if path:
-        ver_str = _ffmpeg_version(path) or "unknown"
-        results.append(("ffmpeg", "OK", f"{ver_str} at {path}"))
+        ver_str = _ffmpeg_version(path)
+        if ver_str:
+            results.append(("ffmpeg", "OK", f"{ver_str} at {path}"))
+            log_f12_cli(f"{path} -version", ver_str)
+        else:
+            results.append(("ffmpeg", "FAIL", f"verification failed at {path}"))
+            log_f12_cli(f"{path} -version", "execution test failed", is_error=True)
     else:
         results.append(("ffmpeg", "FAIL", "not installed"))
+        log_f12_net("ffmpeg binary not found in cache", is_error=True)
 
     # 3. node — 앱 전용 포터블 런타임 단일 참조
     try:
@@ -200,19 +209,39 @@ def check_deps(log_func=None):
         path, maj = None, None
     if path and maj:
         results.append(("node", "OK", f"v{maj} at {path}"))
+        log_f12_cli(f"{path} --version", f"v{maj}")
     else:
         results.append(("node", "FAIL", "not installed"))
+        log_f12_net("node runtime not found in app path", is_error=True)
 
-    # 4. bgutil 소스코드 무결성 검증 (POT 기동/readiness는 staging에서 별도 판정)
+    # 4. bgutil 소스코드 무결성 검증
     try:
         from chzzktube.infra.pot_server import server_installed_ver, server_home
         ver = server_installed_ver()
         if ver:
             results.append(("bgutil", "OK", f"v{ver} at {server_home()}"))
+            log_f12_net(f"bgutil provider version: v{ver} at {server_home()}")
         else:
             results.append(("bgutil", "FAIL", "not installed"))
-    except Exception:
+            log_f12_net("bgutil provider source not installed", is_error=True)
+    except Exception as e:
         results.append(("bgutil", "FAIL", "unknown"))
+        log_f12_net(f"bgutil check failed: {e}", is_error=True)
+
+    # 5. PO token 서버 — liveness가 아니라 readiness 판정
+    try:
+        from chzzktube.infra.po_client import server_ping
+        from chzzktube.infra.pot_server import pot_readiness
+        if server_ping():
+            results.append(("pot", "OK", "running"))
+        else:
+            ready, reason = pot_readiness(log_func=log_func)
+            if ready:
+                results.append(("pot", "SKIP", "standby"))
+            else:
+                results.append(("pot", "SKIP", reason or "not ready"))
+    except Exception:
+        results.append(("pot", "SKIP", "unknown"))
 
     return results
 
@@ -408,18 +437,33 @@ def truncate_for_full_log(out, max_lines=6, max_width=160):
     return "\n".join(lines)
 
 
-def _ffmpeg_version(path, timeout=3):
-    """`ffmpeg -version`에서 숫자 코어 버전(MAJOR.MINOR[.PATCH]) 추출. 실패 시 None.
+def _parse_ffmpeg_version_text(text: str):
+    """ffmpeg 버전 출력 텍스트에서 버전 문자열 추출 (표준 버전 또는 git snapshot N-xxx 등)."""
+    if not text:
+        return None
+    import re
+    # 1) 표준 첫 줄 — 숫자 코어
+    m = re.search(r"ffmpeg version\s+(\d+(?:\.\d+)+)", text)
+    if m:
+        return m.group(1)
+    # 2) git snapshot 첫 줄 (예: ffmpeg version N-126826-gc0e8b139fd-20260924 ...)
+    m = re.search(r"ffmpeg version\s+([^\s,]+)", text)
+    if m:
+        return m.group(1)
+    # 3) configuration 줄 폴백 — --prefix=…/ffmpeg/9.0.1_1
+    m = re.search(r"ffmpeg[/\\\-](\d+(?:\.\d+){1,2})(?![0-9.])", text)
+    return m.group(1) if m else None
 
-    - 표준/홈브루: 'ffmpeg version 9.0.1' → 9.0.1
-    - extra version/빌드 태그/일자(YYYMMDD) 접미는 정규식으로 절단:
-      '9.0.1_1'·'7.1.1-20240815-g…' → 9.0.1 · 7.1.1
-      (homebrew bottle Cellar/ffmpeg/9.0.1_1 처럼 configuration 줄에만
-      extra version이 드러나는 경우도 그대로 대응)
-    - 첫 줄 미매치(N-일자 빌드 등) 시 configuration 줄 폴백: '…/ffmpeg/9.0.1_1'
-    """
+
+def _ffmpeg_version(path, timeout=3):
+    """`ffmpeg -version`에서 버전 추출. 실패 시 None."""
+    if not path:
+        return None
+    path_str = str(path)
+    if "\n" in path_str or path_str.startswith("ffmpeg version"):
+        return _parse_ffmpeg_version_text(path_str)
+
     try:
-        import re
         out = subprocess.run(
             [path, "-version"],
             capture_output=True,
@@ -429,13 +473,10 @@ def _ffmpeg_version(path, timeout=3):
             timeout=timeout,
             **spawn_kwargs(),
         )
+        if out.returncode != 0:
+            return None
         text = (out.stdout or out.stderr or "")
-        # 1) 표준 첫 줄 — 숫자 코어 3단만 (extra version 접미부 미포함)
-        m = re.search(r"ffmpeg version\s+(\d+(?:\.\d+){1,2})", text)
-        if not m:
-            # 2) configuration 줄 폴백 — --prefix=…/ffmpeg/9.0.1_1
-            m = re.search(r"ffmpeg[/\\\-](\d+(?:\.\d+){1,2})(?![0-9.])", text)
-        return m.group(1) if m else None
+        return _parse_ffmpeg_version_text(text)
     except Exception:
         return None
 

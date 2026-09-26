@@ -9,6 +9,7 @@ OS 종속 코드의 단일 격리 지점. 상위 비즈니스 로직은 이 모�
 - 바보 모듈: chzzktube.* 상위 로직을 import하지 않는다 (stdlib only).
 - 스폰 용도 분리: spawn_kwargs (단발/프로브) / daemon_spawn_kwargs (데몬).
 """
+import asyncio
 import subprocess
 import sys
 from typing import Any, Dict
@@ -42,6 +43,30 @@ def daemon_spawn_kwargs(use_no_window: bool = True) -> Dict[str, Any]:
     else:
         kw["start_new_session"] = True
     return kw
+
+
+def strip_macos_quarantine(path: str) -> None:
+    """macOS quarantine xattr 제거 (동기). 비-macOS 및 xattr 부재 시 무해한 no-op."""
+    if not is_macos() or not path:
+        return
+    try:
+        subprocess.run(
+            ["xattr", "-dr", "com.apple.quarantine", str(path)],
+            capture_output=True, check=False,
+        )
+    except Exception:
+        pass
+
+
+async def astrip_macos_quarantine(path: str) -> None:
+    """`strip_macos_quarantine`의 async 래퍼 — worker thread 위임.
+
+    async 함수에서 `subprocess.run`을 직접 호출하면 이벤트 루프가 블로킹되므로
+    (ruff ASYNC221) 반드시 이 헬퍼를 경유한다. 비-macOS에서는 thread 생성 없이 즉시 반환.
+    """
+    if not is_macos() or not path:
+        return
+    await asyncio.to_thread(strip_macos_quarantine, path)
 
 
 def flash_window(hwnd: int) -> None:

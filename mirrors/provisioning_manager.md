@@ -53,6 +53,20 @@ class ProvisioningManager:
             )
             return []
 
+        update_comps = [p.component for p in plans if p.is_update]
+        install_comps = [p.component for p in plans if not p.is_update]
+        if update_comps and install_comps:
+            action_summary = f"updating {', '.join(update_comps)}, installing {', '.join(install_comps)}"
+        elif update_comps:
+            action_summary = f"updating {', '.join(update_comps)}"
+        else:
+            action_summary = f"installing {', '.join(install_comps)}"
+
+        self._emit(
+            "DEPS", "RUN", "DEPS", f"provisioning {len(plans)} components ({action_summary})",
+            component_id="deps_SUMMARY", is_progress=False,
+        )
+
         results = await self.provision(plans)
         await self.commit(plans, results)
 
@@ -60,13 +74,15 @@ class ProvisioningManager:
         fail_count = len(results) - ok_count
         if fail_count == 0:
             self._emit(
-                "DEPS", "DONE", "DEPS", f"provisioned {ok_count} components",
+                "DEPS", "DONE", "DEPS", f"provisioned {ok_count} components ready",
                 component_id="deps_SUMMARY", is_progress=False,
             )
         else:
+            fail_names = [r.component for r in results if not r.success]
             self._emit(
-                "DEPS", "WARN", "DEPS", f"{ok_count} ok, {fail_count} failed",
-                component_id="deps_SUMMARY", is_progress=False,
+                "DEPS", "FAIL", "MAIN",
+                f"deps fail ({', '.join(fail_names)}) → check network/F12 logs and restart app",
+                component_id="deps_SUMMARY", is_progress=False, is_error=True,
             )
 
         return results

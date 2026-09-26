@@ -19,6 +19,7 @@ from chzzktube.infra.provisioning.resolver import (
 )
 from chzzktube.infra.provisioning.manifest import ProvisionManifest
 import chzzktube.core.raw_log as raw_log
+from chzzktube.core.raw_log import log_f12_net
 from chzzktube.core.log_emitter import emit_component
 
 
@@ -65,11 +66,13 @@ class Planner:
     def _fetch_json_sync(
         url: str, headers: Optional[dict[str, str]] = None
     ) -> Optional[dict | list]:
+        log_f12_net(f"HTTP GET {url}")
         request = urllib.request.Request(url, headers=headers or {})
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 return json.loads(response.read().decode("utf-8"))
-        except (OSError, UnicodeDecodeError, json.JSONDecodeError, urllib.error.HTTPError):
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, urllib.error.HTTPError) as e:
+            log_f12_net(f"HTTP GET failed ({url}): {e}", is_error=True)
             return None
 
     async def _fetch_text(self, url: str) -> Optional[str]:
@@ -78,11 +81,13 @@ class Planner:
 
     @staticmethod
     def _fetch_text_sync(url: str) -> Optional[str]:
+        log_f12_net(f"HTTP GET {url}")
         request = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube-Provisioner/1.0"})
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 return response.read().decode("utf-8")
-        except (OSError, UnicodeDecodeError, urllib.error.HTTPError):
+        except (OSError, UnicodeDecodeError, urllib.error.HTTPError) as e:
+            log_f12_net(f"HTTP GET failed ({url}): {e}", is_error=True)
             return None
 
     async def _fetch_latest(self, spec: ComponentSpec):
@@ -105,10 +110,12 @@ class Planner:
                     result = None
 
                 if result and result[0] and result[1]:
+                    log_f12_net(f"resolved {spec.name}: v{result[0]} via {result[3]} -> {result[1]}")
                     return result
             except Exception as e:
                 import chzzktube.core.raw_log as raw_log
                 raw_log.raw("DEPS", f"_fetch_latest mirror {mirror.name} error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
+                log_f12_net(f"mirror {mirror.name} query error for {spec.name}: {e}", is_error=True)
                 pass
         return None, None, None, None, None
 
@@ -213,7 +220,7 @@ class Planner:
         if not version:
             return None, None, None, None, None
 
-        if spec.type == ComponentType.SERVER:
+        if getattr(spec, "type", None) == ComponentType.SERVER:
             tag = data.get("tag_name") or version
             url = data.get("zipball_url") or f"https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/{tag}.zip"
             return version, url, None, mirror.name, "server"
@@ -296,7 +303,7 @@ class Planner:
                 )
                 continue
 
-            if stale_only and not self.manifest.is_stale(name, latest_ver):
+            if stale_only and not self.manifest.is_stale(name, latest_ver, base_dir=self.base_dir):
                 continue
 
             if spec.type == ComponentType.PYTHON_PKG:

@@ -71,6 +71,20 @@ def cleanup_provisioning_artifacts():
         except Exception:
             pass
 
+    # 6. cz_* 임시 디렉터리 정리 (base 및 base 하위 디렉터리)
+    for cz_dir in glob.glob(os.path.join(base, "cz_*")):
+        try:
+            if os.path.isdir(cz_dir):
+                shutil.rmtree(cz_dir, ignore_errors=True)
+        except Exception:
+            pass
+    for cz_dir in glob.glob(os.path.join(base, "*", "cz_*")):
+        try:
+            if os.path.isdir(cz_dir):
+                shutil.rmtree(cz_dir, ignore_errors=True)
+        except Exception:
+            pass
+
 
 def cleanup_on_startup():
     """앱 기동 시 호출 — 이전 세션 잔재 정리."""

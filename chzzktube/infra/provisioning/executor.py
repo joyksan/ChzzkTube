@@ -2,30 +2,30 @@
 
 Planner가 생성한 플랜을 받아 다운로드, 추출/설치, 검증을 수행.
 """
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
+import shutil
 import sys
-import zipfile
 import tarfile
 import tempfile
-import shutil
-import subprocess
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
 
-from chzzktube.infra.provisioning.downloader import ParallelDownloader, DownloadTask
-from chzzktube.infra.provisioning.planner import ProvisionPlan
-from chzzktube.infra.provisioning.verifier import Verifier
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
+from chzzktube.core.raw_log import log_f12_cli, log_f12_net
+from chzzktube.infra.platform import astrip_macos_quarantine, strip_macos_quarantine
+from chzzktube.infra.provisioning.downloader import DownloadTask, ParallelDownloader
+from chzzktube.infra.provisioning.planner import ProvisionPlan
+from chzzktube.infra.provisioning.verifier import Verifier
 
 
 @dataclass
 class ProvisionResult:
     component: str
     success: bool
-    version: Optional[str] = None
-    error: Optional[str] = None
+    version: str | None = None
+    error: str | None = None
     action: str = ""
     sha256: str = ""
 
@@ -58,7 +58,7 @@ def _promote_extracted_binaries(temp_dir: str, target_dest: Path, component_name
                 bp = target_dest / "bin" / b
                 if bp.exists():
                     bp.chmod(0o755)
-                    subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(bp)], capture_output=True, check=False)
+                    strip_macos_quarantine(str(bp))
         return target_dest
 
     # 2. bgutil 서버: 소스 트리 전개 + .version 기록
@@ -86,13 +86,13 @@ def _promote_extracted_binaries(temp_dir: str, target_dest: Path, component_name
                 dest_ffmpeg = target_bin_dir / "ffmpeg"
                 shutil.copy2(host_bin, dest_ffmpeg)
                 dest_ffmpeg.chmod(0o755)
-                subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest_ffmpeg)], capture_output=True, check=False)
+                strip_macos_quarantine(str(dest_ffmpeg))
                 host_probe = host_bin.parent / "ffprobe"
                 if host_probe.is_file():
                     dest_probe = target_bin_dir / "ffprobe"
                     shutil.copy2(host_probe, dest_probe)
                     dest_probe.chmod(0o755)
-                    subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest_probe)], capture_output=True, check=False)
+                    strip_macos_quarantine(str(dest_probe))
                 return target_dest
 
     targets = ("ffmpeg", "ffprobe")
@@ -111,7 +111,15 @@ def _promote_extracted_binaries(temp_dir: str, target_dest: Path, component_name
         shutil.copy2(src_path, dest_file)
         if sys.platform != "win32":
             dest_file.chmod(dest_file.stat().st_mode | 0o755)
-            subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest_file)], capture_output=True, check=False)
+            strip_macos_quarantine(str(dest_file))
+
+    # Windows: DLL 동반 수급 — 아카이브 내 동반 DLL을 target_bin_dir로 복사
+    if sys.platform == "win32":
+        for dll_file in td_path.rglob("*.dll"):
+            dest_dll = target_bin_dir / dll_file.name
+            if not dest_dll.exists():
+                shutil.copy2(dll_file, dest_dll)
+                log_f12_net(f"copied companion DLL: {dll_file.name} -> {dest_dll}")
 
     return target_dest
 
@@ -135,26 +143,23 @@ class Executor:
         total_mb = total / (1024 * 1024)
 
         speed_str = self._format_speed(speed_bps)
-        eta_str = self._format_eta(eta_sec)
+        nm_str = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
 
-        # 개별 진행 저장
+        # 개별 진행 저장 (100% 완료 및 추출/실패 후에도 bar, pct, speed, n/m 유지)
         self._active_progress[component] = {
             "pct": pct,
+            "speed": speed_str,
+            "nm": nm_str,
             "downloaded_mb": downloaded_mb,
             "total_mb": total_mb,
-            "speed": speed_str,
-            "eta": eta_str,
-            "state": "running",
         }
 
-        # 진행률 메시지
-        progress_msg = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
-        if eta_str:
-            progress_msg += f" ETA {eta_str}"
+        # 다운로드 중에는 msg는 공백 (bar, pct, speed, n/m만 배치)
+        line = self._fmt_progress(pct, speed_str, nm_str, msg="")
 
         event = emit_component(
             "DEPS", "RUN", _to_scope(component),
-            self._fmt_progress(pct, speed_str, progress_msg),
+            line,
             is_status=True,
             is_error=False,
         )
@@ -210,26 +215,20 @@ class Executor:
         return ""
 
     @staticmethod
-    def _format_eta(seconds: float) -> str:
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        elif seconds < 3600:
-            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-        else:
-            return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
-
-    @staticmethod
-    def _fmt_progress(pct: int, speed: str, msg: str = "") -> str:
-        """TUI 규격 칼정렬: strip() 무시 정렬 포맷"""
-        bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
-
+    def _fmt_progress(pct: int, speed: str = "", nm: str = "", msg: str = "") -> str:
+        """TUI 규격: bar, pct, speed, n/m, msg 순으로 배치 (ETA 삭제)."""
         pct_val = min(max(pct, 0), 100)
+        bar = "█" * (pct_val // 10) + "░" * (10 - pct_val // 10)
         pct_str = f"{pct_val:3d}%"
-
         speed_padded = f"{speed:>10}" if speed else " " * 10
 
-        msg_str = f" · {msg}" if msg else ""
-        return f"{pct_str} · {speed_padded} [{bar}]{msg_str}"
+        line = f"[{bar}] {pct_str} · {speed_padded}"
+        if nm:
+            line += f" · {nm}"
+        if msg:
+            line += f" · {msg}"
+        return line
+
     async def provision(self, plans: list[ProvisionPlan]) -> list[ProvisionResult]:
         """플랜 실행: 다운로드 → 추출/설치 → 검증."""
         if not plans:
@@ -246,6 +245,7 @@ class Executor:
                 dest=dest,
                 component=plan.component,
             ))
+            log_f12_net(f"queue download: {plan.component} -> {plan.download_url}")
 
         dl_results = await self._downloader.download_all(tasks)
 
@@ -255,38 +255,60 @@ class Executor:
             scope = _to_scope(plan.component)
             dl_result = next((r for r in dl_results if r.task.component == plan.component), None)
 
+            prog = self._active_progress.get(plan.component, {})
+            pct = prog.get("pct", 100)
+            speed = prog.get("speed", "")
+            nm = prog.get("nm", "")
+
             if not dl_result or not dl_result.success:
                 error_msg = dl_result.error if dl_result else "download task vanished"
-                self._emit("DEPS", "FAIL", scope, f"download failed: {error_msg}", component_id=comp_id, is_progress=False, is_error=True)
+                fail_line = self._fmt_progress(pct, speed, nm, f"download failed: {error_msg}")
+                self._emit("DEPS", "FAIL", scope, fail_line, component_id=comp_id, is_progress=False, is_error=True)
+                log_f12_net(f"download failed for {plan.component}: {error_msg}", is_error=True)
                 final_results.append(ProvisionResult(
-                    plan.component, False, error=error_msg
+                    plan.component, False, error=error_msg, action="fail"
                 ))
                 continue
 
-            self._emit("DEPS", "RUN", scope, "extracting...", component_id=comp_id, is_progress=True, is_status=True)
+            # 1. 추출 단계: bar, pct, speed, n/m 유지 + msg='extracting...'
+            extract_line = self._fmt_progress(100, speed, nm, "extracting...")
+            self._emit("DEPS", "RUN", scope, extract_line, component_id=comp_id, is_progress=True, is_status=True)
+            log_f12_net(f"extracting {plan.component} ({plan.archive_type}) -> {plan.install_path}")
+
             installed_path = await self._extract_and_install(plan, dl_result.task.dest)
             
             if isinstance(installed_path, str):  # str means error message
-                self._emit("DEPS", "FAIL", scope, f"install failed: {installed_path}", component_id=comp_id, is_progress=False, is_error=True)
+                fail_line = self._fmt_progress(100, speed, nm, f"install failed: {installed_path}")
+                self._emit("DEPS", "FAIL", scope, fail_line, component_id=comp_id, is_progress=False, is_error=True)
+                log_f12_net(f"install failed for {plan.component}: {installed_path}", is_error=True)
                 final_results.append(ProvisionResult(
-                    plan.component, False, error=f"install failed: {installed_path}"
+                    plan.component, False, error=f"install failed: {installed_path}", action="fail"
                 ))
                 continue
 
-            # 검증
+            # 2. 검증 단계
             if plan.spec.verify_cmd:
                 v_res = Verifier.verify(plan.spec, installed_path)
+                cmd_str = f"{installed_path} {' '.join(plan.spec.verify_cmd[1:])}"
+                log_f12_cli(cmd_str, v_res.version if v_res.success else v_res.error, is_error=not v_res.success)
                 if not v_res.success:
-                    self._emit("DEPS", "FAIL", scope, f"verification failed: {v_res.error}", component_id=comp_id, is_progress=False, is_error=True)
+                    fail_line = self._fmt_progress(100, speed, nm, f"verification failed: {v_res.error}")
+                    self._emit("DEPS", "FAIL", scope, fail_line, component_id=comp_id, is_progress=False, is_error=True)
+                    log_f12_net(f"verification failed for {plan.component}: {v_res.error}", is_error=True)
                     final_results.append(ProvisionResult(
-                        plan.component, False, error=f"verification failed: {v_res.error}"
+                        plan.component, False, error=f"verification failed: {v_res.error}", action="fail"
                     ))
                     continue
+                log_f12_net(f"verified {plan.component} binary -> {v_res.version or plan.version}")
 
-            # 마감 확정 (Commit): is_progress=False, is_status=False, status="OK"로 마감하여 영구 히스토리로 승격
-            self._emit("DEPS", "OK", scope, f"{plan.component} installed", component_id=comp_id, is_progress=False, is_status=False)
+            # 3. 마감 확정 (Commit): bar, pct, speed, n/m 유지 + msg='{component} installed' / '{component} updated'
+            action_desc = "updated" if plan.is_update else "installed"
+            status_text = f"{plan.component} {action_desc}"
+            done_line = self._fmt_progress(100, speed, nm, status_text)
+            self._emit("DEPS", "OK", scope, done_line, component_id=comp_id, is_progress=False, is_status=False)
+            log_f12_net(f"provision complete: {plan.component} ({action_desc}) -> {plan.version}")
             final_results.append(ProvisionResult(
-                plan.component, True, version=plan.version, sha256=plan.expected_sha256 or "", action="install"
+                plan.component, True, version=plan.version, sha256=plan.expected_sha256 or "", action="update" if plan.is_update else "install"
             ))
 
         return final_results
@@ -314,8 +336,13 @@ class Executor:
                             (dest / ".version").write_text(str(plan.version), encoding="utf-8")
                             if (dest / "server").is_dir():
                                 (dest / "server" / ".version").write_text(str(plan.version), encoding="utf-8")
-                        except Exception:
-                            pass
+                        except OSError as e:
+                            # .version 마커 기록 실패는 설치를 막지 않는다 (F12 진단 기록만)
+                            log_f12_net(
+                                "failed to write .version marker for "
+                                f"{plan.component}: {type(e).__name__}: {e}",
+                                is_error=True,
+                            )
                     return promoted
 
             elif plan.archive_type == "tar.gz":
@@ -338,11 +365,17 @@ class Executor:
                 shutil.copy2(archive, dest)
                 if sys.platform != "win32":
                     dest.chmod(0o755)
-                    if sys.platform == "darwin":
-                        subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(dest)], capture_output=True, check=False)
+                    # async 컨텍스트 — xattr 프로세스는 worker thread에서 실행 (블로킹 금지)
+                    await astrip_macos_quarantine(str(dest))
                 return dest
 
             return f"unknown archive type: {plan.archive_type}"
 
-        except Exception as e:
+        except PermissionError as e:
+            return f"PermissionError: file locked or access denied ({e}) — close conflicting programs and restart app"
+        except FileNotFoundError as e:
+            return f"FileNotFoundError: required file missing ({e})"
+        except OSError as e:
+            if getattr(e, "winerror", None) == 32:
+                return "file in use by another process (WinError 32) — close background processes and restart app"
             return f"{type(e).__name__}: {e}"
