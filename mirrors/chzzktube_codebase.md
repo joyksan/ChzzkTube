@@ -199,644 +199,6 @@ except (OSError, re.error) as e:
 
 ```
 
-## File: debug_test.py
-
-```python
-import chzzktube.core.raw_log as raw_log
-events = []
-raw_log.subscribe_concise(lambda ev, is_status, is_error: events.append(ev))
-from chzzktube.control.startup_coordinator import StartupCoordinator
-from unittest.mock import Mock
-c = StartupCoordinator(Mock())
-c._on_pot_status('staged')
-import time
-deadline = time.time() + 2.0
-while time.time() < deadline and not events:
-    time.sleep(0.02)
-ev = events[-1]
-print('stage:', repr(ev.stage), 'scope:', repr(ev.scope))
-```
-
-## File: debug_test2.py
-
-```python
-import chzzktube.core.raw_log as raw_log; events = []; raw_log.subscribe_concise(lambda ev, is_status, is_error: events.append(ev)); from chzzktube.control.startup_coordinator import StartupCoordinator; from unittest.mock import Mock; c = StartupCoordinator(Mock()); c._on_pot_status(\u0027staged\u0027); import time; deadline = time.time() + 2.0; while time.time() < deadline and not events: time.sleep(0.02); ev = events[-1]; print(\u0027stage:\u0027, repr(ev.stage), \u0027scope:\u0027, repr(ev.scope))
-
-```
-
-## File: find_exceptions.py
-
-```python
-import os
-import sys
-
-results = []
-for r, _, fs in os.walk('chzzktube'):
-    for f in fs:
-        if f.endswith('.py'):
-            path = os.path.join(r, f)
-            try:
-                with open(path, 'r', encoding='utf-8') as fp:
-                    for i, line in enumerate(fp, 1):
-                        stripped = line.strip()
-                        if stripped == 'except Exception:' or stripped == 'except:' or (stripped.startswith('except Exception as') and 'pass' in stripped):
-                            results.append(f'{path}:{i}: {stripped}')
-            except:
-                pass
-
-print('\n'.join(results[:100]))
-```
-
-## File: fix_indent.py
-
-```python
-import re
-
-with open('chzzktube/pipeline/live_recorder.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# Fix 1: Remove the extra .strip(), and closing parens after the exception handler
-old = '''raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False).strip(),
-                                      ),
-'''
-
-new = ''
-
-if old in content:
-    content = content.replace(old, new)
-    with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-        f.write(content)
-    print('Fixed indentation!')
-else:
-    print('Old text not found, searching...')
-    idx = content.find('raw_log.raw("LIVE", f"_drain_stderr error:')
-    if idx >= 0:
-        print(repr(content[idx:idx+150]))
-```
-
-## File: fix_indent2.py
-
-```python
-with open('chzzktube/pipeline/live_recorder.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# Fix the specific indentation issue
-old = 'raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False).strip(),\n                                      ),'
-
-new = ''
-
-if old in content:
-    content = content.replace(old, new)
-    with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-        f.write(content)
-    print('Fixed!')
-else:
-    print('Not found - searching with regex...')
-    # Try regex
-    pattern = r'raw_log\.raw\("LIVE", f"_drain_stderr error: \{type\(e\)\.__name__\}: \{e\}", is_error=True, to_tui=False\)\.strip\(\),\n\s+\),'
-    match = re.search(old.replace('{', r'\{').replace('}', r'\}'), content, re.DOTALL)
-    if match:
-        print('Regex match found')
-        content = re.sub(pattern, '', content, flags=re.DOTALL)
-        with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-            f.write(content)
-        print('Fixed via regex!')
-    else:
-        print('Regex not found')
-        idx = content.find('raw_log.raw("LIVE", f"_drain_stderr error:')
-        if idx >= 0:
-            print(repr(content[idx:idx+150]))
-```
-
-## File: fix_indent3.py
-
-```python
-import re
-
-with open('chzzktube/pipeline/live_recorder.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# Fix the specific indentation issue - there's a trailing .strip(), and extra )
-old = 'raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False).strip(),\n                                      ),'
-
-new = ''
-
-if old in content:
-    content = content.replace(old, new)
-    with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-        f.write(content)
-    print('Fixed!')
-else:
-    print('Old text not found, searching...')
-    idx = content.find('raw_log.raw("LIVE", f"_drain_stderr error:')
-    if idx >= 0:
-        print(repr(content[idx:idx+150]))
-        # Fix with regex
-        pattern = r'raw_log\.raw\("LIVE", f"_drain_stderr error: \{type\(e\)\.__name__\}: \{e\}", is_error=True, to_tui=False\)\.strip\(\),\n\s+\),'
-        new_content = re.sub(pattern, '', content, flags=re.DOTALL)
-        if new_content != content:
-            with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            print('Fixed via regex!')
-        else:
-            print('Regex not matched')
-```
-
-## File: fix_lr_final.py
-
-```python
-import re
-
-with open('chzzktube/pipeline/live_recorder.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# Fix the extra closing parenthesis and blank line in the except block
-old = '''                except Exception as e:
-
-                )'''
-
-new = '''                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
-                    raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False)'''
-
-if old in content:
-    content = content.replace(old, new)
-    with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-        f.write(content)
-    print('Fixed!')
-else:
-    print('Not found')
-    idx = content.find('except Exception as e:')
-    if idx >= 0:
-        print('Found at:', idx)
-        print(repr(content[idx:idx+100]))
-```
-
-## File: fix_lr_line.py
-
-```python
-with open('chzzktube/pipeline/live_recorder.py', 'r', encoding='utf-8') as f:
-    lines = f.readlines()
-
-# Fix lines 241-244
-new_lines = []
-for i, line in enumerate(lines):
-    # Fix the except block (lines 241-244 in 1-indexed)
-    if i == 240:  # "                except Exception as e:" (0-indexed)
-        new_lines.append(line)
-    elif i == 241:  # blank line after except
-        continue  # Skip blank line
-    elif i == 242:  # the extra )
-        continue  # Skip extra )
-    else:
-        new_lines.append(line)
-
-with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-    f.writelines(new_lines)
-
-print('Fixed!')
-```
-
-## File: fix_paren.py
-
-```python
-with open('chzzktube/pipeline/live_recorder.py', 'r', encoding='utf-8') as f:
-    lines = f.readlines()
-
-# Find and fix the problematic lines
-new_lines = []
-i = 0
-while i < len(lines):
-    line = lines[i]
-    # Check for the problematic pattern: blank line followed by single )
-    if (i > 0 and lines[i-1].strip() == '' and 
-        line.strip() == ')' and 
-        i > 1 and 'except Exception as e:' in lines[i-2]):
-        print(f'Fixing line {i+1}: removing extra )')
-        i += 1  # Skip this line
-        continue
-    new_lines.append(line)
-    i += 1
-
-with open('chzzktube/pipeline/live_recorder.py', 'w', encoding='utf-8') as f:
-    f.writelines(new_lines)
-
-print('Fixed extra closing parenthesis!')
-```
-
-## File: fix_regex_test.py
-
-```python
-#!/usr/bin/env python3
-import re
-
-line = '[07:43:15] DEPS  │ FAIL  │ FFMP  │ binary incompatible → retry mirror (1/3)'
-print("Input line:", repr(line))
-
-# Current pattern in test
-pattern = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] (SYS|DEPS|ANAL|DL|LIVE|MERG|BATCH|POT)│ (READY|RUN|OK|DONE|SKIP|WARN|FAIL|ABORT|END)│ [\w\s]+ \| .+$")
-result = pattern.match('[07:37:43] DEPS  │ FAIL  │ FFMP  │ binary incompatible → retry mirror (1/3)')
-print("Test 1 (with │):", pattern.match('[07:37:43] DEPS  │ FAIL  │ FFMP  │ binary incompatible → retry mirror (1/3)'))
-
-# The actual separator is " │ " (space + box char + space)
-# The box drawing char is │ (U+2502)
-# The pattern should match " │ " (space + box char + space)
-pattern2 = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] (SYS|DEPS|ANAL|DL|LIVE|MERG|BATCH|POT)\s*│\s*(READY|RUN|OK|DONE|SKIP|WARN|FAIL|ABORT|END)\s*│\s*[\w\s]+ │ .+$")
-print("Test 2:", pattern2.match('[07:37:43] DEPS  │ FAIL  │ FFMP  │ binary incompatible → retry mirror (1/3)'))
-
-# Let's check what the actual line looks like
-print("Line:", repr('[07:37:43] DEPS  │ FAIL  │ FFMP  │ binary incompatible → retry mirror (1/3)'))
-print("Has │:", '│' in '[07:37:43] DEPS  │ FAIL  │ FFMP  │ binary incompatible → retry mirror (1/3)')
-print("Has |:", '|' in '[07:37:43] DEPS  │ FAIL  │ FFMP  │ binary incompatible → retry mirror (1/3)')]
-```
-
-## File: fix_test_regex.py
-
-```python
-import re
-
-with open('tests/test_v38_contracts.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-old = '''    def test_error_log_format_regex(self):
-        """TUI 포맷 정규식 검증: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG"""
-        import re
-        from chzzktube.core.log_emitter import format_log_line_for_event, emit_error_standard
-        evt = emit_error_standard("DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)")
-        line = format_log_line_for_event(evt)
-        # 검증: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG (MSG는 cause → action)
-        # STAGE/STATUS는 5자 폭으로 패딩되어 있음 (예: "DEPS  ", "FAIL  ")
-        pattern = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] (SYS|DEPS|ANAL|DL|LIVE|MERG|BATCH|POT)\s* \| (READY|RUN|OK|DONE|SKIP|WARN|FAIL|ABORT|END)\s* \| \w+\s* \| .+$")
-        assert pattern.match(line)
-        assert "binary incompatible → retry mirror (1/3)" in line'''
-
-new = '''    def test_error_log_format_regex(self):
-        """TUI 포맷 정규식 검증: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG"""
-        import re
-        from chzzktube.core.log_emitter import format_log_line_for_event, emit_error_standard
-        evt = emit_error_standard("DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)")
-        line = format_log_line_for_event(evt)
-        # 검증: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG (MSG는 cause → action)
-        # STAGE/STATUS는 5자 폭으로 패딩되어 있음 (예: "DEPS  ", "FAIL  ")
-        # 구분자는 박스 그리기 문자 │ (U+2502)임
-        pattern = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] (SYS|DEPS|ANAL|DL|LIVE|MERG|BATCH|POT)│ (READY|RUN|OK|DONE|SKIP|WARN|FAIL|ABORT|END)│ .+$")
-        assert pattern.match(line)
-        assert "binary incompatible → retry mirror (1/3)" in line'''
-
-with open('tests/test_v38_contracts.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-content = content.replace(old, new)
-
-with open('tests/test_v38_contracts.py', 'w', encoding='utf-8') as f:
-    f.write(content)
-print('Done')
-```
-
-## File: fix_tests.py
-
-```python
-with open('tests/test_provisioning_stdlib.py', 'r') as f:
-    content = f.read()
-
-old = '''class TestProvisioningManagerStdlib:
-    @pytest.mark.parametrize(
-        ("method_name", "payload", "expected"),
-        [
-            (
-                "_fetch_from_pypi",
-                {
-                    "info": {"version": "1.2.3"},
-                    "releases": {
-                        "1.2.3": [
-                            {"filename": "demo-1.2.3-py3-none-any.whl", "url": "https://packages.invalid/demo.whl", "digests": {"sha256": "a" * 64}},
-                        ]
-                    },
-                },
-                (
-                    "1.2.3",
-                    "https://packages.invalid/demo.whl",
-                    "a" * 64,
-                    "pypi",
-                    "whl",
-                ),
-            ),
-            (
-                "_fetch_from_github",
-                {
-                                       ",
-                    "assets": [
-                        {"name": "demo-1.2.3-darwin-arm64.zip", "browser_download_url": "https://releases.invalid/demo.zip"},
-                    ],
-                },
-                (
-                    "v1.2.3",
-                    "https://releases.invalid/demo.zip",
-                    None,
-                    "github",
-                    "zip",
-                ),
-            ),
-            (
-                "_fetch_from_nodejs",
-                [{"version": "v22.1.0"}],
-                (
-                    "v22.1.0",
-                    "https://nodejs.org/dist/v22.1.0/node-v22.1.0-darwin-arm64.tar.gz",
-                    "93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57",
-                    "nodejs.org",
-                    "tar.gz",
-                ),
-            ),
-        ],
-    )
-    def test_metadata_fetchers_work_without_httpx(
-        self, method_name, payload, expected
-    ):
-        manager_module = _import_without_httpx(
-            "chzzktube.infra.provisioning.manager"
-        )
-        manager = manager_module.ProvisioningManager.__new__(
-            manager_module.ProvisioningManager
-        )
-        method = getattr(manager, method_name)
-        spec = SimpleNamespace(name="demo", asset_filters=())
-        mirror = SimpleNamespace(
-            name="github" if method_name == "_fetch_from_github" else (
-                "nodejs.org" if method_name == "_fetch_from_nodejs" else "pypi"
-            ),
-            url_template="https://metadata.invalid/{pkg}.json",
-        )
-
-        async def run_fetch():
-            manager._fetch_json = AsyncMock(return_value=payload)
-            manager._fetch_text = AsyncMock(return_value="93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57  node-v22.1.0-darwin-arm64.tar.gz")
-            return await method(spec, mirror)
-
-        assert asyncio.run(run_fetch()) == expected
-
-    def test_fetch_latest_falls_back_to_next_mirror(self):
-        manager_module = _import_without_httpx(
-            "chzzktube.infra.provisioning.manager"
-        )
-        manager = manager_module.ProvisioningManager.__new__(
-            manager_module.ProvisioningManager
-        )
-        mirrors = (
-            Mirror(
-                name="pypi",
-                url_template="https://metadata.invalid/{pkg}.json",
-                priority=0,
-            ),
-            Mirror(
-                name="github",
-                url_template="https://metadata.invalid/releases/latest",
-                priority=1,
-            ),
-        )
-        spec = ComponentSpec(
-            name="demo",
-            type=ComponentType.PYTHON_PKG,
-            mirrors=mirrors,
-            verify_cmd=(),
-            install_rel_path=".pylib",
-            asset_filters=(),
-        )
-
-        async def run_resolve():
-            async def fetch_from_pypi(spec, mirror):
-                assert mirror is mirrors[0]
-                return None
-
-            async def fetch_from_github(spec, mirror):
-                assert mirror is mirrors[1]
-                return (
-                    "1.2.3",
-                    "https://packages.invalid/demo.whl",
-                    None,
-                    "github",
-                    "zip",
-                )
-
-            manager._fetch_from_pypi = fetch_from_pypi
-            manager._fetch_from_github = fetch_from_github
-            return await manager._fetch_latest(spec)
-
-        assert asyncio.run(run_resolve()) == (
-            "1.2.3",
-            "https://packages.invalid/demo.whl",
-            None,
-            "github",
-            "zip",
-        )'''
-
-new = '''class TestProvisioningManagerStdlib:
-    def test_manager_imports_without_httpx(self):
-        manager_module = _import_without_httpx(
-            "chzzktube.infra.provisioning.manager"
-        )
-        assert hasattr(manager_module, "ProvisioningManager")
-
-    @pytest.mark.parametrize(
-        ("method_name", "payload", "expected"),
-        [
-            (
-                "_fetch_from_pypi",
-                {
-                    "info": {"version": "1.2.3"},
-                    "releases": {
-                        "1.2.3": [
-                            {"filename": "demo-1.2.3-py3-none-any.whl", "url": "https://packages.invalid/demo.whl", "digests": {"sha256": "a" * 64}},
-                        ]
-                    },
-                },
-                (
-                    "1.2.3",
-                    "https://packages.invalid/demo.whl",
-                    "a" * 64,
-                    "pypi",
-                    "whl",
-                ),
-            ),
-            (
-                "_fetch_from_github",
-                {
-                    "tag_name": "v1.2.3",
-                    "assets": [
-                        {"name": "demo-1.2.3-darwin-arm64.zip", "browser_download_url": "https://releases.invalid/demo.zip"},
-                    ],
-                },
-                (
-                    "v1.2.3",
-                    "https://releases.invalid/demo.zip",
-                    None,
-                    "github",
-                    "zip",
-                ),
-            ),
-            (
-                "_fetch_from_nodejs",
-                [{"version": "v22.1.0"}],
-                (
-                    "v22.1.0",
-                    "https://nodejs.org/dist/v22.1.0/node-v22.1.0-darwin-arm64.tar.gz",
-                    "93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57",
-                    "nodejs.org",
-                    "tar.gz",
-                ),
-            ),
-        ],
-    )
-    def test_metadata_fetchers_work_without_httpx(
-        self, method_name, payload, expected
-    ):
-        # 이제 Planner 클래스에서 테스트 (리팩토링 후)
-        planner_module = _import_without_httpx(
-            "chzzktube.infra.provisioning.planner"
-        )
-        planner = planner_module.Planner.__new__(planner_module.Planner)
-        from pathlib import Path
-        planner.base_dir = Path("/tmp")
-        from chzzktube.infra.provisioning.manifest import ProvisionManifest
-        planner.manifest = ProvisionManifest()
-        planner.overlay_root = Path("/tmp/.pylib")
-        method = getattr(planner, method_name)
-        spec = SimpleNamespace(name="demo", asset_filters=())
-        mirror = SimpleNamespace(
-            name="github" if method_name == "_fetch_from_github" else (
-                "nodejs.org" if method_name == "_fetch_from_nodejs" else "pypi"
-            ),
-            url_template="https://metadata.invalid/{pkg}.json",
-        )
-
-        async def run_fetch():
-            planner._fetch_json = AsyncMock(return_value=payload)
-            planner._fetch_text = AsyncMock(return_value="93904abf2b6afd0dc2a7c2947a83e10ed65cc39171db17663edb6f763aaa5a57  node-v22.1.0-darwin-arm64.tar.gz")
-            return await method(spec, mirror)
-
-        assert asyncio.run(run_fetch()) == expected
-
-    def test_fetch_latest_falls_back_to_next_mirror(self):
-        # Planner.resolve() 메서드 테스트 (리팩토링 후)
-        planner_module = _import_without_httpx(
-            "chzzktube.infra.provisioning.planner"
-        )
-        planner = planner_module.Planner.__new__(planner_module.Planner)
-        from pathlib import Path
-        planner.base_dir = Path("/tmp")
-        from chzzktube.infra.provisioning.manifest import ProvisionManifest
-        planner.manifest = ProvisionManifest()
-        planner.overlay_root = Path("/tmp/.pylib")
-        mirrors = (
-            Mirror(
-                name="pypi",
-                url_template="https://metadata.invalid/{pkg}.json",
-                priority=0,
-            ),
-            Mirror(
-                name="github",
-                url_template="https://metadata.invalid/releases/latest",
-                priority=1,
-            ),
-        )
-        spec = ComponentSpec(
-            name="demo",
-            type=ComponentType.PYTHON_PKG,
-            mirrors=mirrors,
-            verify_cmd=(),
-            install_rel_path=".pylib",
-            asset_filters=(),
-        )
-
-        async def run_resolve():
-            async def fetch_from_pypi(spec, mirror):
-                assert mirror is mirrors[0]
-                return None
-
-            async def fetch_from_github(spec, mirror):
-                assert mirror is mirrors[1]
-                return (
-                    "1.2.3",
-                    "https://packages.invalid/demo.whl",
-                    None,
-                    "github",
-                    "zip",
-                )
-
-            planner._fetch_from_pypi = fetch_from_pypi
-            planner._fetch_from_github = fetch_from_github
-            return await planner._fetch_latest(spec)
-
-        assert asyncio.run(run_resolve()) == (
-            "1.2.3",
-            "https://packages.invalid/demo.whl",
-            None,
-            "github",
-            "zip",
-        )'''
-
-if old in content:
-    content = content.replace(old, new)
-    with open('tests/test_provisioning_stdlib.py', 'w') as f:
-        f.write(content)
-    print('Fixed')
-else:
-    print('NOT FOUND - trying alternative')
-    # Try with slightly different spacing
-    import re
-    # Find the class definition
-    match = re.search(r'class TestProvisioningManagerStdlib:.*?(?=\nclass |\Z)', content, re.DOTALL)
-    if match:
-        print(f'Found at position {match.start()}')
-        print(content[match.start():match.start()+200])
-    else:
-        print('Class not found with regex')
-
-```
-
-## File: fix_updater.py
-
-```python
-import pathlib
-
-content = pathlib.Path('chzzktube/infra/updater.py').read_text(encoding='utf-8')
-
-# _frozen_upgrade_streamlink 함수 전체 제거
-start = content.find('def _frozen_upgrade_streamlink():')
-if start >= 0:
-    next_def = content.find('\ndef ', start + 1)
-    if next_def < 0:
-        next_def = len(content)
-    content = content[:start] + content[next_def:]
-
-# upgrade_packages 함수가 _refresh_overlay_sys_path 함수 이후에 올바르게 위치하도록 추가
-insert_pos = content.find('def _refresh_overlay_sys_path():')
-if insert_pos >= 0:
-    next_def = content.find('\ndef ', insert_pos + 1)
-    if next_def < 0:
-        next_def = len(content)
-    upgrade_func = '''
-
-def upgrade_packages(packages, channel="stable"):
-    """직접 다운로드 방식으로 패키지 업데이트 (Dev/Frozen 통합).
-
-    [v3.4.0 변경] 해제 대상은 프로젝트 오버레이(.pylib/) -- venv(site-packages,
-    uv 소유)는 절대 건드리지 않는다. 요약 문자열에 "(overlay)" 표기.
-    이유: 포터블 빌드와 Dev에서 동일한 코드 경로를 타야 디버깅이 가능.
-    pip install은 빌드 시에만 사용 (PyInstaller 번들 시점).
-
-    Returns (returncode, output tail). Worker thread only.
-    """
-    # yt-dlp: Dev/Frozen 통합 - 직접 다운로드 (yt_dlp_binary 위임)
-    if "yt-dlp" in packages:
-        return _frozen_upgrade_ytdlp(channel)
-'''
-    content = content[:next_def] + upgrade_func + content[next_def:]
-
-pathlib.Path('chzzktube/infra/updater.py').write_text(content, encoding='utf-8')
-print('Done')
-```
-
 ## File: main.py
 
 ```python
@@ -860,7 +222,7 @@ _PYLIB_PATH = _pylib_bootstrap.bootstrap()
 # 앱 기동 시 이전 세션 잔재 정리
 _cleanup.cleanup_on_startup()
 
-from chzzktube.ui.main_window import main  # noqa: E402
+from chzzktube.ui.main_window import main
 
 if __name__ == "__main__":
     sys.exit(main())
@@ -4597,14 +3959,12 @@ import os
 import re
 import urllib.parse
 from dataclasses import dataclass, replace
-from typing import Optional
 
-from PySide6.QtCore import QObject, Signal, QThread
+from PySide6.QtCore import QObject, Signal
 
 from chzzktube.core.dl_platform import _DOMAIN_EXTRACTORS
 from chzzktube.workers.analyze_worker import AnalyzeWorker
 from chzzktube.workers.downloader import DownloadWorker
-
 
 # ── [v3.8.0] URL Validation Gate — 순수 함수 (컨트롤러/뷰 공용) ──────────────
 # 알려진 도메인 추출기 테이블을 단일 진실 공급원으로 재사용
@@ -4670,8 +4030,8 @@ class MediaController(QObject):
         super().__init__()
         self.view = view
         self._state = SessionState()
-        self.worker_dl: Optional[DownloadWorker] = None
-        self.worker_analyze: Optional[AnalyzeWorker] = None
+        self.worker_dl: DownloadWorker | None = None
+        self.worker_analyze: AnalyzeWorker | None = None
 
     # ── 상태 읽기 전용 프로퍼티 ──
     @property
@@ -4745,12 +4105,11 @@ class MediaController(QObject):
             if callable(quit_method):
                 quit_method()
             wait_method = getattr(w, "wait", None)
-            if callable(wait_method):
-                if not wait_method(2000):  # 2초 대기
-                    terminate_method = getattr(w, "terminate", None)
-                    if callable(terminate_method):
-                        terminate_method()
-                    wait_method(500)
+            if callable(wait_method) and not wait_method(2000):  # 2초 대기
+                terminate_method = getattr(w, "terminate", None)
+                if callable(terminate_method):
+                    terminate_method()
+                wait_method(500)
         self.worker_analyze = None
         self._set_analyzing(False)
 
@@ -4904,7 +4263,7 @@ Qt 무의존 — LivenessWatchdog 인스턴스는 MainWindow.__init__에서 생�
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Set
+from typing import Any
 
 
 class GateState:
@@ -4919,8 +4278,8 @@ class GateState:
         self.analysis_active = False
         # POT 봇 체크 재시도 상태 (URL당 1회 계약)
         self.pot_retry_pending: bool = False
-        self.pot_retry_url: Optional[str] = None
-        self.pot_retry_done: Set[str] = set()
+        self.pot_retry_url: str | None = None
+        self.pot_retry_done: set[str] = set()
 
 
 # ── 게이트 무장/해제 ──────────────────────────────────────────────────
@@ -4975,7 +4334,7 @@ def schedule_retry(gate_state: GateState, url: str) -> bool:
     return True
 
 
-def consume_retry(gate_state: GateState) -> Optional[str]:
+def consume_retry(gate_state: GateState) -> str | None:
     """재시도 대기 URL 회수 — pending 해제 후 URL 반환, 없으면 None."""
     url = gate_state.pot_retry_url
     gate_state.pot_retry_pending = False
@@ -4988,13 +4347,13 @@ def consume_retry(gate_state: GateState) -> Optional[str]:
 
 ```python
 # POTManager
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
 import threading
-import subprocess
-import os
+
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
+
+from chzzktube.core import raw_log
+from chzzktube.core.log_emitter import emit_error_standard
 from chzzktube.core.log_event import LogEvent
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
 
 
 class _POTWorker(QThread):
@@ -5027,8 +4386,15 @@ class _POTWorker(QThread):
     def run(self):
         try:
             self._run()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 워커 스레드 크래시를 outcome으로 캡슐화
+            import traceback
+            tb = traceback.format_exc()
             self.outcome = (False, f"crash: {e}")
+            from chzzktube.core import raw_log
+            from chzzktube.core.log_event import LogEvent
+            from chzzktube.core.raw_log import log_f12_net
+            raw_log.raw("POT", LogEvent(stage="POT", status="FAIL", scope="POT", msg=f"POT worker crashed: {e}", is_error=True), to_tui=False)
+            log_f12_net(f"POT worker exception:\n{tb}", is_error=True, stage="POT", tag="pot-net")
         finally:
             self._cleanup()
             self.finished_signal.emit(self.outcome[0], self.outcome[1])
@@ -5042,7 +4408,7 @@ class _POTWorker(QThread):
         if self._server_proc:
             try:
                 kill_tree(self._server_proc)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 서버 프로세스 정리 실패는 무시
                 pass
             self._server_proc = None
 
@@ -5069,19 +4435,24 @@ class _POTWorker(QThread):
     def _dbg(self, msg):
         """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지)."""
         text = msg.msg if isinstance(msg, LogEvent) else str(msg)
-        if self.mode == "prewarm":
-            raw_log.raw("POT-DEBUG", text)
-        else:
-            event = LogEvent(stage="POT", status="RUN", scope="POT", msg=text)
-            raw_log.raw("POT", event, to_tui=True)
+        event = LogEvent(stage="POT", status="RUN", scope="POT", msg=text, rendered=True)
+        raw_log.raw("POT-DEBUG", event, to_tui=(self.mode != "prewarm"))
 
     def _run(self):
-        from chzzktube.infra.pot_server import probe_server, latest_server_ver, server_installed_ver
-        from chzzktube.infra.pot_server import built_server_js, DEFAULT_HOST, DEFAULT_PORT
+        from chzzktube.infra.po_client import (
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+        )
+        from chzzktube.infra.pot_server import (
+            built_server_js,
+            latest_server_ver,
+            probe_server,
+            server_installed_ver,
+        )
         self._dbg(f"POTWorker starting (mode={self.mode})")
         if self.mode == "gate":
             try:
-                import chzzktube.infra.components as components
+                from chzzktube.infra import components
                 self._dbg("entering ffmpeg ensure phase")
                 ff_err = components.ensure_ffmpeg(self._note)
                 if ff_err:
@@ -5104,7 +4475,7 @@ class _POTWorker(QThread):
                     self._note(emit_error_standard("DEPS", "FFMP", cause, action), False, True)
                 else:
                     self._dbg("ffmpeg fetch done")
-            except Exception as ff_ex:
+            except Exception:  # noqa: BLE001 — ffmpeg ensure 실패는 표준 에러 발행
                 self._note(emit_error_standard("DEPS", "FFMP", "setup failed", "check logs (F12)", is_error=True), False, True)
         else:
             self._dbg("ffmpeg ensure skipped (prewarm)")
@@ -5112,10 +4483,10 @@ class _POTWorker(QThread):
             from chzzktube.infra.pot_server import clean_stale_plugin
             if clean_stale_plugin():
                 self._dbg("stale removed")
-        except Exception as cp_ex:
+        except Exception as cp_ex:  # noqa: BLE001 — 플러그인 정리 실패는 디버그 로그 후 계속
             self._dbg(f"cleanup failed: {cp_ex}")
         self._note("probing server...", True)
-        state, detail = probe_server()
+        state, _detail = probe_server()
         self._dbg(f"probe: state={state!r}")
         if state == "ok":
             self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
@@ -5124,14 +4495,20 @@ class _POTWorker(QThread):
         local = server_installed_ver()
         if self.mode == "prewarm":
             self._dbg("prewarm mode — staging to disk, no spawn")
-            from chzzktube.infra.pot_server import acquire_prewarm_lock, release_prewarm_lock
+            from chzzktube.infra.pot_server import (
+                acquire_prewarm_lock,
+                release_prewarm_lock,
+            )
             fd = acquire_prewarm_lock(timeout=0, log_func=self._dbg)
             if fd is None:
                 self.outcome = (False, "prewarm skipped — build busy")
                 return
             try:
                 self._note("pot prewarm staging...", True)
-                from chzzktube.infra.pot_server import ensure_node_server, server_home, _SERVER_FALLBACK_VER
+                from chzzktube.infra.pot_server import (
+                    _SERVER_FALLBACK_VER,
+                    ensure_node_server,
+                )
                 ver = remote or local or _SERVER_FALLBACK_VER
                 # [A3 수리] "빌드 존재=재빌드" 반전 로직 교정 — 기존 rebuild=have_build는
                 # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).
@@ -5427,14 +4804,8 @@ class StartupCoordinator(QObject):
             # [HANDOVER §9.4] prewarm 완료(staged) 및 gate 완료(ready) 시 pot_ready=True 승격
             ready = ok and status in ("ready", "staged")
             self._state.set_pot(status, ready=ready)
-            if not ok:
-                # [v3.8.1] POT 실패 시 표준 에러 헬퍼 사용
-                from chzzktube.core.log_emitter import emit_error_standard
-                raw_log.raw(
-                    "startup",
-                    emit_error_standard("POT", "POT", "server failed", "check logs (F12)"),
-                    to_tui=True,
-                )
+            # _on_pot_status("failed")에서 이미 표준 실패 에러를 TUI에 발행하므로
+            # report_pot에서 중복 발행하지 않는다.
             self._try_emit_ready()
 
     def report_ready(self, ok: bool = True, msg: str = "ready — input unlocked"):
@@ -5460,7 +4831,7 @@ class StartupCoordinator(QObject):
             "starting": ("RUN",  "server starting..."),
             "staged":   ("OK",   "server staged — lazy standby"),
             "ready":    ("OK",   "server running"),
-            "failed":   ("FAIL", "server failed"),
+            "failed":   ("FAIL", "server failed → check logs (F12)"),
         }
         st, msg = _POT_TOGGLE.get(status, ("RUN", str(status)))
         raw(
@@ -5605,16 +4976,15 @@ EXECUTABLE_FILE_MODE = 0o755
 
 ```python
 ### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD/LIVE 메타데이터 + 스트림 목록)
-import datetime
 import json
 import re
 import urllib.error
-from urllib.parse import urljoin
 import urllib.request
+from urllib.parse import urljoin
 
+from chzzktube.core import SHORT_API_TIMEOUT
 from chzzktube.core.cookies import get_browser_cookies
 from chzzktube.core.media import get_video_codec_rank
-from chzzktube.core import SHORT_API_TIMEOUT
 
 
 class ChzzkAuthError(Exception):
@@ -5687,9 +5057,9 @@ def analyze_chzzk_clip_api(target_url):
         # 채널명 파싱
         owner = d_data.get("ownerChannel") or {}
         channel_name = owner.get("channelName") or d_data.get("channelName")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 세부 정보 폴백(제목=ID)으로 계속 진행
         # [증거 남김] 세부 정보 폴백(제목=ID 표기)으로 계속 진행 — 원인은 히스토리에.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -5742,9 +5112,9 @@ def analyze_chzzk_clip_api(target_url):
                         "acodec": a_codec,
                     }
                 )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — play-info 실패는 raw 버스 로깅
         # [증거 남김] play-info 실패 → formats 비어 상위에서 RuntimeError fail-fast.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -5835,9 +5205,9 @@ def analyze_chzzk_vod_api(target_url):
                                 "acodec": codecs[1] if len(codecs) > 1 else "AAC",
                             }
                         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — VOD API 실패는 raw 버스 로깅
         # [증거 남김] VOD API 실패 → formats 비어 상위에서 RuntimeError fail-fast.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -5916,7 +5286,7 @@ def _parse_live_playback_url(content):
     raw = content.get("livePlaybackJson") or ""
     try:
         playback = json.loads(raw) if isinstance(raw, str) else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return ""
     media = playback.get("media") if isinstance(playback, dict) else None
     if not isinstance(media, list):
@@ -5937,7 +5307,7 @@ def _parse_live_status(content):
         playback = json.loads(raw) if isinstance(raw, str) else {}
         inner = (playback.get("live") or {}) if isinstance(playback, dict) else {}
         live_state = inner.get("status", "")
-    except Exception:
+    except (json.JSONDecodeError, TypeError, AttributeError):
         live_state = ""
     status = str(content.get("status") or "").upper()
     live_state = str(live_state or "").upper()
@@ -6042,7 +5412,7 @@ def analyze_chzzk_live_api(target_url):
         else:
             try:
                 info = _analyze_chzzk_live_v2(live_id, headers)
-            except Exception:
+            except Exception:  # noqa: BLE001 — v2 실패 시 v1 폴백
                 info = _analyze_chzzk_live_v1(live_id, headers)
         title = info.get("title") or live_id
         date = info.get("date")
@@ -6051,9 +5421,9 @@ def analyze_chzzk_live_api(target_url):
         live_status = info.get("live_status", "UNKNOWN")
         video_formats = info.get("formats") or []
         live_id_out = info.get("live_id") or live_id
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — live API 전체 실패는 raw 버스 로깅
         # [증거 남김] live API 실패 → formats 비어 상위에서 fail-fast.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -6065,19 +5435,18 @@ def analyze_chzzk_live_api(target_url):
             to_tui=False,
         )
 
-    if not video_formats:
-        if live_status != "PROGRESS":
-            import chzzktube.core.raw_log as raw_log
-            from chzzktube.core.log_event import LogEvent
-            raw_log.raw(
-                "chzzk",
-                LogEvent(
-                    stage="ANAL", status="WARN", scope="CHZ",
-                    msg=f"chzzk live offline ({live_status}) - live/{live_id_out}",
-                    is_error=False,
-                ),
-                to_tui=False,
-            )
+    if not video_formats and live_status != "PROGRESS":
+        from chzzktube.core import raw_log
+        from chzzktube.core.log_event import LogEvent
+        raw_log.raw(
+            "chzzk",
+            LogEvent(
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk live offline ({live_status}) - live/{live_id_out}",
+                is_error=False,
+            ),
+            to_tui=False,
+        )
 
     video_formats.sort(
         key=lambda x: (x["height"], get_video_codec_rank(x["vcodec"]), x["bitrate"]),
@@ -6115,7 +5484,9 @@ def _apply_ffmpeg_opts(opts):
     try:
         from chzzktube.infra.components import ffmpeg_exe
         ffmpeg_path = ffmpeg_exe()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — ffmpeg 해석 실패는 미설치扱이 (옵션 미주입)
+        from chzzktube.core import raw_log
+        raw_log.raw("opts", f"ffmpeg resolver failed: {type(e).__name__}", is_error=True, to_tui=False)
         ffmpeg_path = None
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
@@ -6149,13 +5520,11 @@ def _apply_post_opts(opts, cfg):
         if not _has("FFmpegEmbedSubtitle"):
             pp.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
 
-    if cfg.get("embed_thumbnail"):
-        if not _has("EmbedThumbnail"):
-            pp.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
+    if cfg.get("embed_thumbnail") and not _has("EmbedThumbnail"):
+        pp.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
 
-    if cfg.get("embed_chapters", True):
-        if not _has("FFmpegMetadata"):
-            pp.append({"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": True})
+    if cfg.get("embed_chapters", True) and not _has("FFmpegMetadata"):
+        pp.append({"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": True})
 
     return opts
 
@@ -6184,12 +5553,11 @@ def _apply_client_opts(opts, cfg, forced=None):
     (web_embedded, tv_downgraded 등)과 내장 EJS JS 솔버를 최우선 존중한다.
     """
     client = str(forced or cfg.get("yt_player_client", "auto") or "auto")
-    if client == "auto":
+    if client == "auto" and forced is None:
         # [핵심 변경] 쿠키 유무와 무관하게 강제 client 지정 없이 yt-dlp 순정
         # 클라이언트 선택 로직과 EJS 솔버가 작동하도록 즉시 반환.
         # forced 인자가 있는 경우(분석/다운로드에서 검증된 클라이언트)만 적용.
-        if forced is None:
-            return opts
+        return opts
     opts.setdefault("extractor_args", {}).setdefault("youtube", {}) \
         .setdefault("player_client", []).append(client)
     return opts
@@ -6225,7 +5593,7 @@ def _apply_ejs_opts(opts):
             opts.setdefault("js_runtimes", {})
             if "node" not in opts["js_runtimes"]:
                 opts["js_runtimes"]["node"] = {"path": node}
-    except Exception:  # noqa: BLE001 — 탐색 실패 시 기본(deno) 폴백
+    except Exception:  # noqa: BLE001, S110 — 탐색 실패 시 기본(deno) 폴백
         pass
     if "remote_components" not in opts:
         opts["remote_components"] = []
@@ -6340,7 +5708,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.12.2"
+_APP_VERSION = "v3.12.4"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -6423,7 +5791,7 @@ def load_config():
                     loaded["download_path"]
                 ):
                     cfg.update(loaded)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 설정 파일 손상 시 기본 설정 유지
             pass
     return cfg
 
@@ -6449,7 +5817,6 @@ yt-dlp의 extract_cookies_from_browser를 위임하여 브라우저별 경로 �
 from __future__ import annotations
 
 import platform
-from typing import Dict, Optional
 
 try:
     from yt_dlp.cookies import extract_cookies_from_browser
@@ -6477,7 +5844,7 @@ _BROWSER_ALIASES = {
 }
 
 
-def _normalize_browser_name(name: str) -> Optional[str]:
+def _normalize_browser_name(name: str) -> str | None:
     """사용자 입력/설정값을 yt-dlp 표준 브라우저명으로 정규화."""
     if not name:
         return None
@@ -6485,7 +5852,7 @@ def _normalize_browser_name(name: str) -> Optional[str]:
     return _BROWSER_ALIASES.get(key)
 
 
-def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+def get_browser_cookies(browser: str | None = None) -> dict[str, dict[str, str]]:
     """
     yt-dlp 네이티브 쿠키 추출기로 브라우저 쿠키 획득.
 
@@ -6499,7 +5866,7 @@ def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, st
     if extract_cookies_from_browser is None:
         return {}
 
-    cookie_data: Dict[str, Dict[str, str]] = {}
+    cookie_data: dict[str, dict[str, str]] = {}
 
     # 브라우저 지정 시 단일 시도
     if browser:
@@ -6511,7 +5878,7 @@ def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, st
                     domain = c.get("domain", "")
                     if domain:
                         cookie_data.setdefault(domain, {})[c["name"]] = c["value"]
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 브라우저 쿠키 추출 실패는 다음 브라우저로/빈 데이터
                 pass  # yt-dlp 내부에서 로깅/처리
         return cookie_data
 
@@ -6534,13 +5901,13 @@ def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, st
                     cookie_data.setdefault(domain, {})[c["name"]] = c["value"]
             if cookie_data:
                 break  # 첫 성공 시 종료 (충돌 방지)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 — 개별 브라우저 실패 시 다음 브라우저 후보 시도
             continue
 
     return cookie_data
 
 
-def get_cookie_string_for_domain(domain: str, browser: Optional[str] = None) -> str:
+def get_cookie_string_for_domain(domain: str, browser: str | None = None) -> str:
     """
     특정 도메인의 쿠키를 'name=value; name=value' 문자열로 반환.
     yt-dlp의 cookiefile 포맷 또는 requests headers 용도.
@@ -6680,8 +6047,8 @@ import time
 import unicodedata
 from typing import TYPE_CHECKING
 
-from chzzktube.core.log_event import STAGES, STATUSES
 from chzzktube.core.dl_platform import _short_platform
+from chzzktube.core.log_event import STAGES, STATUSES
 
 if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 순환 참조 방지
     from chzzktube.core.log_event import LogEvent
@@ -6895,7 +6262,7 @@ def _log_bar(bar_frac, width=10):
         frac = min(max(float(bar_frac), 0.0), 1.0)
     except (TypeError, ValueError):
         return ""
-    filled = int(round(frac * width))
+    filled = round(frac * width)
     return f"[{'█' * filled}{'░' * (width - filled)}]"
 
 def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None,
@@ -6959,7 +6326,7 @@ def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None
     msg_clean = str(msg or "").rstrip("\r\n ")
     head_parts = [p for p in (tag, gauge, msg_clean) if p]
     head = _log_ts() + " " + stage_s
-    fixed = head + " │ " + " │ ".join((status_s, scope_s))
+    fixed = head + " │ " + f"{status_s} │ {scope_s}"
     if not head_parts:
         return fixed
     return fixed + " │ " + " · ".join(head_parts)
@@ -7080,9 +6447,9 @@ _MAX_ERR_MSG_LEN = 55
 def _normalize_cause(cause: str) -> str:
     """원인 문자열을 표준 키워드로 정규화 (알려지지 않은 원인도 보존)."""
     cause_lower = cause.lower()
-    for std_cause in _ERROR_CAUSES:
+    for std_cause, mapped in _ERROR_CAUSES.items():
         if std_cause in cause_lower:
-            return _ERROR_CAUSES[std_cause]
+            return mapped
     return cause.strip() if cause else "unknown error"
 
 def _normalize_action(action: str) -> str:
@@ -7155,9 +6522,8 @@ def emit_error_warn(stage: str, scope: str, cause: str, action: str = "",
   → "F12가 안 받는 로그"는 존재하지 않는다.
 - 콘텐츠 정규식(is_tui_line) 라우팅 제로 — 렌더링 책임은 구독자(View)에게.
 """
-from dataclasses import dataclass, field
 import time
-
+from dataclasses import dataclass, field
 
 # v3.4.0 허용 STAGE 8종 / STATUS 9종 — 이외 값 발행 금지.
 STAGES = ("SYS", "DEPS", "ANAL", "DL", "LIVE", "MERG", "BATCH", "POT")
@@ -7220,10 +6586,13 @@ KEEP_DAYS = 30
 _LOCK = threading.Lock()
 
 def _now():
-    return datetime.datetime.now()
+    # 로그 타임스탬프는 로컬 타임존 aware로 — naive와 포맷 출력은 동일하고,
+    # DST 경계 등에서 파일명/정리 cutoff 비교가 모호해지는 것을 방지한다.
+    # (dialogs.py의 파일명 미리보기와 동일한 패턴)
+    return datetime.datetime.now().astimezone()
 
 def _log_path(now):
-    import chzzktube.core.config as config
+    from chzzktube.core import config
     return os.path.join(config.LOG_DIR, f"chzzktube_{now:%Y-%m-%d}.log")
 
 def log(msg, level="INFO", **kwargs):
@@ -7239,11 +6608,8 @@ def log(msg, level="INFO", **kwargs):
             path = _log_path(now)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "a", encoding="utf-8") as f:
-                for l in lines:
-                    f.write(
-                        f"[{now:%Y-%m-%d %H:%M:%S}] [{level:<5}] {l}\n"
-                    )
-    except Exception:
+                f.writelines(f"[{now:%Y-%m-%d %H:%M:%S}] [{level:<5}] {l}\n" for l in lines)
+    except Exception:  # noqa: BLE001, S110 — 히스토리 기록 실패가 앱을 죽이지 않도록 흡수
         pass  # 히스토리 기록 실패가 앱을 죽이지 않도록 흡수
 
 def session_begin(app_name, app_version):
@@ -7272,14 +6638,14 @@ def exception(tag, t=None, v=None, tb=None):
         t, v, tb = sys.exc_info()
     try:
         body = "".join(traceback.format_exception(t, v, tb) or []).strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 — 트레이스백 포맷 실패 시 단순 문자열 폴백
         body = f"{t}: {v}"
     log(f"[{tag}]\n{body}", "ERROR")
 
 def _prune():
     """KEEP_DAYS 초과 히스토리 파일 삭제 (세션 시작 시 1회)."""
     try:
-        import chzzktube.core.config as config
+        from chzzktube.core import config
         d = config.LOG_DIR
         cutoff = (_now() - datetime.timedelta(days=KEEP_DAYS)).timestamp()
         with _LOCK:
@@ -7294,7 +6660,7 @@ def _prune():
                         os.remove(p)
                 except OSError:
                     pass
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — 오래된 로그 정리 실패는 무시
         pass
 
 ```
@@ -7610,13 +6976,12 @@ def cleanup_temp_files(filepath):
                     ".jpg",
                     ".png",
                 )
-            ):
-                if os.path.exists(target):
-                    try:
-                        os.remove(target)
-                    except Exception:
-                        pass
-    except Exception:
+            ) and os.path.exists(target):
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+    except OSError:
         pass
 
 def remux_live_to_container(ts_path, container_setting="mp4"):
@@ -7630,14 +6995,14 @@ def remux_live_to_container(ts_path, container_setting="mp4"):
     cmd = ["ffmpeg", "-y", "-i", ts_path, "-c", "copy", out_path]
 
     try:
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(cmd, capture_output=True, check=True)
         if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             os.remove(ts_path)
             return out_path
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — remux 실패는 raw 버스 로깅
         # [증거 남김] windowed 빌드에선 print가 소멸하므로 히스토리에 기록 —
         # 임시 ts는 실패 시 보존되므로 사용자가 재시도할 수 있다.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "media",
@@ -7713,14 +7078,13 @@ def normalize_youtube_channel_url(url):
 파일 I/O와 구독자 호출은 단일 dispatcher 스레드에서 순차 처리하며,
 구독자 콜백은 dispatcher lock을 잡지 않은 상태에서 호출한다.
 """
-from collections import deque
 import queue
 import threading
 import time
-from typing import Callable
+from collections import deque
+from collections.abc import Callable
 
 from chzzktube.core.log_event import LogEvent
-
 
 MAX_QUEUE = 2048
 MAX_FULL_EVENTS = 4096
@@ -7767,7 +7131,7 @@ class _RawDispatcher:
         try:
             from chzzktube.core import log_history
             log_history.log(f"[raw-log] {_HISTORY_SUMMARY}", level="WARN")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 버스 오버플로 기록 중 히스토리 실패는 격리
             pass
         event = LogEvent(
             stage="SYS",
@@ -7789,7 +7153,7 @@ class _RawDispatcher:
                 continue
             try:
                 self._dispatch(event, to_tui)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 개별 디스패치 예외가 러너 스레드를 죽이지 않음
                 # A subscriber must never kill the log pipeline.
                 pass
             finally:
@@ -7797,12 +7161,12 @@ class _RawDispatcher:
 
     def _dispatch(self, event: LogEvent, to_tui: bool) -> None:
         try:
-            import chzzktube.core.log_history as log_history
+            from chzzktube.core import log_history
             log_history.log(
                 f"[{getattr(event, 'tag', 'raw')}] {event.msg}",
                 level="ERROR" if event.is_error else "INFO",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 파일 히스토리 쓰기 실패가 구독자 전달을 막지 않음
             pass
 
         with self._lock:
@@ -7816,9 +7180,9 @@ class _RawDispatcher:
             except TypeError:
                 try:
                     fn(event)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 — 개별 구독자 실패는 다른 구독자 전달 방해 금지
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 구독자 버그로부터 디스패처 스레드 보호
                 pass
         for fn in concise_subs:
             try:
@@ -7826,9 +7190,9 @@ class _RawDispatcher:
             except TypeError:
                 try:
                     fn(event)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 — 개별 구독자 실패는 다른 구독자 전달 방해 금지
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 구독자 버그로부터 디스패처 스레드 보호
                 pass
 
     def shutdown(self, timeout: float = 1.0) -> None:
@@ -7898,19 +7262,21 @@ def flush(timeout: float = 1.0) -> None:
 def shutdown(timeout: float = 1.0) -> None:
     _dispatcher.shutdown(timeout)
 
-def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str = "deps-cli"):
+def log_f12_cli(cmd: str | None = None, output: str | None = None, is_error: bool = False,
+                tag: str = "deps-cli", stage: str = "DEPS", scope: str = "CLI"):
     """F12 상세로그 전용 CLI 실행 결과 발행 ($ cmdline + 원문 출력).
 
     - to_tui=False 강제: 메인 TUI 콘솔 오염을 완벽히 차단
     - truncate_for_full_log 적용: 최대 6줄, 160자 제한
     """
-    if not cmd:
+    if cmd == "":
         return
-    raw(
-        tag,
-        LogEvent(stage="DEPS", status="RUN", scope="CLI", msg=f"$ {cmd}", is_error=is_error, rendered=True),
-        to_tui=False,
-    )
+    if cmd:
+        raw(
+            tag,
+            LogEvent(stage=stage, status="RUN", scope=scope, msg=f"$ {cmd}", is_error=is_error, rendered=True),
+            to_tui=False,
+        )
     if output:
         from chzzktube.infra.updater import truncate_for_full_log
         clean_out = truncate_for_full_log(output, max_lines=6, max_width=160)
@@ -7918,9 +7284,9 @@ def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str =
             raw(
                 tag,
                 LogEvent(
-                    stage="DEPS",
+                    stage=stage,
                     status="FAIL" if is_error else "OK",
-                    scope="CLI",
+                    scope=scope,
                     msg=line,
                     is_error=is_error,
                     rendered=True,
@@ -8028,7 +7394,8 @@ class SpeedWindow:
 """
 import subprocess
 import threading
-from typing import Iterable, Optional, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 
 class ToolLogger(Protocol):
@@ -8049,7 +7416,7 @@ class LineRunner(Protocol):
 class TokenProvider(Protocol):
     """PO 토큰 공급 형상 — video_id → 토큰 또는 None."""
 
-    def fetch(self, video_id: str) -> Optional[str]: ...
+    def fetch(self, video_id: str) -> str | None: ...
 
 
 def make_ytdlp_logger():
@@ -8076,7 +7443,7 @@ def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
     반환: (proc, stderr_thread) — 호출부는 stdout 처리 후 proc.wait() +
     stderr_thread.join()으로 마감할 것.
     """
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
     from chzzktube.core.log_event import LogEvent
     from chzzktube.infra.platform import spawn_kwargs
 
@@ -8098,53 +7465,34 @@ def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
                     break
 
                 try:
-
                     line = raw.decode(encoding, "replace").strip()
-
-                except Exception:
-
+                except (UnicodeDecodeError, LookupError):
                     continue
 
                 if not line:
-
                     continue
 
                 if len(line) > line_budget:
-
                     line = line[:line_budget] + "…"
 
                 try:
-
                     raw_log.raw(
-
                         tag,
-
                         LogEvent(stage=stage, status="OK", scope=scope,
-
                                  msg=line, rendered=True),
-
                         to_tui=bool(to_tui),
-
                     )
-
-                except Exception:
-
+                except Exception:  # noqa: BLE001, S110 — 로그 펌프 중 버스 쓰기 실패는 무시 (프로세스 계속)
                     pass
 
                 if cancel is not None:
-
                     try:
-
                         if cancel():
-
                             break
-
-                    except Exception:
-
+                    except Exception:  # noqa: BLE001, S110 — cancel 콜백 실패 시 취소되지 않은 것으로 간주
                         pass
 
-        except Exception:
-
+        except Exception:  # noqa: BLE001, S110 — stderr reader 스레드 전체 종료 흡수
             pass
     t = threading.Thread(target=_drain, daemon=True)
     t.start()
@@ -8156,7 +7504,7 @@ def run_cli(label, *args, timeout=15):
 
     절취는 호출부가 updater.truncate_for_full_log로 적재 시점에 수행할 것.
     """
-    import chzzktube.infra.updater as updater
+    from chzzktube.infra import updater
     return updater.cli_raw(label, *args, timeout=timeout)
 ```
 
@@ -8164,9 +7512,7 @@ def run_cli(label, *args, timeout=15):
 
 ```python
 ### 유틸리티 및 코어 로직
-import os
 import re
-import subprocess
 
 # Python 3.11+의 FutureWarning (nested set) 방지를 위해 대괄호 이스케이프 정밀화 적용
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -8235,10 +7581,9 @@ def parse_sec(time_str):
 """
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Slot
-
 
 # ── 상수 단일 출처 (HANDOVER §3 표와 동기화) ───────────────────────────
 FALLBACK_TIMEOUT_SEC = 15.0   # 기동 폴백 (READY 강제 개방)
@@ -8254,7 +7599,7 @@ class LivenessWatchdog(QObject):
     스레드 안전: Lock으로 _last_heartbeat / _grace_used 보호.
     """
 
-    __slots__ = ("timeout_sec", "grace_sec", "_clock", "_lock", "_last_heartbeat", "_grace_used")
+    __slots__ = ("_clock", "_grace_used", "_last_heartbeat", "_lock", "grace_sec", "timeout_sec")
 
     def __init__(
         self,
@@ -8327,7 +7672,6 @@ import time
 
 from chzzktube.core.utils import clean_ansi
 
-
 _PROGRESS_RE = re.compile(r"^\s*\[download\].*?(\d+(?:\.\d+)?)%(?:\s|$)")
 _MERGE_TEXT = "Merging formats into"
 _ALREADY_DOWNLOADED = "has already been downloaded"
@@ -8356,7 +7700,7 @@ class YtLoggerBridge:
                 return
             self._last_progress = msg
             self._last_progress_at = now
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "ytdlp",
@@ -8371,7 +7715,7 @@ class YtLoggerBridge:
         )
 
     def _emit_non_progress(self, clean_msg: str, level: str) -> None:
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         status = {
             "warning": "WARN",
@@ -8469,6 +7813,32 @@ class YtLoggerBridge:
 ## File: chzzktube\infra\__init__.py
 
 ```python
+"""infra 패키지 — 공통 인프라 모듈 (re-export)."""
+from chzzktube.infra import (
+    cleanup,
+    components,
+    node_provider,
+    paths,
+    po_client,
+    pot_provider,
+    pot_server,
+    provisioning,
+    pylib_bootstrap,
+    yt_dlp_binary,
+)
+
+__all__ = [
+    "cleanup",
+    "components",
+    "node_provider",
+    "paths",
+    "po_client",
+    "pot_provider",
+    "pot_server",
+    "provisioning",
+    "pylib_bootstrap",
+    "yt_dlp_binary",
+]
 
 ```
 
@@ -8479,9 +7849,10 @@ class YtLoggerBridge:
 
 앱 기동 시 또는 종료 시 호출하여 .part 파일, 아카이브, 락 파일 등을 정리한다.
 """
-import os
 import glob
+import os
 import shutil
+
 from chzzktube.core import config
 
 
@@ -8497,7 +7868,7 @@ def cleanup_provisioning_artifacts():
         for part_file in glob.glob(os.path.join(ffmpeg_dir, "*.part")):
             try:
                 os.remove(part_file)
-            except Exception:
+            except OSError:
                 pass
 
     # 2. node 아카이브 정리 (node_portable.zip/tar.gz)
@@ -8507,7 +7878,7 @@ def cleanup_provisioning_artifacts():
                 os.remove(archive)
             elif os.path.isdir(archive):
                 shutil.rmtree(archive, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
 
     # 3. pot prewarm 락 파일 정리
@@ -8517,7 +7888,7 @@ def cleanup_provisioning_artifacts():
         if os.path.isfile(lock_file):
             try:
                 os.remove(lock_file)
-            except Exception:
+            except OSError:
                 pass
 
     # 4. components 루트의 .part 파일 정리 (Homebrew bottle 다운로드 등)
@@ -8527,25 +7898,25 @@ def cleanup_provisioning_artifacts():
         for part_file in glob.glob(os.path.join(comp_root, "*.part")):
             try:
                 os.remove(part_file)
-            except Exception:
+            except OSError:
                 pass
         # ffmpeg 아카이브 정리
         for archive in glob.glob(os.path.join(comp_root, "ffmpeg*.tar.xz")):
             try:
                 os.remove(archive)
-            except Exception:
+            except OSError:
                 pass
         for archive in glob.glob(os.path.join(comp_root, "ffmpeg*.zip")):
             try:
                 os.remove(archive)
-            except Exception:
+            except OSError:
                 pass
 
     # 5. 임의의 .part 파일 정리 (전역)
     for part_file in glob.glob(os.path.join(base, "*.part")):
         try:
             os.remove(part_file)
-        except Exception:
+        except OSError:
             pass
 
     # 6. cz_* 임시 디렉터리 정리 (base 및 base 하위 디렉터리)
@@ -8553,13 +7924,13 @@ def cleanup_provisioning_artifacts():
         try:
             if os.path.isdir(cz_dir):
                 shutil.rmtree(cz_dir, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
     for cz_dir in glob.glob(os.path.join(base, "*", "cz_*")):
         try:
             if os.path.isdir(cz_dir):
                 shutil.rmtree(cz_dir, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
 
 
@@ -8609,16 +7980,18 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-import chzzktube.core.config as config
 from chzzktube.core import (
-    CONNECT_TIMEOUT,
-    READ_TIMEOUT,
     DOWNLOAD_TIMEOUT,
+    READ_TIMEOUT,
     SHORT_API_TIMEOUT,
     TEMP_FILE_MODE,
-    EXECUTABLE_FILE_MODE,
+    config,
 )
-from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
+from chzzktube.core.log_emitter import (
+    emit_component,
+    emit_error_standard,
+    emit_error_warn,
+)
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.infra.platform import strip_macos_quarantine
 from chzzktube.ui import ProgressBar
@@ -8651,7 +8024,7 @@ def _http_get(url, timeout=READ_TIMEOUT):
         try:
             token = _ghcr_token("repository:homebrew/core/ffmpeg:pull")
             headers["Authorization"] = f"Bearer {token}"
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — ghcr 토큰 실패는 무인증 요청으로 계속
             pass
     req = urllib.request.Request(url, headers=headers)
     return urllib.request.urlopen(req, timeout=timeout)
@@ -8683,7 +8056,7 @@ def _download(url, dest, log=None, label="", expected_sha256=None):
             try:
                 token = _ghcr_token("repository:homebrew/core/ffmpeg:pull")
                 req.headers["Authorization"] = f"Bearer {token}"
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — ghcr 토큰 실패는 무인증 요청으로 계속
                 pass
 
         hasher = hashlib.sha256() if expected_sha256 else None
@@ -9102,7 +8475,7 @@ def ensure_ffmpeg(log=None, force=False):
 
         # 2. OS별 정적 바이너리 수급
         return _ensure_ffmpeg_by_platform(log, force)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 플랫폼별 수급 전체 실패는 오류 문자열 반환
         return f"{type(e).__name__}: {e}"
 
 def _record_provision_plan(plan, install_path):
@@ -9115,7 +8488,8 @@ def _record_provision_plan(plan, install_path):
     """
     try:
         from chzzktube.infra.provisioning.manifest import (
-            ComponentRecord, ProvisionManifest,
+            ComponentRecord,
+            ProvisionManifest,
         )
 
         base = Path(config.writable_base())
@@ -9131,7 +8505,7 @@ def _record_provision_plan(plan, install_path):
             sha256=plan.get("sha256", ""),
         ))
         manifest.save(base)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — 매니페스트 감사 기록 실패는 수급 성공을 막지 않음
         pass
 
 
@@ -9207,7 +8581,7 @@ def _ensure_ffmpeg_windows(log, force):
             log(emit_component("DEPS", "OK", "FFMP", f"ok ({plan['version']})"))
             _record_provision_plan(plan, str(exe_path))
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — Windows BtbN 설치 루프 단일 시도 실패는 재시도
             last_err = f"{type(e).__name__}: {e}"
             log_f12_net(f"ffmpeg windows install error: {e}", is_error=True)
             log(emit_error_warn("DEPS", "FFMP", "download failed", f"{type(e).__name__} (F12)"))
@@ -9331,7 +8705,7 @@ def _ensure_ffmpeg_macos(log, force):
                     log(_ffmpeg_done_event(f"bottle [{key}] verified"))
                     return None
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — 개별 Bottle 다운로드/검증 실패는 다음 Bottle로 폴백
                 last_err = str(e)
                 continue
 
@@ -9360,7 +8734,7 @@ def _ensure_ffmpeg_macos(log, force):
         log(emit_error_standard("DEPS", "FFMP", "binary incompatible", "check logs (F12)"))
         return last_err or "no runnable bottle found"
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — Homebrew API 조회 실패는 오류 문자열 반환
         return f"Homebrew formula resolve failed: {e}"
 
 
@@ -9452,7 +8826,7 @@ def _ensure_ffmpeg_linux(log, force):
             log(emit_component("DEPS", "OK", "FFMP", f"ok ({plan['version']})"))
             _record_provision_plan(plan, str(exe_path))
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — Linux BtbN 설치 루프 단일 시도 실패는 재시도
             last_err = f"{type(e).__name__}: {e}"
             log(emit_error_warn("DEPS", "FFMP", "download failed", f"{type(e).__name__} (F12)"))
 
@@ -9472,7 +8846,7 @@ def _wire_ffmpeg_path(bin_dir):
             parts = path_env.split(os.pathsep) if path_env else []
             if bin_dir not in parts:
                 os.environ["PATH"] = os.pathsep.join([bin_dir] + parts)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — PATH 보강 실패는 무시 (원래 PATH 유지)
         pass
 
 def _verify_ffmpeg(ffmpeg_path, env_extra=None):
@@ -9490,6 +8864,7 @@ def _verify_ffmpeg(ffmpeg_path, env_extra=None):
             capture_output=True,
             timeout=10,
             env=env,
+            check=False,  # PLW1510: returncode로 판정하므로 예외 대신 False 반환 계약 유지
         )
         out = (result.stdout or b"").decode("utf-8", errors="replace")
         err = (result.stderr or b"").decode("utf-8", errors="replace")
@@ -9499,7 +8874,7 @@ def _verify_ffmpeg(ffmpeg_path, env_extra=None):
             is_error=(result.returncode != 0),
         )
         return result.returncode == 0
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 검증 실행 자체의 예외(권한/경로 오류 등)는 실패 판정
         log_f12_cli(f"{ffmpeg_path} -version", f"[{type(e).__name__}] {e}", is_error=True)
         return False
 
@@ -9531,10 +8906,8 @@ import re
 import subprocess
 import urllib.request
 
-import chzzktube.core.config as config
-from chzzktube.core.raw_log import log_f12_cli
+from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.infra.paths import get_writable_base
-
 
 # ── 상수 (node_provider 전용) ──────────────────────────────────────
 NODE_MIN_MAJOR = 22  # bgutil 서버의 Node 요구사항 (require(esm) 기본 지원선)
@@ -9559,14 +8932,15 @@ def node_major_version(node_path, timeout=10):
             [node_path, "--version"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
-            timeout=timeout, **spawn_kwargs(),
+            timeout=timeout, check=False,  # PLW1510: 파싱 실패는 None 반환 계약
+            **spawn_kwargs(),
         )
         version_out = (out.stdout or "").strip()
         log_f12_cli(f"{node_path} --version", version_out)
         m = re.match(r"v?(\d+)", version_out)
         if m:
             major = int(m.group(1))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — node --version 파싱 예외는 F12 로깅 후 None
         major = None
         # [Silent fallback 제거] 버전 판별 실패 로그
         log_f12_cli(f"{node_path} --version", f"Exception: {e}", is_error=True)
@@ -9594,8 +8968,8 @@ def latest_lts_node_url(major=NODE_MIN_MAJOR):
         )
         if ver:
             return _platform_node_url(ver)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — nodejs.org dist 조회 실패는 폴백 URL 사용
+        log_f12_net(f"nodejs.org dist fetch failed: {type(e).__name__}", is_error=True)
     return _platform_node_url(_NODE_FALLBACK_VER)
 
 
@@ -9642,7 +9016,8 @@ def node_exe():
     - 실행 비트 보장(macOS) + 요구 버전 필터
     - 후보 없으면 None → ProvisioningManager 수급 트리거
     """
-    from chzzktube.infra.platform import exe_suffix, is_windows as _np_is_win
+    from chzzktube.infra.platform import exe_suffix
+    from chzzktube.infra.platform import is_windows as _np_is_win
 
     _exe_suffix = exe_suffix()
 
@@ -9670,7 +9045,7 @@ def node_exe():
                 mode = os.stat(c).st_mode
                 if not (mode & 0o111):
                     os.chmod(c, mode | 0o755)
-            except Exception:
+            except OSError:
                 pass
 
     majors = [(c, node_major_version(c)) for c in cands]
@@ -9744,7 +9119,7 @@ def ensure_node_runtime(log_func):
         if result is None or not result.success:
             log_func(f"Node.js provisioning failed: {result.error if result else 'unavailable'}", False, True)
             return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 프로비저닝 예외는 log_func 전달 후 False
         log_func(f"Node.js provisioning failed: {e}", False, True)
         return False
 
@@ -9783,13 +9158,13 @@ def _prune_outdated_node_dirs():
         try:
             if os.path.samefile(full, keep_root) or keep_root.startswith(full + os.sep):
                 continue
-        except Exception:
+        except OSError:
             continue
         # npm/node_modules가 포함된 폴더만 대상 (안전장치)
         if any(f.startswith("node") for f in os.listdir(full)[:5]):
             try:
                 _shutil.rmtree(full, ignore_errors=True)
-            except Exception:
+            except OSError:
                 pass
 ```
 
@@ -9803,7 +9178,7 @@ from __future__ import annotations
 import os
 import sys
 
-import chzzktube.core.config as config
+from chzzktube.core import config
 
 
 def get_writable_base() -> str:
@@ -9838,11 +9213,33 @@ OS 종속 코드의 단일 격리 지점. 상위 비즈니스 로직은 이 모�
 - Qt 역의존 금지: QWidget이 아니라 네이티브 핸들(int)/경로(str)만 받는다.
 - 바보 모듈: chzzktube.* 상위 로직을 import하지 않는다 (stdlib only).
 - 스폰 용도 분리: spawn_kwargs (단발/프로브) / daemon_spawn_kwargs (데몬).
+- best-effort 부가 기능(알림음·작업표시줄 등)의 실패는 기능 상실일 뿐이므로
+  삼키되 `_warn`으로 사유를 남긴다 — 무음 pass 금지 (S110/BLE001).
 """
 import asyncio
 import subprocess
 import sys
-from typing import Any, Dict
+from typing import Any
+
+
+def _warn(scope: str, exc: BaseException) -> None:
+    """best-effort 실패 진단 — 예외 삼킴(S110/BLE001)의 단일 탈출구.
+
+    진단은 stderr로 1줄만 쓴다. 상위 로깅 계층(chzzktube.core) 역참조는
+    '바보 모듈' 원칙 위반이므로 금지한다.
+
+    Windows GUI(PyInstaller --noconsole)에서는 sys.stderr가 None일 수 있고,
+    테스트에서는 pytest가 stderr를 교체한다. 어느 쪽이든 진단 실패가
+    원래 삼키려던 동작을 되살리면 안 되므로 모든 오류를 무시한다
+    (이 함수 자체는 S110/BLE001 예외 — 마지막 방어선이므로 상위로 못 올린다).
+    """
+    try:
+        stream = sys.stderr
+        if stream is None:
+            return
+        print(f"[platform] {scope}: {type(exc).__name__}", file=stream)
+    except Exception:  # noqa: BLE001, S110 — 진단 실패가 호출자 동작을 바꾸면 안 됨
+        pass
 
 
 def is_windows() -> bool:
@@ -9858,18 +9255,20 @@ def exe_suffix() -> str:
     return ".exe" if is_windows() else ""
 
 
-def spawn_kwargs(use_no_window: bool = True) -> Dict[str, Any]:
+def spawn_kwargs(use_no_window: bool = True) -> dict[str, Any]:
     """단발/프로브용 스폰 인자 — Windows 창 억제만. POSIX는 빈 dict."""
     if is_windows() and use_no_window:
         return {"creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0)}
     return {}
 
 
-def daemon_spawn_kwargs(use_no_window: bool = True) -> Dict[str, Any]:
+def daemon_spawn_kwargs(use_no_window: bool = True) -> dict[str, Any]:
     """장기 데몬용 스폰 인자 — Win: NO_WINDOW|NEW_PROCESS_GROUP, POSIX: 세션 분리."""
     kw = spawn_kwargs(use_no_window)
     if is_windows():
-        kw["creationflags"] |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        # use_no_window=False일 때 spawn_kwargs가 {}를 반환해도
+        # creationflags 키를 안전하게 초기화한 뒤 비트 연산 수행
+        kw["creationflags"] = kw.get("creationflags", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kw["start_new_session"] = True
     return kw
@@ -9884,8 +9283,8 @@ def strip_macos_quarantine(path: str) -> None:
             ["xattr", "-dr", "com.apple.quarantine", str(path)],
             capture_output=True, check=False,
         )
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — xattr 부재·실행 권한 오류는 기능 상실일 뿐
+        _warn(f"xattr quarantine strip 실패: {path}", exc)
 
 
 async def astrip_macos_quarantine(path: str) -> None:
@@ -9917,8 +9316,8 @@ def flash_window(hwnd: int) -> None:
 
         info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 3, 3, 0)
         ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — ctypes/windll 부재 시 알림 생략 (기능 상실일 뿐)
+        _warn(f"FlashWindowEx 실패 (hwnd={hwnd})", exc)
 
 
 def set_app_user_model_id(app_id: str) -> None:
@@ -9929,8 +9328,8 @@ def set_app_user_model_id(app_id: str) -> None:
         import ctypes
 
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
-    except (AttributeError, OSError):
-        pass
+    except (AttributeError, OSError) as exc:  # windll/shell32 부재 = 기능 상실일 뿐
+        _warn(f"AppUserModelID 설정 실패: {app_id}", exc)
 
 
 def play_beep() -> None:
@@ -9941,8 +9340,8 @@ def play_beep() -> None:
         import winsound  # type: ignore[import-not-found]
 
         winsound.MessageBeep()
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — winsound 미지원 환경에서 알림음 생략
+        _warn("MessageBeep 실패", exc)
 
 def reveal_in_file_manager(path: str) -> None:
     """탐색기/파인더로 경로 노출 (utils._open_windows_explorer 승격)."""
@@ -9968,10 +9367,16 @@ def reveal_in_file_manager(path: str) -> None:
         _sp.Popen(["xdg-open", path])
 
 
-def attach_to_parent_lifecycle(proc) -> None:
-    """Windows: 자식을 Job Object에 할당 (부모 종료 시 자동 정리, POSIX no-op)."""
+def attach_to_parent_lifecycle(proc) -> bool:
+    """Windows: 자식을 Job Object에 할당 (부모 종료 시 자동 정리, POSIX no-op).
+
+    반환값은 "Job Object에 실제로 할당됐는가"다. 호출자는 이 값을
+    `proc._ct_job` 같은 표식의 근거로만 써야 한다 — 종전에는 실패 경로에서도
+    `CloseHandle`만 하고 아무 신호도 주지 않아, 호출자가 핸들 존재만 보고
+    "할당 성공"으로 오인했다 (할당 실패 시 부모 종료 정리가 조용히 무력화됨).
+    """
     if not is_windows() or proc is None:
-        return
+        return False
     try:
         import ctypes
         from ctypes import wintypes
@@ -9992,7 +9397,7 @@ def attach_to_parent_lifecycle(proc) -> None:
         KILL_ON_CLOSE = 0x2000
         h_job = ctypes.windll.kernel32.CreateJobObjectW(None, None)
         if not h_job:
-            return
+            return False
         info = JOB_BASIC()
         info.LimitFlags = KILL_ON_CLOSE
         ok = ctypes.windll.kernel32.SetInformationJobObject(
@@ -10000,15 +9405,21 @@ def attach_to_parent_lifecycle(proc) -> None:
         )
         if not ok:
             ctypes.windll.kernel32.CloseHandle(h_job)
-            return
+            return False
         h_proc = getattr(proc, "_handle", None)
         if h_proc is None:
             ctypes.windll.kernel32.CloseHandle(h_job)
-            return
+            return False
         if not ctypes.windll.kernel32.AssignProcessToJobObject(h_job, h_proc):
             ctypes.windll.kernel32.CloseHandle(h_job)
-    except Exception:
-        pass
+            return False
+        # [핸들 유지] 여기서 닫으면 KILL_ON_CLOSE 동작이 사라진다 — 열린 채 둔다.
+        # 할당이 끝난 Job 핸들은 프로세스 수명 동안 유지되어야 부모 종료 시
+        # 자식이 함께 정리된다.
+        return True
+    except Exception as exc:  # noqa: BLE001 — ctypes/windll 부재 등 → 미할당 보고 (호출자 폴백)
+        _warn("Job Object 할당 실패 (상위 폴백에 위임)", exc)
+        return False
 
 
 def kill_tree(proc) -> None:
@@ -10021,8 +9432,8 @@ def kill_tree(proc) -> None:
     try:
         if proc.poll() is not None:
             return
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 — poll() 미구현 목/프로세스 → 종료 여부 미상이므로 킬 경로 계속 진행
+        _warn("proc.poll() 확인 실패 — 킬 경로 계속", exc)
     if is_windows():
         try:
             import ctypes
@@ -10038,23 +9449,24 @@ def kill_tree(proc) -> None:
                         ctypes.windll.kernel32.CloseHandle(h_job)
                     try:
                         proc.wait(timeout=5)
-                    except Exception:
-                        pass
+                    except Exception as exc:  # noqa: BLE001 — TerminateJobObject 기완료, 회수 대기 초과는 무해
+                        _warn("Job Object 종료 후 회수 대기 초과", exc)
                     return
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — Job Object 경로 불가(_handle 부재 등) → 아래 proc.kill() 폴백 수행
+            _warn("Job Object 경로 불가 — kill() 폴백 수행", exc)
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 — Windows 폴백 kill 실패(이미 종료된 프로세스) = 멱등 정리
+            _warn("kill() 폴백 실패 (이미 종료된 프로세스)", exc)
         return
     try:
         _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — 그룹 킬 불가(단일 프로세스 등) → proc.kill() 폴백 수행
+        _warn("프로세스 그룹 킬 실패 — kill() 폴백 수행", exc)
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as kill_exc:  # noqa: BLE001 — POSIX 최후 수단 kill 실패(이미 종료) = 멱등 정리
+            _warn("kill() 폴백 실패 (이미 종료된 프로세스)", kill_exc)
 
 
 ```
@@ -10096,7 +9508,7 @@ def server_ping(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1):
         url = f"http://{host}:{port}/ping"
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return resp.status == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 — /ping 실패는 False (서버 미기동/다운 판정)
         return False
 
 
@@ -10114,9 +9526,9 @@ def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
     except urllib.error.URLError as e:
         if isinstance(getattr(e, "reason", None), ConnectionRefusedError):
             return "down", ""
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 그 외 probe 예외는 raw 버스 로깅 후 down
         # [Silent fallback 제거] 예외를 삼키지 않고 로그 후 down 반환
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"probe_server error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return "down", f"error: {type(e).__name__}"
 
@@ -10150,9 +9562,9 @@ def fetch_po_token(video_id, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5):
         visitor_data = data.get("visitorData") or ""
         if token:
             return token, visitor_data
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 토큰 패칭 실패는 (None, None) 폴백
         # [Silent fallback 제거] 예외를 삼키지 않고 로그
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"fetch_po_token error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return None, None
 
@@ -10186,6 +9598,24 @@ POTManager 단독이다. 서버 수명주기 계약은 POTManager를 본다.
 """
 
 # ── 재수출 (내부 호출 + 외부 역참조 모두 1경로) ──────────────────────────
+from chzzktube.infra.node_provider import (  # SRP: Node.js 런타임만 담당
+    _NO_WINDOW,  # noqa: F401 — 하위 호환 별칭 — 실체는 platform.spawn_kwargs()
+    NODE_MIN_MAJOR,
+    _node_ver_cache,  # noqa: F401 — 내부 캐시 참조용
+    _platform_node_url,
+    bundled_npm_ok,
+    ensure_node_runtime,
+    latest_lts_node_url,
+    node_exe,
+    node_major_version,
+    node_ok,
+    npm_exe,
+)
+from chzzktube.infra.paths import (  # 공통 경로 헬퍼
+    bundle_root,  # noqa: F401 — 외부 재수출용
+    get_writable_base,
+    is_portable,
+)
 from chzzktube.infra.po_client import (  # L0 leaf — 계층 역전 방지
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -10194,57 +9624,60 @@ from chzzktube.infra.po_client import (  # L0 leaf — 계층 역전 방지
     probe_server,
     server_ping,
 )
-from chzzktube.infra.node_provider import (  # SRP: Node.js 런타임만 담당
-    NODE_MIN_MAJOR,
-    _NO_WINDOW,  # 하위 호환 별칭 — 실체는 platform.spawn_kwargs()
-    _node_ver_cache,
-    node_major_version,
-    latest_lts_node_url,
-    _platform_node_url,
-    npm_exe,
-    node_ok,
-    node_exe,
-    bundled_npm_ok,
-    ensure_node_runtime,
-)
-from chzzktube.infra.paths import (  # 공통 경로 헬퍼
-    get_writable_base,
-    is_portable,
-    bundle_root,
-)
 from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당
-    _SERVER_FALLBACK_VER,
-    _TAG_ZIP,
-    server_home,
-    assign_to_job_object,
-    read_server_log_tail,
-    latest_server_ver,
-    server_installed_ver,
-    clean_stale_plugin,
-    _wait_port,
-    _kill,
-    built_server_js,
-    pot_readiness,
-    acquire_prewarm_lock,
-    release_prewarm_lock,
+    _SERVER_FALLBACK_VER,  # noqa: F401 — 상수 재수출
+    _TAG_ZIP,  # noqa: F401 — 상수 재수출
+    _kill,  # noqa: F401 — 내부 헬퍼 재수출
+    _run_and_stream_log,  # noqa: F401 — 내부 헬퍼 재수출
     _spawn_existing,
+    _wait_port,  # noqa: F401 — 내부 헬퍼 재수출
+    acquire_prewarm_lock,
+    assign_to_job_object,
+    built_server_js,
+    clean_stale_plugin,
     download_and_install_source,
-    _run_and_stream_log,
     ensure_node_server,
     kill_process_on_port,
+    latest_server_ver,
+    pot_readiness,
+    read_server_log_tail,
+    release_prewarm_lock,
+    server_home,
+    server_installed_ver,
 )
 
 __all__ = [
-    "DEFAULT_HOST", "DEFAULT_PORT", "extract_video_id",
-    "fetch_po_token", "probe_server", "server_ping",
-    "NODE_MIN_MAJOR", "get_writable_base", "is_portable",
-    "node_major_version", "latest_lts_node_url", "_platform_node_url",
-    "npm_exe", "node_ok", "node_exe", "bundled_npm_ok", "ensure_node_runtime",
-    "server_home", "assign_to_job_object", "read_server_log_tail",
-    "latest_server_ver", "server_installed_ver", "clean_stale_plugin",
-    "built_server_js", "pot_readiness", "acquire_prewarm_lock",
-    "release_prewarm_lock", "_spawn_existing", "download_and_install_source",
-    "ensure_node_server", "kill_process_on_port",
+    "DEFAULT_HOST",
+    "DEFAULT_PORT",
+    "NODE_MIN_MAJOR",
+    "_platform_node_url",
+    "_spawn_existing",
+    "acquire_prewarm_lock",
+    "assign_to_job_object",
+    "built_server_js",
+    "bundled_npm_ok",
+    "clean_stale_plugin",
+    "download_and_install_source",
+    "ensure_node_runtime",
+    "ensure_node_server",
+    "extract_video_id",
+    "fetch_po_token",
+    "get_writable_base",
+    "is_portable",
+    "kill_process_on_port",
+    "latest_lts_node_url",
+    "latest_server_ver",
+    "node_exe",
+    "node_major_version",
+    "node_ok",
+    "npm_exe",
+    "pot_readiness",
+    "probe_server",
+    "read_server_log_tail",
+    "release_prewarm_lock",
+    "server_home",
+    "server_installed_ver",
+    "server_ping",
 ]
 
 ```
@@ -10263,41 +9696,37 @@ __all__ = [
 
 Node.js 런타임 수급은 node_provider.py가 담당. 공유 경로 헬퍼는 infra.paths에서 import.
 """
-import os
-import sys
-import time
 import json
+import os
 import shutil
-import zipfile
-import tarfile
 import subprocess
-import urllib.request
 import tempfile
+import time
+import urllib.request
+import zipfile
+from dataclasses import dataclass
 
-import chzzktube.core.config as config
 from chzzktube.core import DOWNLOAD_TIMEOUT, READ_TIMEOUT
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
-from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
 from chzzktube.infra.node_provider import NODE_MIN_MAJOR
-from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
-from chzzktube.ui import ProgressBar
+from chzzktube.infra.paths import get_writable_base
 from chzzktube.infra.platform import (
     attach_to_parent_lifecycle,
     daemon_spawn_kwargs,
     is_windows,
 )
 from chzzktube.infra.platform import kill_tree as kill_tree_platform
-from dataclasses import dataclass
-from typing import Optional
+from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
+from chzzktube.ui import ProgressBar
 
 
 @dataclass
 class Result:
     """표준화된 성공/실패 결과 (예외 대신 명시적 반환)."""
     success: bool
-    value: Optional[object] = None
-    error: Optional[str] = None
+    value: object | None = None
+    error: str | None = None
 
 
 _TAG_ZIP = (
@@ -10327,14 +9756,18 @@ def assign_to_job_object(proc):
     """Windows: 프로세스를 Job Object에 할당해 부모 종료 시 자동 정리.
 
     실체는 platform.attach_to_parent_lifecycle — 여기는 하위 호환 재수출.
+
+    [표식 정확성] `proc._ct_job`은 "Job Object에 실제로 할당됨"을 뜻한다.
+    종전에는 `_handle` 존재만 보고 무조건 True를 붙여, 할당이 실패해도
+    할당된 것처럼 보였다(부모 종료 정리가 무력화된 사실이 은폐됨).
+    이제 platform의 반환값(실할당 여부)을 그대로 옮긴다.
     """
-    attach_to_parent_lifecycle(proc)
-    # 레거시 계약: 성공 시 proc._ct_job 부착을 기대하는 코드가 있어 핸들 표식 유지.
+    assigned = attach_to_parent_lifecycle(proc)
     try:
-        if is_windows() and proc is not None and getattr(proc, "_handle", None):
-            proc._ct_job = True
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+        if proc is not None:
+            proc._ct_job = bool(assigned)
+    except Exception as e:  # noqa: BLE001 — 표식 부착 실패는 무시 (raw 버스 진단 유지)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"assign_to_job_object error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -10346,8 +9779,8 @@ def read_server_log_tail(n=10):
             with open(log_file_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
             return "".join(lines[-n:])
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — 로그 꼬리 읽기 실패는 빈 문자열 폴백
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"read_server_log_tail error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return ""
 
@@ -10370,8 +9803,8 @@ def latest_server_ver(timeout=3):
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return (json.load(resp).get("tag_name") or "").strip() or None
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — GitHub API 실패는 None 폴백 (판정 유지)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"latest_server_ver error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
@@ -10396,7 +9829,7 @@ def server_installed_ver():
         if os.path.isfile(pkg_json):
             with open(pkg_json, encoding="utf-8") as f:
                 return json.load(f).get("version")
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — package.json 판독 실패는 None 폴백
         pass
     return None
 
@@ -10408,7 +9841,7 @@ def clean_stale_plugin():
     자동 로드해 fetch_po_token과 이중 주입 → 토큰 충돌 위험. 기동 시 1회.
     대상: <writable_base>/yt_dlp_plugins, <components>/yt-dlp/yt_dlp_plugins
     """
-    import chzzktube.infra.components as components
+    from chzzktube.infra import components
     roots = [
         os.path.join(get_writable_base(), "yt_dlp_plugins"),
         os.path.join(components.components_root(), "yt-dlp", "yt_dlp_plugins"),
@@ -10444,8 +9877,8 @@ def _kill(proc):
     """서버 프로세스 강제 종료 (침묵형)."""
     try:
         proc.kill()
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 강제 종료 자체가 best-effort
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_kill error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -10455,8 +9888,8 @@ def kill_tree(proc):
     try:
         if getattr(proc, "_ct_job", None):
             proc._ct_job = None
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 표식 해제 실패는 무시 (종료 경로)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"kill_tree error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -10484,12 +9917,13 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
                                     ["taskkill", "/F", "/PID", pid],
                                     stdout=_sub.DEVNULL,
                                     stderr=_sub.DEVNULL,
+                                    check=False,  # PLW1510: 좀비 정리는 best-effort
                                 )
                                 if log_func:
                                     log_func(f"[pot:zombie] killed windows pid={pid} on port {port}")
                                 killed = True
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — netstat/taskkill 실패는 로그 후 계속
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"kill_process_on_port windows error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         else:
             # macOS/Linux: lsof로 PID 찾기 → kill
@@ -10505,11 +9939,11 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
                         if log_func:
                             log_func(f"[pot:zombie] killed posix pid={pid} on port {port}")
                         killed = True
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — lsof/kill 실패는 로그 후 계속
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"kill_process_on_port posix error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 포트 정리 실패해도 killed 플래그 반환
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"kill_process_on_port error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return killed
 
@@ -10550,12 +9984,12 @@ def pot_readiness(log_func=None, check_stale=False, want_refresh=False):
             if log_func:
                 try:
                     log_func("[pot-readiness] not ready: node missing")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — log_func 실패는 raw 버스 진단으로 흡수
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return False, "node missing"
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — node 판별 실패는 "node missing" 폴백
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"node check error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False, "node missing"
     try:
@@ -10564,12 +9998,12 @@ def pot_readiness(log_func=None, check_stale=False, want_refresh=False):
             if log_func:
                 try:
                     log_func("[pot-readiness] not ready: no build")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return False, "no build"
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"built_server_js error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False, "no build"
     if check_stale:
@@ -10586,20 +10020,20 @@ def pot_readiness(log_func=None, check_stale=False, want_refresh=False):
                 if log_func:
                     try:
                         log_func(f"[pot-readiness] stale build (local {local} → remote {remote})")
-                    except Exception as e:
-                        import chzzktube.core.raw_log as raw_log
+                    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                        from chzzktube.core import raw_log
                         raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 if want_refresh:
                     return True, f"stale {local}→{remote} (refresh pending)"
                 return False, f"stale {local}→{remote}"
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"stale check error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     if log_func:
         try:
             log_func(f"[pot-readiness] standby (node ok, build {js})")
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return True, "standby"
 
@@ -10617,10 +10051,12 @@ def _spawn_node_server(log_full_func=None):
         return None
 
     log_file_path = os.path.join(get_writable_base(), "bgutil_server.log")
+    # SIM115: open() 핸들은 Popen에 stdout/stderr로 넘겨지므로 with로 닫으면 안 된다 —
+    # 자식 프로세스가 살아있는 동안 부모가 핸들을 유지해야 한다. 실패 시 DEVNULL 폴백.
     try:
-        log_file = open(log_file_path, "w", encoding="utf-8", errors="replace")
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+        log_file = open(log_file_path, "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"open server log error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         log_file = subprocess.DEVNULL
 
@@ -10639,18 +10075,21 @@ def _spawn_node_server(log_full_func=None):
             **kwargs,
         )
         assign_to_job_object(proc)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 스폰 실패는 호출자 로그 + None 반환 계약
         if log_full_func:
             log_full_func(f"server Popen failed: {e}")
         return None
     if _wait_port(20, log_full_func):
         return proc
     _kill(proc)
+    tail = read_server_log_tail(15)
     if log_full_func:
         log_full_func(
             "server spawn reason: /ping not responding in 20s "
             "(crash after startup — see bgutil_server.log)"
         )
+        if tail:
+            log_full_func(f"[pot:server.log tail]\n{tail.strip()}")
     return None
 
 
@@ -10696,8 +10135,8 @@ def _download_with_progress(url, dest_path, log_func=None, desc="downloading", t
             if os.path.exists(temp_dest):
                 try:
                     os.remove(temp_dest)
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"temp file cleanup error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -10738,8 +10177,8 @@ def _pid_alive(pid):
                     return True
                 finally:
                     _k32.CloseHandle(h)
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"_pid_alive windows error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 return True  # 판별 자체 실패 → 보수적 유지
         else:
@@ -10749,13 +10188,13 @@ def _pid_alive(pid):
                 return False
             except PermissionError:
                 return True  # 존재하나 권한 없음 → 살아있음
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"_pid_alive posix error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 return True
             return True
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_pid_alive error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return True
 
@@ -10768,8 +10207,8 @@ def _read_lock_info(path):
         pid = int(parts[0]) if parts else None
         epoch = float(parts[1]) if len(parts) > 1 else None
         return pid, epoch
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_read_lock_info error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None, None
 
@@ -10797,14 +10236,14 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             try:
-                os.write(fd, f"{os.getpid()} {_time.time()}".encode("utf-8"))
+                os.write(fd, f"{os.getpid()} {_time.time()}".encode())
             except OSError:
                 pass
             if log_func:
                 try:
                     log_func("[prewarm-lock] acquired")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return fd
         except FileExistsError:
@@ -10818,8 +10257,8 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
                 if log_func:
                     try:
                         log_func(f"[prewarm-lock] stale reclaimed (pid={pid} dead, age={int(age)}s)")
-                    except Exception as e:
-                        import chzzktube.core.raw_log as raw_log
+                    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                        from chzzktube.core import raw_log
                         raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 try:
                     os.remove(path)
@@ -10830,8 +10269,8 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
                 waited_note = True
                 try:
                     log_func(f"[prewarm-lock] waiting (holder pid={pid}, alive={alive})")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         except OSError:
             return None
@@ -10839,8 +10278,8 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
             if log_func:
                 try:
                     log_func("[prewarm-lock] busy — acquire timeout")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return None
         _time.sleep(0.2)
@@ -10859,8 +10298,8 @@ def release_prewarm_lock(fd, log_func=None):
     if log_func:
         try:
             log_func("[prewarm-lock] released")
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -10893,8 +10332,8 @@ def download_and_install_source(want_ver, log_func=None):
                 vf.write(str(want_ver))
             with open(os.path.join(dest_dir, "server", ".version"), "w", encoding="utf-8") as vf:
                 vf.write(str(want_ver))
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — 버전 마커 기록 실패는 무시 (소스 전개 완료가 본질)
+            log_f12_net(f".version marker write failed: {type(e).__name__}", is_error=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -10939,7 +10378,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
     to_tui=False 강제이므로 메인 TUI 콘솔은 오염되지 않는다.
     """
     cmd_line = " ".join(map(str, cmd))
-    log_f12_cli(cmd_line, None)
+    log_f12_cli(cmd_line, None, stage="POT", tag="pot-cli")
     try:
         kwargs = daemon_spawn_kwargs(use_no_window=use_no_window)
         proc = subprocess.Popen(
@@ -10955,7 +10394,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
             stdout, _ = _communicate_with_ticks(proc, timeout, tick_func, tick_interval)
         except subprocess.TimeoutExpired:
             kill_tree(proc)  # [Followup-2] tree kill (job object / process group)
-            log_f12_cli(cmd_line, f"timeout ({timeout}s) — killed", is_error=True)
+            log_f12_cli(None, f"timeout ({timeout}s) — killed", is_error=True, stage="POT", tag="pot-cli")
             if log_full_func:
                 log_full_func(
                     f"subprocess timeout ({timeout}s) — killed: {' '.join(map(str, cmd))}"
@@ -10967,15 +10406,15 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
             except ValueError:
                 pass
         if stdout:
-            log_f12_cli(cmd_line, stdout, is_error=(proc.returncode != 0))
+            log_f12_cli(None, stdout, is_error=(proc.returncode != 0), stage="POT", tag="pot-cli")
             if log_full_func:
                 for line in stdout.splitlines():
                     stripped = line.strip()
                     if stripped:
                         log_full_func(stripped)
         return proc.returncode
-    except Exception as e:
-        log_f12_cli(cmd_line, f"[{type(e).__name__}] {e}", is_error=True)
+    except Exception as e:  # noqa: BLE001 — Popen 실패는 F12 진단 + -1 반환 계약
+        log_f12_cli(None, f"[{type(e).__name__}] {e}", is_error=True, stage="POT", tag="pot-cli")
         if log_full_func:
             log_full_func(f"subprocess Popen error: {e}")
         return -1
@@ -10989,8 +10428,8 @@ def _prune_outdated_node_dirs(node_dir):
             m = _re.match(r"node-v(\d+)\.", name)
             if m and int(m.group(1)) < NODE_MIN_MAJOR:
                 shutil.rmtree(os.path.join(node_dir, name), ignore_errors=True)
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_prune_outdated_node_dirs error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -11038,7 +10477,7 @@ def _ensure_source_fetched(ver, log, log_full):
         log(emit_component("pot", "RUN", "pot", f"bgutil source fetching (v{ver})"))
         try:
             download_and_install_source(ver, log)
-        except Exception as ds_ex:
+        except Exception as ds_ex:  # noqa: BLE001 — 소스 수급 실패는 호출자 로그 후 폴백
             log_full(f"[pot] source fetch failed: {ds_ex}")
     else:
         log(emit_component("pot", "RUN", "pot", "bgutil source detected — building"))
@@ -11117,8 +10556,8 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
     반환: Result(success=True, value=server_dir) 또는 Result(success=False, error=str)
     """
     from chzzktube.infra.node_provider import (
-        node_exe, node_ok, node_major_version,
-        ensure_node_runtime, bundled_npm_ok,
+        ensure_node_runtime,
+        node_ok,
     )
 
     js = built_server_js()
@@ -11163,8 +10602,8 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
                 vf.write(str(ver))
             with open(os.path.join(server_home(), "server", ".version"), "w", encoding="utf-8") as vf:
                 vf.write(str(ver))
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — 버전 마커 기록 실패는 무시 (빌드 성공이 본질)
+            log_f12_net(f".version marker write failed: {type(e).__name__}", is_error=True)
 
         return Result(success=True, value=server_dir)
 
@@ -11200,11 +10639,11 @@ def bootstrap(clear_caches=True):
     """sys.path 선두에 .pylib/ 삽입. 중복 호출 안전. 반환: 실제 삽입된 경로."""
     try:
         path = os.path.abspath(pylib_overlay_path())
-    except Exception:
+    except Exception:  # noqa: BLE001 — 경로 계산 실패 시 부트스트랩 중단
         return ""
     try:
         os.makedirs(path, exist_ok=True)
-    except Exception:
+    except OSError:  # 디렉터리 생성 실패는 OSError로 좁힘
         return ""
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -11217,7 +10656,7 @@ def bootstrap(clear_caches=True):
             for mod_name in list(sys.modules.keys()):
                 if mod_name.startswith("yt_dlp"):
                     del sys.modules[mod_name]
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 캐시 무효화 실패는 부트스트랩 반환에 영향 없음
             pass
     return path
 ```
@@ -11241,11 +10680,10 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
-import socket
 import urllib.request
-from chzzktube.infra.platform import spawn_kwargs
+
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
+from chzzktube.infra.platform import spawn_kwargs
 
 # (log_label, pypi_name, pypi_nightly) — log_label is shown in the DEPS PLATFORM column
 # pypi_nightly: Nightly 채널 사용 시 설치할 PyPI 패키지명 (None이면 Stable only)
@@ -11267,7 +10705,7 @@ def installed_version(pypi_name):
     """
     # yt-dlp는 독립 실행형 바이너리 사용
     if pypi_name == "yt-dlp":
-        from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+        from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
         exe = yt_dlp_path()
         if exe:
             ver = yt_dlp_version(exe)
@@ -11277,6 +10715,7 @@ def installed_version(pypi_name):
 
     import glob
     import os
+
     from chzzktube.core.config import pylib_overlay_path
 
     pylib_root = pylib_overlay_path()
@@ -11295,8 +10734,8 @@ def installed_version(pypi_name):
                     for line in f:
                         if line.startswith("Version:"):
                             return line.split(":", 1)[1].strip()
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 메타데이터 판독 실패는 다음 dist-info로 계속
+                from chzzktube.core import raw_log
                 raw_log.raw("DEPS", f"installed_version metadata read error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 continue
     return None
@@ -11320,8 +10759,8 @@ def latest_version(pypi_name, timeout=1.5):
             fut = ex.submit(_fetch)
             data = fut.result(timeout=timeout + 0.5)
             return (data.get("info") or {}).get("version")
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — PyPI 조회 실패는 None 폴백 (판정 유지)
+        from chzzktube.core import raw_log
         raw_log.raw("DEPS", f"latest_version PyPI fetch error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
@@ -11337,8 +10776,8 @@ def is_outdated(current, latest):
     """True if latest > current (numeric tuple compare avoids string pitfalls)."""
     try:
         return _ver_tuple(latest) > _ver_tuple(current)
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 버전 비교 실패는 False (업데이트 미표시)
+        from chzzktube.core import raw_log
         raw_log.raw("DEPS", f"is_outdated version compare error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False
 
@@ -11374,18 +10813,16 @@ def check_deps(log_func=None):
     msg: "vX.Y.Z at <path>" | "not installed" | "<reason>"
     log_func(msg): POT readiness 판정 근거를 raw 스택으로 반환 (단일 호출).
     """
-    import os
     results = []
 
     # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로 확인
     # yt-dlp-nightly는 dist 명이 달라 .pylib 체크가 실패하므로
     # nightly 설치물로 폴백 표기 (정상 설치 판정 유지)
     label = "ytdlp"
-    pypi_name = "yt-dlp"
     pypi_nightly = "yt-dlp-nightly"
 
     # yt-dlp는 독립 실행형 바이너리 사용 (yt_dlp_binary 모듈)
-    from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
     exe = yt_dlp_path()
     if exe:
         ver_tuple = yt_dlp_version(exe)
@@ -11413,7 +10850,8 @@ def check_deps(log_func=None):
     try:
         from chzzktube.infra.components import ffmpeg_exe
         path = ffmpeg_exe()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 컴포넌트 import 실패는 미설치扱い
+        log_f12_net(f"ffmpeg resolver import failed: {type(e).__name__}", is_error=True)
         path = None
     if path:
         ver_str = _ffmpeg_version(path)
@@ -11429,10 +10867,11 @@ def check_deps(log_func=None):
 
     # 3. node — 앱 전용 포터블 런타임 단일 참조
     try:
-        import chzzktube.infra.pot_provider as pot_provider
+        from chzzktube.infra import pot_provider
         path = pot_provider.node_exe()
         maj = pot_provider.node_major_version(path)
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 런타임 조회 실패는 미설치扱い
+        log_f12_net(f"node resolver failed: {type(e).__name__}", is_error=True)
         path, maj = None, None
     if path and maj:
         results.append(("node", "OK", f"v{maj} at {path}"))
@@ -11443,7 +10882,7 @@ def check_deps(log_func=None):
 
     # 4. bgutil 소스코드 무결성 검증
     try:
-        from chzzktube.infra.pot_server import server_installed_ver, server_home
+        from chzzktube.infra.pot_server import server_home, server_installed_ver
         ver = server_installed_ver()
         if ver:
             results.append(("bgutil", "OK", f"v{ver} at {server_home()}"))
@@ -11451,7 +10890,7 @@ def check_deps(log_func=None):
         else:
             results.append(("bgutil", "FAIL", "not installed"))
             log_f12_net("bgutil provider source not installed", is_error=True)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — bgutil 조회 실패는 FAIL(unknown) 행으로 기록
         results.append(("bgutil", "FAIL", "unknown"))
         log_f12_net(f"bgutil check failed: {e}", is_error=True)
 
@@ -11467,8 +10906,9 @@ def check_deps(log_func=None):
                 results.append(("pot", "SKIP", "standby"))
             else:
                 results.append(("pot", "SKIP", reason or "not ready"))
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — POT 판별 실패는 SKIP(unknown) 행으로 기록
         results.append(("pot", "SKIP", "unknown"))
+        log_f12_net(f"pot readiness probe failed: {type(e).__name__}", is_error=True)
 
     return results
 
@@ -11479,16 +10919,15 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
     Returns:
         (ok, missing_list): ok=True면 모든 필수 deps 정상, False면 누락/실패 목록 반환
     """
-    from chzzktube.core import config
-    import chzzktube.infra.components as components
-    import chzzktube.infra.pot_provider as pot_provider
     import subprocess
+
+    from chzzktube.infra import components, pot_provider
     from chzzktube.infra.platform import spawn_kwargs
 
     missing = []
 
     # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로에서 실행 확인
-    from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_path
     exe = yt_dlp_path()
     if not exe:
         missing.append("yt-dlp (not found in app binary path)")
@@ -11498,6 +10937,7 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
             [exe, "--version"],
             capture_output=True,
             timeout=5,
+            check=False,  # PLW1510: 존재 확인용 프로브 — returncode 분기로 판정
             **spawn_kwargs(),
         )
         if result.returncode != 0:
@@ -11514,11 +10954,12 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
                 [ffmpeg_path, "-version"],
                 capture_output=True,
                 timeout=5,
-                **{**{}, **__import__("chzzktube.infra.platform").spawn_kwargs()}
+                check=False,  # PLW1510: 존재 확인용 프로브 — returncode 분기로 판정
+                **__import__("chzzktube.infra.platform").spawn_kwargs()
             )
             if result.returncode != 0:
                 missing.append("ffmpeg (execution failed)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — ffmpeg 검증 예외는 missing 목록에 사유 기록
         missing.append(f"ffmpeg (check error: {e})")
 
     # 3. node — 격리 캐시에서 실행 가능 확인
@@ -11531,11 +10972,12 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
                 [node_path, "--version"],
                 capture_output=True,
                 timeout=5,
-                **{**{}, **__import__("chzzktube.infra.platform").spawn_kwargs()}
+                check=False,  # PLW1510: 존재 확인용 프로브 — returncode 분기로 판정
+                **__import__("chzzktube.infra.platform").spawn_kwargs()
             )
             if result.returncode != 0:
                 missing.append("node (execution failed)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — node 검증 예외는 missing 목록에 사유 기록
         missing.append(f"node (check error: {e})")
 
     # 4. bgutil 소스코드 무결성 검증
@@ -11543,8 +10985,8 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
         from chzzktube.infra.pot_server import server_installed_ver
         if not server_installed_ver():
             missing.append("bgutil (not installed)")
-    except Exception:
-        missing.append("bgutil (check error)")
+    except Exception as e:  # noqa: BLE001 — bgutil 검증 예외는 missing 목록에 사유 기록
+        missing.append(f"bgutil (check error: {e})")
 
     return len(missing) == 0, missing
 
@@ -11570,21 +11012,24 @@ def _cli_base(label):
         try:
             from chzzktube.infra.components import ffmpeg_exe
             p = ffmpeg_exe()
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — 해석기 실패는 None (도구 없음扱い)
+            log_f12_net(f"ffmpeg exe resolve failed: {type(e).__name__}", is_error=True)
             p = None
         return [p] if p else None
     if label == "node":
         try:
-            import chzzktube.infra.pot_provider as pot_provider
+            from chzzktube.infra import pot_provider
             p = pot_provider.node_exe()
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — 해석기 실패는 None (도구 없음扱い)
+            log_f12_net(f"node exe resolve failed: {type(e).__name__}", is_error=True)
             p = None
         return [p] if p else None
     if label == "npm":
         try:
-            import chzzktube.infra.pot_provider as pot_provider
+            from chzzktube.infra import pot_provider
             p = pot_provider.npm_exe()
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — 해석기 실패는 None (도구 없음扱い)
+            log_f12_net(f"npm exe resolve failed: {type(e).__name__}", is_error=True)
             p = None
         return [p] if p else None
     return None
@@ -11595,9 +11040,10 @@ def _cli_env(label):
     if label != "npm":
         return None
     try:
-        import chzzktube.infra.pot_provider as pot_provider
+        from chzzktube.infra import pot_provider
         node = pot_provider.node_exe()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — node 해석 실패는 PATH 미보강 (npm 미사용 경로)
+        log_f12_net(f"npm PATH resolve failed: {type(e).__name__}", is_error=True)
         node = None
     if not node:
         return None
@@ -11631,9 +11077,10 @@ def cli_raw(label, *args, timeout=15):
             errors="replace",
             timeout=timeout,
             env=env,
+            check=False,  # PLW1510: CLI 원문 수집 — 실패도 (cmdline, 원문)으로 반환 계약
             **spawn_kwargs(),
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI 실행 실패도 (cmdline, 원문) 반환 계약
         return " ".join(full_cmd), f"[{type(e).__name__}] {e}"
     out = ((proc.stdout or "") + (proc.stderr or "")).strip()
     if not out:
@@ -11698,13 +11145,15 @@ def _ffmpeg_version(path, timeout=3):
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            check=False,  # PLW1510: returncode!=0 → None 반환 계약 (아래 분기)
             **spawn_kwargs(),
         )
         if out.returncode != 0:
             return None
         text = (out.stdout or out.stderr or "")
         return _parse_ffmpeg_version_text(text)
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 버전 파싱 실패는 None (미확인扱い)
+        log_f12_net(f"ffmpeg version parse failed: {type(e).__name__}", is_error=True)
         return None
 
 def _exe_suffix():
@@ -11716,7 +11165,8 @@ def _download_to(url, dest, timeout=120):
         with urllib.request.urlopen(url, timeout=timeout) as resp, open(dest, "wb") as f:
             shutil.copyfileobj(resp, f)
         return True
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 다운로드 실패는 False (다음 미러/재시도)
+        log_f12_net(f"download failed: {url} [{type(e).__name__}]", is_error=True)
         return False
 
 def _get_pypi_whl_url(pypi_name):
@@ -11729,8 +11179,8 @@ def _get_pypi_whl_url(pypi_name):
         preferred = [f for f in urls if "whl" in f.get("filename", "")]
         if preferred:
             return preferred[0].get("url")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — whl 메타 조회 실패는 None (업데이트 스킵)
+        log_f12_net(f"pypi whl lookup failed: {pypi_name} [{type(e).__name__}]", is_error=True)
     return None
 
 def _extract_from_whl(whl_path, dest_dir):
@@ -11740,7 +11190,8 @@ def _extract_from_whl(whl_path, dest_dir):
         with zipfile.ZipFile(whl_path) as zf:
             zf.extractall(dest_dir)
         return True
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — whl 해제 실패는 False (업데이트 스킵)
+        log_f12_net(f"whl extract failed: {whl_path} [{type(e).__name__}]", is_error=True)
         return False
 
 def _frozen_upgrade_ytdlp(channel="stable"):
@@ -11779,7 +11230,8 @@ def _extract_pylib_whl(whl_path, pylib_root, prefix):
                 if os.path.basename(old) != keep_dist:
                     shutil.rmtree(old, ignore_errors=True)
         return True
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 오버레이 해제 실패는 False (업데이트 스킵)
+        log_f12_net(f"overlay extract failed: {whl_path} [{type(e).__name__}]", is_error=True)
         return False
 
 
@@ -11793,7 +11245,8 @@ def _overlay_root():
         from chzzktube.core.config import pylib_overlay_path
 
         return os.path.abspath(pylib_overlay_path())
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 경로 해석 실패는 "" (sys.path 미삽입)
+        log_f12_net(f"overlay root resolve failed: {type(e).__name__}", is_error=True)
         return ""
 
 
@@ -11807,8 +11260,8 @@ def _refresh_overlay_sys_path():
         import importlib
 
         importlib.invalidate_caches()
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — 캐시 무효화 실패는 무시 (다음 import 시 갱신)
+        log_f12_net(f"overlay sys.path refresh failed: {type(e).__name__}", is_error=True)
 
 
 
@@ -11839,23 +11292,20 @@ def upgrade_packages(packages, channel="stable"):
 - 없으면 GitHub releases에서 yt-dlp 바이너리 직접 다운로드
 - 업데이트는 동일 경로에 덮어쓰기
 """
-import os
-import sys
-import platform
-import shutil
-import subprocess
-import tempfile
-import urllib.request
 import json
-import stat
+import os
+import platform
 import re
+import stat
+import subprocess
+import sys
+import urllib.request
 from pathlib import Path
 
-import chzzktube.core.config as config
+from chzzktube.core import config
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
-from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
-
+from chzzktube.infra.paths import bundle_root, get_writable_base, is_portable
 
 # ── 상수 ──────────────────────────────────────────────────────────────
 YTDLP_MIN_VERSION = (2024, 1, 1)  # 최소 요구 버전
@@ -11886,7 +11336,6 @@ def _bin_dir() -> Path:
 def _platform_asset_name(ver: str) -> str:
     """플랫폼별 yt-dlp 배포 에셋 이름 생성."""
     system = platform.system().lower()
-    machine = platform.machine().lower()
     suffix = _exe_suffix()
 
     if system == "windows":
@@ -11918,7 +11367,7 @@ def _latest_stable_version() -> str:
             tag = data.get("tag_name", "").lstrip("v")
             if tag:
                 return tag
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — GitHub API 실패는 폴백 버전 사용
         log_f12_net(f"GitHub API failed for latest yt-dlp version: {e}")
     return _YTDLP_FALLBACK_VER
 
@@ -11953,13 +11402,13 @@ def _download_with_progress(url: str, dest: Path, log_func=None, label: str = ""
         if log_func:
             log_func(emit_component("DEPS", "OK", "YTDL", f"{label} done ({dest.stat().st_size / 1048576:.1f} MB)"))
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 다운로드 실패는 log_func 전달 후 False
         log_f12_net(f"Download failed: {url} ({e})", is_error=True)
         if log_func:
             log_func(emit_component("DEPS", "FAIL", "YTDL", f"{label} download failed: {e}", is_error=True))
         try:
             tmp.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
         return False
 
@@ -11996,8 +11445,8 @@ def yt_dlp_path() -> str | None:
         overlay_bin = Path(overlay) / f"yt-dlp{suffix}"
         if overlay_bin.is_file():
             candidates.append(str(overlay_bin))
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — 오버레이 경로 탐색 실패는 candidates 미추가
+        log_f12_net(f"pylib overlay probe failed: {type(e).__name__}", is_error=True)
 
 
     # 실행 가능 여부 확인 후 첫 번째 유효한 것 반환
@@ -12017,6 +11466,7 @@ def yt_dlp_version(exe_path: str | None = None) -> tuple[int, int, int] | None:
         result = subprocess.run(
             [exe, "--version"],
             capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace",
+            check=False,  # PLW1510: returncode==0 분기로 버전 판정
         )
         cmd_str = f"{exe} --version"
         output_str = result.stdout or result.stderr or ""
@@ -12025,7 +11475,7 @@ def yt_dlp_version(exe_path: str | None = None) -> tuple[int, int, int] | None:
             m = re.match(r"(\d+)\.(\d+)\.(\d+)", output_str.strip())
             if m:
                 return tuple(map(int, m.groups()))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — yt-dlp --version 실행 실패는 None (미확인)
         log_f12_cli(f"{exe} --version", f"Exception: {e}", is_error=True)
     return None
 
@@ -12042,7 +11492,7 @@ def ensure_yt_dlp(log_func=None, channel: str = "stable") -> bool:
     # 이미 유효한 버전이 있으면 스킵
     if yt_dlp_ok():
         if log_func:
-            log_func(emit_component("DEPS", "OK", "YTDL", f"yt-dlp already available"))
+            log_func(emit_component("DEPS", "OK", "YTDL", "yt-dlp already available"))
         return True
 
     if log_func:
@@ -12083,7 +11533,7 @@ def ensure_yt_dlp(log_func=None, channel: str = "stable") -> bool:
             if log_func:
                 log_func(emit_component("DEPS", "FAIL", "YTDL", "installed binary version check failed", is_error=True))
             return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 바이너리 설치 예외는 log_func 전달 후 False
         if log_func:
             log_func(emit_component("DEPS", "FAIL", "YTDL", f"install failed: {e}", is_error=True))
         return False
@@ -12102,7 +11552,7 @@ def upgrade_yt_dlp(channel: str = "stable", log_func=None) -> tuple[int, str]:
     # 최신 버전 확인
     if channel == "nightly":
         # nightly는 항상 최신으로 간주 (버전 번호 없음)
-        return 0, f"updated to nightly"
+        return 0, "updated to nightly"
     else:
         latest = _latest_stable_version()
         if current:
@@ -12125,39 +11575,47 @@ def upgrade_yt_dlp(channel: str = "stable", log_func=None) -> tuple[int, str]:
 - Manager: 오케스트레이터 파사드
 - Bridge: 동기 컨텍스트 어댑터 (기존 동기 함수 지원)
 """
+from chzzktube.infra.provisioning.bridge import (
+    provision_all_sync,
+    provision_component_sync,
+    resolve_all_sync,
+)
+from chzzktube.infra.provisioning.downloader import (
+    DownloadResult,
+    DownloadTask,
+    ParallelDownloader,
+)
+from chzzktube.infra.provisioning.manager import (
+    ProvisioningManager,
+    ProvisionPlan,
+    ProvisionResult,
+)
+from chzzktube.infra.provisioning.manifest import ComponentRecord, ProvisionManifest
 from chzzktube.infra.provisioning.resolver import (
+    MIRROR_REGISTRY,
     ComponentSpec,
     ComponentType,
     Mirror,
-    MIRROR_REGISTRY,
 )
-from chzzktube.infra.provisioning.downloader import ParallelDownloader, DownloadTask, DownloadResult
 from chzzktube.infra.provisioning.verifier import Verifier, VerifyResult
-from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
-from chzzktube.infra.provisioning.manager import ProvisioningManager, ProvisionPlan, ProvisionResult
-from chzzktube.infra.provisioning.bridge import (
-    provision_component_sync,
-    provision_all_sync,
-    resolve_all_sync,
-)
 
 __all__ = [
+    "MIRROR_REGISTRY",
+    "ComponentRecord",
     "ComponentSpec",
     "ComponentType",
-    "Mirror",
-    "MIRROR_REGISTRY",
-    "ParallelDownloader",
-    "DownloadTask",
     "DownloadResult",
-    "Verifier",
-    "VerifyResult",
+    "DownloadTask",
+    "Mirror",
+    "ParallelDownloader",
     "ProvisionManifest",
-    "ComponentRecord",
-    "ProvisioningManager",
     "ProvisionPlan",
     "ProvisionResult",
-    "provision_component_sync",
+    "ProvisioningManager",
+    "Verifier",
+    "VerifyResult",
     "provision_all_sync",
+    "provision_component_sync",
     "resolve_all_sync",
 ]
 ```
@@ -12176,10 +11634,8 @@ ProvisioningManager(async)를 직접 호출할 수 있게 하는 어댑터.
 없으면 새로 생성. 중첩 호출 시 안전하게 동작. 생성한 루프는 사용 후 close로 정리.
 """
 import asyncio
-from typing import Optional
 
 from chzzktube.infra.provisioning.manager import ProvisioningManager, ProvisionResult
-
 
 _created_loops: set[int] = set()
 
@@ -12224,7 +11680,7 @@ def provision_component_sync(
     log_func=None,
     channel: str = "stable",
     force: bool = False,
-) -> Optional[ProvisionResult]:
+) -> ProvisionResult | None:
     """단일 구성요소 동기 수급 - 기존 동기 코드에서 호출.
 
     Args:
@@ -12282,17 +11738,15 @@ def resolve_all_sync(
 
 Executor가 완료한 결과를 받아 manifest 업데이트, .pylib overlay 리로드, PATH 추가 수행.
 """
-from pathlib import Path
-from typing import Optional
 import os
-import time
 import shutil
+import time
+from pathlib import Path
 
-from chzzktube.core import config
-from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import config, raw_log
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
+from chzzktube.infra.provisioning.manifest import ComponentRecord, ProvisionManifest
 
 
 class Committer:
@@ -12367,7 +11821,7 @@ class Committer:
                 "DEPS", "OK", "PY", f"overlay refreshed: {path}",
                 component_id="deps_PY", is_progress=False,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — overlay 리로드 실패는 WARN 발행
             self._emit(
                 "DEPS", "WARN", "PY", f"overlay refresh failed: {e}",
                 component_id="deps_PY", is_progress=False,
@@ -12387,7 +11841,7 @@ class Committer:
                         bin_str = str(bin_dir)
                         if bin_str not in parts:
                             os.environ["PATH"] = os.pathsep.join([bin_str] + parts)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — PATH 갱신 실패는 WARN 발행
             self._emit(
                 "DEPS", "WARN", "PATH", f"PATH refresh failed: {e}",
                 component_id="deps_PATH", is_progress=False,
@@ -12405,12 +11859,11 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
 
 from chzzktube.core.raw_log import log_f12_net
-
 
 _CHUNK_SIZE = 64 * 1024
 _USER_AGENT = "ChzzkTube-Provisioner/1.0"
@@ -12422,7 +11875,7 @@ class DownloadTask:
     component: str
     url: str
     dest: Path
-    expected_sha256: Optional[str] = None
+    expected_sha256: str | None = None
     mirror_name: str = ""
 
 
@@ -12430,9 +11883,9 @@ class DownloadTask:
 class DownloadResult:
     task: DownloadTask
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
     bytes_downloaded: int = 0
-    sha256: Optional[str] = None
+    sha256: str | None = None
 
 
 ProgressCallback = Callable[[str, int, int, float, float], Awaitable[None]]
@@ -12442,7 +11895,7 @@ def _format_network_error(exc: BaseException) -> str:
     """네트워크/수급 에러를 사용자가 쉽게 파악할 수 있는 안내 문구로 변환."""
     if isinstance(exc, urllib.error.HTTPError):
         if exc.code == 404:
-            return f"HTTP 404 Not Found (asset removed or unavailable at mirror) — check update/mirror"
+            return "HTTP 404 Not Found (asset removed or unavailable at mirror) — check update/mirror"
         if exc.code == 403 or exc.code == 429:
             return f"HTTP {exc.code} Rate Limited by host — please try again in a few minutes"
         if exc.code >= 500:
@@ -12468,7 +11921,7 @@ class ParallelDownloader:
         max_concurrent: int = 5,
         max_retries: int = 3,
         base_timeout: float = 120.0,
-        progress_cb: Optional[ProgressCallback] = None,
+        progress_cb: ProgressCallback | None = None,
     ):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.max_retries = max_retries
@@ -12485,14 +11938,14 @@ class ParallelDownloader:
         return await asyncio.gather(*[_download_one(task) for task in tasks])
 
     async def _download_with_retry(self, task: DownloadTask) -> DownloadResult:
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
 
         for attempt in range(self.max_retries):
             try:
                 return await self._download_once(task)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — 재시도 루프는 지수 백오프 후 다음 시도
                 last_error = exc
                 self._remove_part_file(task)
                 log_f12_net(
@@ -12522,7 +11975,7 @@ class ParallelDownloader:
             tok_req = urllib.request.Request(tok_url, headers={"User-Agent": _USER_AGENT})
             with urllib.request.urlopen(tok_req, timeout=10.0) as tok_resp:
                 return _json.load(tok_resp).get("token")
-        except Exception:
+        except Exception:  # noqa: BLE001 — ghcr 토큰 조회 실패는 None (무인증 폴백)
             return None
 
     async def _download_once(self, task: DownloadTask) -> DownloadResult:
@@ -12567,10 +12020,8 @@ class ParallelDownloader:
                             return
                         now = time.monotonic()
                         pct = int(d_bytes * 100 / t_bytes) if t_bytes > 0 else 0
-                        if not is_final:
-                            # 0.15초 이내이면서 퍼센트 변화도 없으면 스킵
-                            if (now - last_cb_time < 0.15) and (pct == last_cb_pct):
-                                return
+                        if not is_final and (now - last_cb_time < 0.15) and (pct == last_cb_pct):
+                            return
                         elapsed = now - start_time
                         speed_bps = d_bytes / elapsed if elapsed > 0 else 0.0
                         eta_sec = (t_bytes - d_bytes) / speed_bps if (speed_bps > 0 and t_bytes > d_bytes) else 0.0
@@ -12594,7 +12045,8 @@ class ParallelDownloader:
                             hasher.update(chunk)
                         report(downloaded, total)
 
-                    report(downloaded, total, is_final=True)
+                    effective_total = total if total > 0 else downloaded
+                    report(downloaded, effective_total, is_final=True)
 
                 computed_sha256 = hasher.hexdigest() if hasher is not None else None
                 if hasher is not None and computed_sha256 != task.expected_sha256:
@@ -12775,15 +12227,17 @@ class Executor:
 
     def _on_progress(self, component: str, downloaded: int, total: int, speed_bps: float = 0.0, eta_sec: float = 0.0):
         """다운로드 진행률 하트비트 — TUI: 컴포넌트별 개별 갱신형 라인, F12: 개별 누적."""
-        if total <= 0:
-            return
-
-        pct = int(downloaded / total * 100)
         downloaded_mb = downloaded / (1024 * 1024)
-        total_mb = total / (1024 * 1024)
+        if total > 0:
+            pct = int(downloaded / total * 100)
+            total_mb = total / (1024 * 1024)
+            nm_str = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
+        else:
+            pct = 0
+            total_mb = 0.0
+            nm_str = f"{downloaded_mb:.1f} MB"
 
         speed_str = self._format_speed(speed_bps)
-        nm_str = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
 
         # 개별 진행 저장 (100% 완료 및 추출/실패 후에도 bar, pct, speed, n/m 유지)
         self._active_progress[component] = {
@@ -12876,6 +12330,27 @@ class Executor:
 
         self._plan_versions = {plan.component: plan.version for plan in plans}
 
+        # 모든 대상 컴포넌트에 대해 초기 0% 진행 라인을 즉시 등록 및 발행 (동시 노출 보장)
+        for plan in plans:
+            comp_id = f"deps_{plan.component}"
+            scope = _to_scope(plan.component)
+            self._active_progress[plan.component] = {
+                "pct": 0,
+                "speed": "",
+                "nm": "",
+                "downloaded_mb": 0.0,
+                "total_mb": 0.0,
+            }
+            init_line = self._fmt_progress(0, "", "", msg="")
+            init_event = emit_component("DEPS", "RUN", scope, init_line, is_status=True, is_error=False)
+            init_event.component_id = comp_id
+            init_event.is_progress = True
+            if not self._emit_via_log(init_event):
+                raw_log.raw(
+                    "provisioning", init_event, to_tui=True,
+                    component_id=comp_id, is_progress=True,
+                )
+
         tasks = []
         for plan in plans:
             dest = self.base_dir / "downloads" / plan.component
@@ -12896,9 +12371,12 @@ class Executor:
             dl_result = next((r for r in dl_results if r.task.component == plan.component), None)
 
             prog = self._active_progress.get(plan.component, {})
-            pct = prog.get("pct", 100)
+            pct = 100 if (dl_result and dl_result.success) else prog.get("pct", 0)
             speed = prog.get("speed", "")
             nm = prog.get("nm", "")
+            if dl_result and dl_result.bytes_downloaded > 0:
+                mb = dl_result.bytes_downloaded / (1024 * 1024)
+                nm = f"{mb:.1f}/{mb:.1f} MB"
 
             if not dl_result or not dl_result.success:
                 error_msg = dl_result.error if dl_result else "download task vanished"
@@ -13040,12 +12518,11 @@ class Executor:
 """
 from pathlib import Path
 
-from chzzktube.core import config
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import config, raw_log
 from chzzktube.core.log_emitter import emit_component
-from chzzktube.infra.provisioning.planner import Planner, ProvisionPlan
-from chzzktube.infra.provisioning.executor import Executor, ProvisionResult
 from chzzktube.infra.provisioning.committer import Committer
+from chzzktube.infra.provisioning.executor import Executor, ProvisionResult
+from chzzktube.infra.provisioning.planner import Planner, ProvisionPlan
 
 
 class ProvisioningManager:
@@ -13142,10 +12619,8 @@ writable_base()/provision_manifest.json에 저장.
 모든 구성요소의 버전/출처/경로/검증시점 영구 기록.
 """
 import json
-import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -13184,8 +12659,8 @@ class ProvisionManifest:
                     last_check=data.get("last_check", 0),
                     last_full_update=data.get("last_full_update", 0),
                 )
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 매니페스트 손상 시 raw 버스 로깅 후 기본값
+                from chzzktube.core import raw_log
                 raw_log.raw("DEPS", f"manifest load error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return cls()
 
@@ -13202,7 +12677,7 @@ class ProvisionManifest:
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
 
-    def is_stale(self, name: str, latest_version: str, base_dir: Optional[Path] = None) -> bool:
+    def is_stale(self, name: str, latest_version: str, base_dir: Path | None = None) -> bool:
         """manifest 버전 vs 최신 버전 비교 및 디스크 실존 확인."""
         rec = self.components.get(name)
         if not rec:
@@ -13215,7 +12690,7 @@ class ProvisionManifest:
                 return True
         return False
 
-    def get_record(self, name: str) -> Optional[ComponentRecord]:
+    def get_record(self, name: str) -> ComponentRecord | None:
         return self.components.get(name)
 
     def update_component(self, record: ComponentRecord) -> None:
@@ -13233,24 +12708,25 @@ class ProvisionManifest:
 ProvisioningManager에서 resolve 로직을 분리한 순수 플래너.
 미러 체인에서 최신 버전/URL/sha256 조회 → ProvisionPlan 리스트 생성.
 """
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 import asyncio
 import json
 import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
 
-from chzzktube.core import config
-from chzzktube.infra.provisioning.resolver import (
-    ComponentSpec, ComponentType, MIRROR_REGISTRY, filter_assets,
-)
-from chzzktube.infra.provisioning.manifest import ProvisionManifest
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.raw_log import log_f12_net
+from chzzktube.core import config, raw_log
 from chzzktube.core.log_emitter import emit_component
+from chzzktube.core.raw_log import log_f12_net
+from chzzktube.infra.provisioning.manifest import ProvisionManifest
+from chzzktube.infra.provisioning.resolver import (
+    MIRROR_REGISTRY,
+    ComponentSpec,
+    ComponentType,
+    filter_assets,
+)
 
 
 @dataclass
@@ -13260,7 +12736,7 @@ class ProvisionPlan:
     mirror_name: str
     version: str
     download_url: str
-    expected_sha256: Optional[str]
+    expected_sha256: str | None
     install_path: Path
     is_update: bool
     archive_type: str  # "whl", "zip", "tar.gz", "tar.xz", "server"
@@ -13288,14 +12764,14 @@ class Planner:
             component_id=component_id, is_progress=is_progress,
         )
 
-    async def _fetch_json(self, url: str, *, headers: Optional[dict[str, str]] = None):
+    async def _fetch_json(self, url: str, *, headers: dict[str, str] | None = None):
         """Worker thread에서 동기 urllib JSON 요청을 수행한다."""
         return await asyncio.to_thread(self._fetch_json_sync, url, headers)
 
     @staticmethod
     def _fetch_json_sync(
-        url: str, headers: Optional[dict[str, str]] = None
-    ) -> Optional[dict | list]:
+        url: str, headers: dict[str, str] | None = None
+    ) -> dict | list | None:
         log_f12_net(f"HTTP GET {url}")
         request = urllib.request.Request(url, headers=headers or {})
         try:
@@ -13305,12 +12781,12 @@ class Planner:
             log_f12_net(f"HTTP GET failed ({url}): {e}", is_error=True)
             return None
 
-    async def _fetch_text(self, url: str) -> Optional[str]:
+    async def _fetch_text(self, url: str) -> str | None:
         """Worker thread에서 동기 urllib 텍스트 요청을 수행한다."""
         return await asyncio.to_thread(self._fetch_text_sync, url)
 
     @staticmethod
-    def _fetch_text_sync(url: str) -> Optional[str]:
+    def _fetch_text_sync(url: str) -> str | None:
         log_f12_net(f"HTTP GET {url}")
         request = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube-Provisioner/1.0"})
         try:
@@ -13342,11 +12818,10 @@ class Planner:
                 if result and result[0] and result[1]:
                     log_f12_net(f"resolved {spec.name}: v{result[0]} via {result[3]} -> {result[1]}")
                     return result
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 개별 미러 조회 실패는 다음 미러로 폴백
+                from chzzktube.core import raw_log
                 raw_log.raw("DEPS", f"_fetch_latest mirror {mirror.name} error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 log_f12_net(f"mirror {mirror.name} query error for {spec.name}: {e}", is_error=True)
-                pass
         return None, None, None, None, None
 
     async def _fetch_from_homebrew(self, spec, mirror):
@@ -13370,7 +12845,7 @@ class Planner:
 
         try:
             darwin_major = int(_platform.release().split(".")[0])
-        except Exception:
+        except (ValueError, IndexError):  # 빌드 번호 판정 실패 시 기본값(sequoia=24)
             darwin_major = 24
 
         _BUILD_ORDERS = (
@@ -13492,7 +12967,7 @@ class Planner:
         sha256 = await self._fetch_nodejs_sha256(ver, url)
         return ver, url, sha256, "nodejs.org", archive_type
 
-    async def _fetch_nodejs_sha256(self, version: str, download_url: str) -> Optional[str]:
+    async def _fetch_nodejs_sha256(self, version: str, download_url: str) -> str | None:
         """nodejs.org SHASUMS256.txt에서 특정 버전/플랫폼 파일의 SHA256 조회."""
         # SHASUMS256.txt URL 구성
         shasums_url = f"https://nodejs.org/dist/{version}/SHASUMS256.txt"
@@ -13511,8 +12986,8 @@ class Planner:
                 parts = line.split()
                 if len(parts) >= 2 and parts[1] == filename:
                     return parts[0]
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — SHASUMS 조회 실패는 None (무검증 채택 금지)
+            from chzzktube.core import raw_log
             raw_log.raw("DEPS", f"_fetch_nodejs_sha256 error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
@@ -13566,10 +13041,10 @@ class Planner:
 - 미러 체인: 우선순위 기반 자동 폴백
 - 플랫폼별 asset 필터링: resolver 내부에서 처리
 """
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
-import sys
 
 
 class ComponentType(Enum):
@@ -13659,8 +13134,8 @@ def get_platform_asset_filters() -> tuple[str, ...]:
     try:
         import platform as _platform
         machine = _platform.machine().lower()
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — arch 조회 실패는 raw 버스 로깅 후 빈 값 유지
+        from chzzktube.core import raw_log
         raw_log.raw("DEPS", f"get_platform_asset_filters error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     if platform == "darwin":
@@ -13732,12 +13207,11 @@ def filter_assets(assets: list[dict], spec: ComponentSpec) -> list[dict]:
 
 ```python
 """Verifier — 다층 검증 (해시/실행 테스트/헬스체크)."""
-import sys
-import subprocess
 import json
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from chzzktube.infra.platform import spawn_kwargs
 from chzzktube.infra.provisioning.resolver import ComponentSpec, ComponentType
@@ -13747,9 +13221,9 @@ from chzzktube.infra.provisioning.resolver import ComponentSpec, ComponentType
 class VerifyResult:
     component: str
     success: bool
-    error: Optional[str] = None
-    version: Optional[str] = None
-    installed_path: Optional[Path] = None
+    error: str | None = None
+    version: str | None = None
+    installed_path: Path | None = None
 
 
 class Verifier:
@@ -13787,6 +13261,7 @@ class Verifier:
                 env=env,
                 encoding="utf-8",
                 errors="replace",
+                check=False,  # PLW1510: returncode로 VerifyResult 판정
                 **spawn_kwargs()
             )
 
@@ -13820,7 +13295,7 @@ class Verifier:
 
         except subprocess.TimeoutExpired:
             return VerifyResult(spec.name, False, error="verification timeout", installed_path=binary_path)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 검증 실행 예외(권한/경로)는 실패 VerifyResult로
             return VerifyResult(spec.name, False, error=str(e), installed_path=binary_path)
 
     @staticmethod
@@ -13863,7 +13338,7 @@ class Verifier:
 
             return VerifyResult(spec.name, False, error="dist-info not found", installed_path=overlay_root)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 패키지 검증 중 예외는 실패 VerifyResult로
             return VerifyResult(spec.name, False, error=str(e), installed_path=overlay_root)
 
     @staticmethod
@@ -13878,7 +13353,7 @@ class Verifier:
             version = json.loads(pkg_json.read_text(encoding="utf-8")).get("version", "unknown")
             return VerifyResult(spec.name, True, version=version, installed_path=server_dir)
 
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — bgutil 검증 예외(package.json 손상 등)는 실패 판정
             return VerifyResult(spec.name, False, error=str(e), installed_path=server_dir)
 
     @classmethod
@@ -13945,9 +13420,10 @@ class Verifier:
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Mapping
+from typing import Any
 
 
 class ContentKind(Enum):
@@ -14149,7 +13625,7 @@ DownloadContext를 생성해 파이프라인에 넘기고, 파이프라인은 �
 Qt Signal(YtLoggerBridge)은 그대로 참조로 전달된다 (QThread 상속 구조 유지).
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -14162,14 +13638,14 @@ class DownloadContext:
     """
 
     # 설정 (worker.cfg 딕셔너리 참조)
-    cfg: Dict[str, Any]
+    cfg: dict[str, Any]
 
     # 포맷 선택 ("auto"면 자동 선택)
     v_sel: str = "auto"
     a_sel: str = "auto"
 
     # 비디오 스펙 (v_list[0]에서 추출된 height/fps 등)
-    v_spec: Dict[str, Any] = field(default_factory=dict)
+    v_spec: dict[str, Any] = field(default_factory=dict)
 
     # 오디오 설명 (a_list[0]에서 추출)
     audio_desc: str = ""
@@ -14179,10 +13655,10 @@ class DownloadContext:
 
     # 현재 처리 중인 대상
     current_url: str = ""
-    current_file: Optional[str] = None
+    current_file: str | None = None
 
     # 세션 상태 (UI→워커 단방향: canceled, skip)
-    state: Dict[str, bool] = field(default_factory=lambda: {"canceled": False, "skip": False})
+    state: dict[str, bool] = field(default_factory=lambda: {"canceled": False, "skip": False})
 
     # 속도 계산 (SpeedWindow — 이동평균)
     speed_win: Any = None
@@ -14218,14 +13694,14 @@ class DownloadContext:
     finished_all: Any = None
 
     # 오류 수집 (다운로드 실패 시 메시지 누적)
-    _errors: List[str] = field(default_factory=list, repr=False)
+    _errors: list[str] = field(default_factory=list, repr=False)
 
     def add_error(self, msg: str) -> None:
         """오류 메시지를 수집한다. finalizer가 배치 마감에서 참조한다."""
         self._errors.append(msg)
 
     @property
-    def errors(self) -> List[str]:
+    def errors(self) -> list[str]:
         """수집된 오류 목록 (읽기 전용)."""
         return list(self._errors)
 
@@ -14254,10 +13730,10 @@ class DownloadContext:
 """
 import os
 
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.pipeline.progress_emitter import emit_dl
 from chzzktube.core.log_emitter import emit_error_standard
+from chzzktube.pipeline.progress_emitter import emit_dl
 
 
 def finalize(ctx, total, failed_targets, success_count, skip_targets=None, *, notify=True):
@@ -14287,9 +13763,8 @@ def finalize(ctx, total, failed_targets, success_count, skip_targets=None, *, no
             ff_path = os.path.join(ctx.cfg["download_path"], "failed_urls.txt")
             try:
                 with open(ff_path, "w", encoding="utf-8") as f:
-                    for u, _ in failed_targets:
-                        f.write(u + "\n")
-            except Exception:
+                    f.writelines(u + "\n" for u, _ in failed_targets)
+            except OSError:  # 실패 URL 목록 기록 실패는 최종 마감 로그가 대체
                 pass
         # [개별 실패 라인] — ERR 컬럼 포맷으로 1건 1줄 (v3.8.0 규격: cause → action)
         for u, reason in failed_targets:
@@ -14475,15 +13950,14 @@ def _remux_live_output(ctx, out_file):
     os.close(fd)
     cmd = ["ffmpeg", "-y", "-i", out_file, "-c", "copy", staging]
     try:
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                       check=True, timeout=120, **spawn_kwargs())
+        subprocess.run(cmd, capture_output=True, check=True, timeout=120, **spawn_kwargs())
         if not os.path.getsize(staging):
             raise RuntimeError("empty remux output")
         os.replace(staging, out_path)
         if os.path.abspath(out_file) != os.path.abspath(out_path):
             os.remove(out_file)
         return out_path
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001 — remux 실패 시 raw 버스 기록 후 None
         raw_log.raw(
             "media",
             emit_dl(status="FAIL", scope=_dl_platform(ctx.current_url or ""),
@@ -14575,9 +14049,9 @@ def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
                 stdout_queue.put(chunk)
                 if not chunk:
                     break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — reader 스레드 예외는 raw 버스 기록 후 EOF
             # [Silent fallback 제거] reader 스레드 예외 로그 후 EOF sentinel 주입
-            import chzzktube.core.raw_log as raw_log
+            # [중복 import 제거] 모듈 전역 raw_log(21줄) 사용 — 지역 바인딩 회피
             raw_log.raw("LIVE", f"_read_stdout error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             stdout_queue.put(b"")
 
@@ -14592,6 +14066,10 @@ def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
 
     def _drain_stderr():
         # stderr 는 별도 스레드로 실시간 상세 로그 유지 (버스 단일 경유)
+        # [F823 수리] 종전에는 이 함수 안 243줄에서만 `import ... as raw_log`를 해
+        # `raw_log`가 지역 변수로 바인딩됐다(LOAD_FAST_CHECK) → 아래 235줄 참조 시
+        # 매 ffmpeg 로그마다 UnboundLocalError가 나 stderr가 통째로 유실됐다.
+        # 모듈 전역 raw_log(21줄)를 그대로 쓰도록 지역 import를 제거한다.
         from chzzktube.core.log_event import LogEvent
         for raw in iter(proc.stderr.readline, b""):
             if raw:
@@ -14602,8 +14080,7 @@ def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
                                          msg=raw.decode("utf-8", "replace").strip(),
                                       ),
                                 )
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — stderr 드레인 예외는 raw 버스 기록
                     raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     stderr_t = threading.Thread(target=_drain_stderr, daemon=True)
@@ -14693,8 +14170,8 @@ def _try_watchdog_heartbeat(ctx, last_heartbeat_time):
         if wd and hasattr(wd, "heartbeat"):
             try:
                 wd.heartbeat()
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 개별 워치독 하트비트 실패는 raw 버스 기록
+                from chzzktube.core import raw_log
                 raw_log.raw("LIVE", f"_try_watchdog_heartbeat error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             break
 
@@ -14728,14 +14205,13 @@ import os
 import re
 import time
 
-from chzzktube.core.log_emitter import (
-    emit_event,
-    emit_dl,
-)
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.media import cli_format_desc, format_bytes
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.core.watchdog import LivenessWatchdog
+from chzzktube.core.log_emitter import (
+    emit_dl,
+    emit_event,
+)
+from chzzktube.core.media import cli_format_desc, format_bytes
 
 
 def _dl_spec(ctx):
@@ -14789,8 +14265,6 @@ def emit_progress_tick(ctx, d):
     speed_s = f"{format_bytes(rate)}/s" if rate else "-"
 
     pct = (done / total * 100.0) if total else 0.0
-    # 제목은 이미 ANAL 단계에서 표시되었으므로 제외 (중복 방지)
-    title = ""
 
     raw_log.raw(
         "dl",
@@ -14846,13 +14320,13 @@ def pp_hook(ctx, d):
     중복 방지: 이미 발행한 경로는 재발행하지 않는다 (ctx._pp_last_file).
     """
     if not isinstance(d, dict) or d.get("status") != _PP_FINAL_STATUS:
-        return None
+        return
     info = d.get("info_dict") or {}
     final = info.get("filepath") or info.get("_filename") or ""
     if not final or _is_intermediate_stream(os.path.basename(final)):
-        return None
+        return
     if getattr(ctx, "_pp_last_file", None) == final:
-        return None
+        return
     ctx._pp_last_file = final
     size = os.path.getsize(final) if os.path.exists(final) else 0
     raw_log.raw(
@@ -14943,97 +14417,97 @@ def emit_live_final_stats(ctx, total_bytes, start_time):
 """
 
 # 공통 유틸리티/상수
-from .utils import (
-    _RETRYABLE_BOT_MARKERS,
-    _TERMINAL_FAIL_MARKERS,
-    _WATCHDOG_HEARTBEAT_INTERVAL,
-    _FormatQualityLoss,
-    _is_retryable_bot_error,
-    _has_configured_cookies,
-    _chzzk_filename,
-    _extract_yt_id,
-    _emit_error_log,
-    _emit_skip_log,
-    _is_youtube_live_url,
-)
+import yt_dlp
 
-# yt-dlp 옵션
-from .options import _make_ytdl_opts, _format_selector
-
-# 평탄화
-from .flatten import _flatten, _classify_item, _normalize_single_item, expand_targets
+# 라이브 레코더 (기존 td._lr 호환용)
+import chzzktube.pipeline.live_recorder as _lr
+from chzzktube.core import raw_log
 
 # 치지직
 from .chzzk import _download_chzzk, _download_chzzk_live, _http_download
 
-# 라이브 레코더 (기존 td._lr 호환용)
-import chzzktube.pipeline.live_recorder as _lr
+# 메인 디스패처
+from .dispatch import download_target
 
-# 유튜브 VOD
-from .youtube_vod import (
-    _download_vod,
-    _ensure_pot_server_ready,
-    _emit_vod_success,
-    _max_requested_height,
-    _needs_pot_promotion,
-    _QUALITY_CLIENT_CHAIN,
-    _POT_CLIENTS,
-    YtDownloadError,
+# 평탄화
+from .flatten import _classify_item, _flatten, _normalize_single_item, expand_targets
+
+# yt-dlp 옵션
+from .options import _format_selector, _make_ytdl_opts
+from .utils import (
+    _RETRYABLE_BOT_MARKERS,
+    _TERMINAL_FAIL_MARKERS,
+    _WATCHDOG_HEARTBEAT_INTERVAL,
+    _chzzk_filename,
+    _emit_error_log,
+    _emit_skip_log,
+    _extract_yt_id,
+    _FormatQualityLoss,
+    _has_configured_cookies,
+    _is_retryable_bot_error,
+    _is_youtube_live_url,
 )
-import yt_dlp
-import chzzktube.core.raw_log as raw_log
 
 # 유튜브 라이브
 from .youtube_live import _download_youtube_live
 
-# 메인 디스패처
-from .dispatch import download_target
+# 유튜브 VOD
+from .youtube_vod import (
+    _POT_CLIENTS,
+    _QUALITY_CLIENT_CHAIN,
+    YtDownloadError,
+    _download_vod,
+    _emit_vod_success,
+    _ensure_pot_server_ready,
+    _max_requested_height,
+    _needs_pot_promotion,
+)
 
 # ── 공개 API (기존 import 호환) ────────────────────────────────────────────
 __all__ = [
+    "_POT_CLIENTS",
+    "_QUALITY_CLIENT_CHAIN",
     # 상수
     "_RETRYABLE_BOT_MARKERS",
     "_TERMINAL_FAIL_MARKERS",
     "_WATCHDOG_HEARTBEAT_INTERVAL",
-    "_QUALITY_CLIENT_CHAIN",
-    "_POT_CLIENTS",
+    "YtDownloadError",
     # 예외
     "_FormatQualityLoss",
-    "YtDownloadError",
-    # 모듈
-    "yt_dlp",
-    "_lr",
-    "raw_log",
-    # 유틸리티
-    "_is_retryable_bot_error",
-    "_has_configured_cookies",
     "_chzzk_filename",
-    "_extract_yt_id",
-    "_emit_error_log",
-    "_emit_skip_log",
-    "_is_youtube_live_url",
-    # 옵션
-    "_make_ytdl_opts",
-    "_format_selector",
-    # 평탄화
-    "_flatten",
     "_classify_item",
-    "_normalize_single_item",
-    "expand_targets",
-    # 치지직
-    "_http_download",
     "_download_chzzk",
     "_download_chzzk_live",
     # 유튜브 VOD
     "_download_vod",
-    "_ensure_pot_server_ready",
-    "_emit_vod_success",
-    "_max_requested_height",
-    "_needs_pot_promotion",
     # 유튜브 라이브
     "_download_youtube_live",
+    "_emit_error_log",
+    "_emit_skip_log",
+    "_emit_vod_success",
+    "_ensure_pot_server_ready",
+    "_extract_yt_id",
+    # 평탄화
+    "_flatten",
+    "_format_selector",
+    "_has_configured_cookies",
+    # 치지직
+    "_http_download",
+    # 유틸리티
+    "_is_retryable_bot_error",
+    "_is_youtube_live_url",
+    "_lr",
+    # 옵션
+    "_make_ytdl_opts",
+    "_max_requested_height",
+    "_needs_pot_promotion",
+    "_normalize_single_item",
     # 디스패처
     "download_target",
+    "expand_targets",
+    "raw_log",
+    # 모듈
+    "yt_dlp",
 ]
 ```
 
@@ -15046,13 +14520,10 @@ import os
 import time
 import urllib.request
 
-import chzzktube.core.chzzk_api as chzzk_api
+from chzzktube.core import chzzk_api, raw_log
 from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
-from chzzktube.pipeline.target_downloader import utils as td_utils
-from chzzktube.pipeline.classifier import ContentKind
-import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.pipeline.target_downloader import utils as td_utils
 
 
 def _http_download(ctx, url: str, out_path: str) -> bool:
@@ -15081,11 +14552,11 @@ def _http_download(ctx, url: str, out_path: str) -> bool:
                         if wd and hasattr(wd, "heartbeat"):
                             try:
                                 wd.heartbeat()
-                            except Exception:
+                            except Exception:  # noqa: BLE001, S110 — 하트비트 실패는 다운로드 계속
                                 pass
                             break
         return True
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:  # noqa: BLE001 — HTTP 다운로드 실패는 raw 버스 기록
         raw_log.raw(emit_event("DL", "FAIL", "CHZZK", f"HTTP 다운로드 실패: {ex}"), to_tui=False)
         return False
 
@@ -15126,8 +14597,8 @@ def _download_chzzk(ctx, url: str, content_type: str) -> bool | str:
 def _download_chzzk_live(ctx, url: str) -> bool:
     """치지직 API의 HLS 포맷을 FFmpeg stdout 릴레이로 녹화한다."""
     import os
+
     import chzzktube.pipeline.live_recorder as _lr
-    import chzzktube.core.chzzk_api as chzzk_api
     import chzzktube.pipeline.progress_emitter as _pe
 
     info = chzzk_api.analyze_chzzk_live_api(url)
@@ -15163,15 +14634,14 @@ def _download_chzzk_live(ctx, url: str) -> bool:
 ```python
 ##### target_downloader/dispatch.py - 다운로드 디스패처 (메인 엔트리포인트)
 """개별 항목 다운로드 — 사전 분류 스킵 및 정적 디스패치 테이블 실행."""
-from chzzktube.pipeline.classifier import ContentKind, ClassifiedTarget
-from chzzktube.pipeline.target_downloader.chzzk import _download_chzzk, _download_chzzk_live
-from chzzktube.pipeline.target_downloader.youtube_vod import _download_vod
-from chzzktube.pipeline.target_downloader.youtube_live import _download_youtube_live
+from chzzktube.pipeline.classifier import ContentKind
+from chzzktube.pipeline.target_downloader.chzzk import (
+    _download_chzzk,
+    _download_chzzk_live,
+)
 from chzzktube.pipeline.target_downloader.utils import _emit_error_log
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
-
+from chzzktube.pipeline.target_downloader.youtube_live import _download_youtube_live
+from chzzktube.pipeline.target_downloader.youtube_vod import _download_vod
 
 # ── 정적 디스패치 테이블 ───────────────────────────────────────────────────
 # ContentKind -> 다운로드 함수 매핑 (확장 용이)
@@ -15243,7 +14713,7 @@ def download_target(ctx, item, failed_targets, skip_targets=None) -> bool | str:
 import yt_dlp
 
 from chzzktube.core.playlist import normalize_youtube_channel_url
-from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
+from chzzktube.pipeline.classifier import ClassifiedTarget, ItemClassifier
 from chzzktube.pipeline.target_downloader.utils import _has_configured_cookies
 
 
@@ -15355,7 +14825,6 @@ def expand_targets(ctx) -> list[ClassifiedTarget]:
                 # 단일 영상 - 정규화 팩토리를 통해 즉시 승격
                 expanded.append(_normalize_single_item(url))
         except Exception as ex:  # noqa: BLE001
-            url_short = url[:40] + ("..." if len(url) > 40 else "")
             # [v3.8.1] 즉시 TUI 발행 금지 — finalizer에서 단일 출력
             _emit_error_log(ctx, url, str(ex), failed_targets=[])
             expanded.append(_normalize_single_item(url))
@@ -15398,15 +14867,12 @@ from chzzktube.core.client_opts import (
     _apply_cookie_opts,
     _apply_ejs_opts,
     _apply_ffmpeg_opts,
-    _apply_light_analysis_opts,
     _apply_post_opts,
     _apply_pot_opts,
     _concurrent_fragments,
 )
-from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.utils import get_filename_template
-from chzzktube.infra.po_client import extract_video_id
-from chzzktube.pipeline.target_downloader.utils import _extract_yt_id, _has_configured_cookies
+from chzzktube.pipeline.target_downloader.utils import _extract_yt_id
 
 
 def _format_selector(ctx):
@@ -15483,15 +14949,12 @@ def _make_ytdl_opts(ctx, fmt, url, forced_client=None, inject_pot=False):
 - 치지직 파일명 생성
 - YouTube ID 추출
 """
-import os
 import re
 
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.utils import get_filename_template
 from chzzktube.pipeline.classifier import ClassifiedTarget
-
 
 # ── 봇 차단 재시도 가능 마커 vs 터미널 에러 판별 (SSOT) ───────────────────────
 _RETRYABLE_BOT_MARKERS = frozenset({
@@ -15647,7 +15110,6 @@ def _download_youtube_live(ctx, url: str) -> bool | str:
 ```python
 ##### target_downloader/youtube_vod.py - 유튜브 VOD 다운로드 (yt-dlp)
 """YouTube VOD 다운로드 — yt-dlp 기반, 품질 우선 폴백 + PO 토큰 주입."""
-import os
 import time
 
 import yt_dlp
@@ -15663,22 +15125,19 @@ except AttributeError:
         class YtDownloadError(Exception):
             pass
 
+from chzzktube.core import raw_log
+from chzzktube.core.log_emitter import emit_event
+from chzzktube.pipeline.target_downloader.options import (
+    _format_selector,
+    _make_ytdl_opts,
+)
 from chzzktube.pipeline.target_downloader.utils import (
-    _WATCHDOG_HEARTBEAT_INTERVAL,
-    _FormatQualityLoss,
     _emit_error_log,
     _emit_skip_log,
-    _extract_yt_id,
-    _is_retryable_bot_error,
+    _FormatQualityLoss,
     _has_configured_cookies,
+    _is_retryable_bot_error,
 )
-from chzzktube.pipeline.target_downloader.options import _make_ytdl_opts, _format_selector
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
-
 
 # 품질 우선 폴백 체인 (v3.8.0): web → web_safari → ios → tv
 _QUALITY_CLIENT_CHAIN = ("web", "web_safari", "ios", "tv")
@@ -15704,9 +15163,7 @@ def _ensure_pot_server_ready(ctx, timeout=60.0) -> bool:
         True  : 서버가 /ping에 응답 (PO 토큰 패칭 가능)
         False : 미준비/타임아웃 — 호출부는 PO 없이 진행 여부를 판단한다
     """
-    import time
     import chzzktube.pipeline.progress_emitter as _pe
-
     from chzzktube.infra.po_client import server_ping
 
     def _alive():
@@ -15727,14 +15184,16 @@ def _ensure_pot_server_ready(ctx, timeout=60.0) -> bool:
         if wd is not None:
             try:
                 wd.heartbeat()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 워치독 하트비트 실패는 무시 (POT 준비 계속)
                 pass
 
     try:
         from chzzktube.infra.pot_server import (
-            _spawn_existing, acquire_prewarm_lock, built_server_js,
-            ensure_node_server, release_prewarm_lock, server_home,
-            _SERVER_FALLBACK_VER,
+            _spawn_existing,
+            acquire_prewarm_lock,
+            built_server_js,
+            ensure_node_server,
+            release_prewarm_lock,
         )
     except Exception as ex:  # noqa: BLE001 — 인프라 import 실패 시 PO 없이 진행
         _log(f"pot infra unavailable ({type(ex).__name__})")
@@ -16762,7 +16221,7 @@ class VerboseLogWindow(QDialog):
         # 갱신형 라인 추적: component_id -> block number
         self._status_lines: dict[str, int] = {}
 
-    def append(self, msg, is_status=False, component_id: str = None):
+    def append(self, msg, is_status=False, component_id: str | None = None):
         if not msg:
             return
         if is_status and component_id:
@@ -16894,7 +16353,7 @@ class ConciseLogConsole:
                 self.reflow()
 
     def append(self, msg, is_status=False, is_error=False, fg_color=None, no_wrap=False, 
-           component_id: str = None, is_progress: bool = False):
+           component_id: str | None = None, is_progress: bool = False):
         """빈 줄 생성 차단 및 정밀 문단 삭제 파이프라인.
 
         [진행률 갱신형 계약] 진행률/진행 중 상태 로그는 반드시 is_status=True로
@@ -17417,8 +16876,8 @@ HANDOVER §5-33 직교 분리 + §6 Thin Wrapper 금지:
 로직 통째 이전 (위임 껍데기 아님). MainWindow는 이 모듈 함수에
 (fake-self 호환) 바인딩으로 위임한다.
 """
-from chzzktube.core.log_event import LogEvent
 from chzzktube.core import log_emitter
+from chzzktube.core.log_event import LogEvent
 
 
 def finalize_concise_progress(self, line, is_status, is_error, component_id):
@@ -17497,7 +16956,7 @@ def mirror_event_full(self, event, is_status=False):
         mirror_full_log(self, line, f12_is_status)
 
 
-def mirror_full_log(self, line, is_status=False, component_id: str = None):
+def mirror_full_log(self, line, is_status=False, component_id: str | None = None):
     """F12 전체 로그 버퍼 적재 및 활성 다이얼로그 제자리 갱신 관통 (SSOT).
 
     [v3.9.0 선택지 B] 진행 틱(is_status/component_id)은 버퍼 스냅샷 치환.
@@ -17608,9 +17067,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chzzktube.control import gate_state
 from chzzktube.control.controller import MediaController, _is_valid_url
 from chzzktube.control.gate_state import GateState
-import chzzktube.control.gate_state as gate_state
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
 from chzzktube.core import config, log_emitter, log_history, raw_log
@@ -17628,7 +17087,12 @@ from chzzktube.core.watchdog import (
 from chzzktube.infra.po_client import server_ping
 from chzzktube.infra.pylib_bootstrap import bootstrap as _bootstrap
 from chzzktube.ui import log_console, theme
-from chzzktube.ui.dialogs import DepsProvisioningDialog, ExitConfirmDialog, SettingsDialog, VerboseLogWindow
+from chzzktube.ui.dialogs import (
+    DepsProvisioningDialog,
+    ExitConfirmDialog,
+    SettingsDialog,
+    VerboseLogWindow,
+)
 from chzzktube.workers.update_worker import UpdateWorker
 
 try:
@@ -18437,8 +17901,9 @@ class MainWindow(QMainWindow):
                 True,
             )
             try:
-                from chzzktube.ui.dialogs import TuiNoticeDialog
                 from PySide6.QtWidgets import QWidget
+
+                from chzzktube.ui.dialogs import TuiNoticeDialog
                 # 부모가 유효한 QWidget인지 확인 (테스트 mock 환경 방지)
                 if isinstance(self, QWidget):
                     TuiNoticeDialog(
@@ -18447,7 +17912,7 @@ class MainWindow(QMainWindow):
                         text=f"missing dependencies:\n{', '.join(missing)}\nrestart to auto-provision",
                         ok_label="OK",
                     ).exec()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 다이얼로그 표시 실패는 deps 게이트만 유지
                 pass
             return False
         return True
@@ -19013,7 +18478,7 @@ class MainWindow(QMainWindow):
 
         return _lm.mirror_event_full(self, event, is_status)
 
-    def _mirror_full_log(self, line, is_status=False, component_id: str = None):
+    def _mirror_full_log(self, line, is_status=False, component_id: str | None = None):
         from chzzktube.ui import log_mirror as _lm
 
         return _lm.mirror_full_log(self, line, is_status, component_id)
@@ -19386,7 +18851,8 @@ raw_log 버스에 진행률 이벤트(pct, bar_frac, speed)를 발행한다.
 is_status=False로 히스토리에만 쌓이게 하여 TUI 상태 줄 덮어쓰기 방지.
 """
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
+
 
 class ProgressBar:
     """다운로드 진행률을 추적하고 raw_log에 시각적 진행 바를 발행한다.
@@ -19406,16 +18872,16 @@ class ProgressBar:
     def __init__(
         self,
         component: str,
-        log_func: Optional[Callable] = None,
+        log_func: Callable | None = None,
         *,
-        total: Optional[int] = None,
+        total: int | None = None,
         label: str = "",
     ):
         self.component = component
         self.log_func = log_func
         self.total = total
         self.label = label or component
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
         self._last_update: float = 0
         self._last_downloaded: int = 0
         self._finished = False
@@ -19441,9 +18907,7 @@ class ProgressBar:
             return
 
         now = time.monotonic()
-        if self.total is None:
-            self.total = total
-        elif total != self.total:
+        if self.total is None or total != self.total:
             self.total = total
 
         # Rate limit: minimum time interval OR minimum percentage delta
@@ -19529,24 +18993,26 @@ class ProgressBar:
             return f"{int(seconds // 60)}m {int(seconds % 60)}s"
         else:
             return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.core.log_emitter import emit_progress
+
+
 class ProgressManager:
     """다중 ProgressBar를 관리하는 컨텍스트 매니저.
 
     여러 동시 다운로드의 진행 바를 각각 독립적으로 관리한다.
     """
 
-    def __init__(self, log_func: Optional[Callable] = None):
+    def __init__(self, log_func: Callable | None = None):
         self.log_func = log_func
         self._bars: dict[str, ProgressBar] = {}
 
-    def create(self, component: str, *, total: Optional[int] = None, label: str = "") -> ProgressBar:
+    def create(self, component: str, *, total: int | None = None, label: str = "") -> ProgressBar:
         bar = ProgressBar(component, log_func=self.log_func, total=total, label=label)
         self._bars[component] = bar
         return bar
 
-    def get(self, component: str) -> Optional[ProgressBar]:
+    def get(self, component: str) -> ProgressBar | None:
         return self._bars.get(component)
 
     def remove(self, component: str):
@@ -19905,21 +19371,20 @@ MainWindow Layer 2(URL 입력, 프롬프트, 디바운스 타이머, TXT 로드,
 """
 import os
 import re
-from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, QTimer, QEvent
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QFileDialog,
     QWidget,
 )
 
-from chzzktube.ui import theme
 from chzzktube.control.gate_state import AppState
+from chzzktube.ui import theme
 
 _ANALYZE_DEBOUNCE_MS = 300
 _BULK_INPUT_DELAY_MS = 600
@@ -19956,7 +19421,7 @@ class ActionBarWidget(QGroupBox):
     esc_requested = Signal()
     load_txt_requested = Signal(str)
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__("", parent)
         self.setObjectName("input_group")
         self.setProperty("class", "tui-panel")
@@ -20038,7 +19503,7 @@ class ActionBarWidget(QGroupBox):
     def clear(self) -> None:
         self.url_input.clear()
 
-    def _set_validation_style(self, status: Optional[str]) -> None:
+    def _set_validation_style(self, status: str | None) -> None:
         """입력값 유효성에 따른 시각적 피드백 (Soft Warning / Normal)."""
         if status == "invalid":
             self.url_input.setStyleSheet(f"border-bottom: 2px solid {theme.WARN};")
@@ -20151,20 +19616,20 @@ class ActionBarWidget(QGroupBox):
 MainWindow Layer 1을 단일 책임 위젯으로 분리하고 Qt Signal을 통해 느슨하게 결합한다.
 """
 import os
-from typing import Optional
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QFileDialog,
     QSizePolicy,
     QWidget,
 )
 
-from chzzktube.ui import theme
 from chzzktube.core.utils import _open_windows_explorer
+from chzzktube.ui import theme
 
 
 def _create_tui_tag(text: str, tooltip: str, slot=None) -> QPushButton:
@@ -20189,7 +19654,7 @@ class HeaderBarWidget(QGroupBox):
     toggle_log_requested = Signal()
     open_settings_requested = Signal()
 
-    def __init__(self, cfg: Optional[dict] = None, parent: Optional[QWidget] = None):
+    def __init__(self, cfg: dict | None = None, parent: QWidget | None = None):
         super().__init__("", parent)
         self.cfg = cfg if cfg is not None else {}
         self.setObjectName("header_group")
@@ -20288,12 +19753,9 @@ class HeaderBarWidget(QGroupBox):
 - [계층] L1 Worker Thread — controller에서 직접 생성, log_full 시그널은
   log_console 경유로 View에 전달.
 """
-import os
 import re
-import subprocess
-import sys
-import time
-import urllib.request
+from typing import ClassVar
+
 import yt_dlp
 
 # 네임스페이스 패키지 대응: yt_dlp.YoutubeDL 또는 yt_dlp.main.YoutubeDL에서 import
@@ -20320,22 +19782,12 @@ except AttributeError:
 
 from PySide6.QtCore import QThread, Signal
 
-from chzzktube.core.watchdog import ANALYSIS_TIMEOUT_SEC
-from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api, ChzzkAuthError
-from chzzktube.core.log_emitter import format_kv_line, format_tree_item
-from chzzktube.core.media import (
-    audio_spec,
-    cli_format_desc,
-    format_bytes,
-    format_dropdown_label,
-    get_audio_codec_rank,
-    get_video_codec_rank,
-    short_codec,
-    codec_detail,
+from chzzktube.core.chzzk_api import (
+    ChzzkAuthError,
+    analyze_chzzk_clip_api,
+    analyze_chzzk_live_api,
+    analyze_chzzk_vod_api,
 )
-from chzzktube.core.utils import clean_ansi, get_filename_template
-from chzzktube.core.dl_platform import detect_content_type
-from chzzktube.core.playlist import normalize_youtube_channel_url
 from chzzktube.core.client_opts import (
     _apply_client_opts,
     _apply_cookie_opts,
@@ -20345,8 +19797,17 @@ from chzzktube.core.client_opts import (
     _apply_pot_opts,
     _dedupe_by_label,
 )
-from chzzktube.infra.po_client import extract_video_id
+from chzzktube.core.dl_platform import detect_content_type
+from chzzktube.core.media import (
+    format_dropdown_label,
+    get_audio_codec_rank,
+    get_video_codec_rank,
+)
+from chzzktube.core.playlist import normalize_youtube_channel_url
+from chzzktube.core.utils import clean_ansi
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
+from chzzktube.infra.po_client import extract_video_id
+
 
 class AnalyzeWorker(QThread):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 시그널 폐기.
@@ -20369,7 +19830,9 @@ class AnalyzeWorker(QThread):
     # [순정 위임] yt-dlp 순정 클라이언트 로테이션 완전 위임 (web_embedded → tv_downgraded → web_safari → mweb → tv...)
     # 앱 레벨 수동 로테이션 제거 — 단일 auto 호출로 순정이 알아서 최적 클라 선택 + EJS 솔버 작동
     # PO token 필요 시(age-gate/봇체크) 동일 호출에 token만 주입
-    _RETRY_CLIENTS = []  # 사용 안 함 — 순정 위임
+    # RUF012: 테스트가 `_RETRY_CLIENTS == []` 계약을 단언하므로 유지 —
+    # 추후 계약 테스트 제거 시 함께 삭제할 것.
+    _RETRY_CLIENTS: ClassVar[list] = []  # 사용 안 함 — 순정 위임
 
     @staticmethod
     def _is_bot_block(ex):
@@ -20401,8 +19864,8 @@ class AnalyzeWorker(QThread):
         [회전 정책] 사용자가 특정 클라이언트를 지정했으면 그 값 하나만
         시도하고 자동 회전하지 않는다(auto일 때만 ios→tv). 회전 흔적은
         상세 로그(F12)에만 남기고 간결 로그는 조용히 유지한다.
+        upstream client 선택은 _apply_client_opts(forced=None)에 위임한다.
         """
-        configured = str(self.cfg.get("yt_player_client", "auto") or "auto")
         base = {
             "logger": self.logger,
             "skip_download": True,
@@ -20437,18 +19900,16 @@ class AnalyzeWorker(QThread):
             pot_client = "web" if _has_configured_cookies(self.cfg) else "web_embedded"
             _apply_pot_opts(ydl_opts, video_id, client=pot_client)
 
-        try:
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-            # 순정이 실제 사용한 클라는 extractor_args에 기록되지 않으므로
-            # client_used는 "auto"로 남김 — 다운로드 단계도 auto로 위임
-            self.client_used = "auto"
-            return info
-        except Exception as e:
-            raise e
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        # 순정이 실제 사용한 클라는 extractor_args에 기록되지 않으므로
+        # client_used는 "auto"로 남김 — 다운로드 단계도 auto로 위임
+        # (예외를 삼키지 않고 그대로 상승 — 호출자 run()의 원인 분류가 처리)
+        self.client_used = "auto"
+        return info
 
     def run(self):
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         raw_log.raw("analyze", f"--- [format analysis start] {self.target_url} ---")
         # 분석 시작 통보 — 뷰 워치독 수명 연장
         self.activity.emit()
@@ -20630,7 +20091,7 @@ class AnalyzeWorker(QThread):
                     )
                 else:
                     self.error_occurred.emit("media info fail")
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001 — 분석 실패는 원인 분류 후 error_occurred 발행
             ex_str = str(ex).lower()
             if (
                 "sign in to confirm your age" in ex_str
@@ -20683,10 +20144,10 @@ import chzzktube.pipeline.progress_emitter as _pe
 import chzzktube.pipeline.target_downloader as _td
 from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.log_emitter import emit_error_warn
 from chzzktube.core.speed_window import SpeedWindow
 from chzzktube.core.watchdog import GATE_TIMEOUT_SEC, LivenessWatchdog
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
-from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
 
 # [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
 # 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).
@@ -20809,7 +20270,7 @@ class DownloadWorker(QThread):
                 # [v3.8.1] 표준 에러 헬퍼로 변환
                 from chzzktube.core.log_emitter import emit_error_standard
                 raw_log.raw("dl", emit_error_standard("DL", _dl_platform(""), "download failed", message), to_tui=True)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 로그 장애가 종료 통지를 막지 않음
                 pass
 
         try:
@@ -20911,11 +20372,12 @@ class DownloadWorker(QThread):
 """
 import traceback
 
-import chzzktube.infra.updater as updater
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_event import LogEvent
 from PySide6.QtCore import QThread, Signal
+
+from chzzktube.core import raw_log
 from chzzktube.core.log_emitter import emit_component, emit_error_standard
+from chzzktube.core.log_event import LogEvent
+from chzzktube.infra import updater
 
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (
@@ -20949,7 +20411,7 @@ class UpdateWorker(QThread):
                 self._do_upgrade()
             else:
                 self._do_check()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 워커 크래시를 raw 버스 기록 후 정리 발행
             traceback.print_exc()
             raw_log.raw("deps", LogEvent(stage="DEPS", status="FAIL", scope="DEPS",
                                          msg=f"worker crash: {e}", is_error=True), to_tui=True)
@@ -21032,6 +20494,7 @@ class UpdateWorker(QThread):
 
     def _do_upgrade(self):
         import asyncio
+
         from chzzktube.infra.provisioning import ProvisioningManager
 
         # ProvisioningManager 단일 파이프라인으로 ytdlp, ffmpeg, node, bgutil 4개 컴포넌트 일괄 병렬 수급
@@ -21046,7 +20509,7 @@ class UpdateWorker(QThread):
         try:
             # [대역폭 수호] stale_only=True로 이미 정상인 의존성의 불필요한 재수급 차단
             results = asyncio.run(mgr.ensure_all(stale_only=True, channel=self.channel))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 프로비저닝 예외는 raw 버스 + 거부 발행
             import traceback
             raw_log.raw("deps", f"provisioning error: {e}\n{traceback.format_exc()}", is_error=True)
             self.upgrade_done.emit(False, f"provisioning error: {e}")
@@ -21064,4 +20527,200 @@ class UpdateWorker(QThread):
         ok_overall = (len(failed) == 0) and (len(ok) > 0 or len(results) == 0)
         summary = f"{len(ok)} ok, {len(failed)} failed" if failed else f"{len(ok)} components provisioned"
         self.upgrade_done.emit(ok_overall, summary)
+```
+
+## File: tasks\gen_lint_report.py
+
+```python
+"""린트 이슈 목록 리포트 생성기 (읽기 전용 — 소스 코드는 건드리지 않는다).
+
+ruff JSON 출력을 룰별/파일별로 집계해 tasks/lint_report.md 를 만든다.
+
+사용:
+    uv run ruff check chzzktube tests main.py --output-format=json > ruff_src.json
+    uv run python tasks/gen_lint_report.py ruff_src.json
+"""
+from __future__ import annotations
+
+import collections
+import json
+import sys
+from pathlib import Path
+
+# 룰 → (이름, 권장 조치) — 리포트 가독성용
+RULE_NOTES: dict[str, tuple[str, str]] = {
+    "BLE001": ("blind-except", "`except Exception` 광범위 포착 → 구체 예외/사유+noqa"),
+    "S110": ("try-except-pass", "예외를 무음으로 삼킴 → 최소한 진단 1줄 남기기"),
+    "S112": ("try-except-continue", "예외 후 continue → 실패 원인 은폐 여부 검토"),
+    "PLR0402": ("manual-from-import", "`import x.y as z` → `from x import y`"),
+    "F401": ("unused-import", "미사용 import 제거 (자동 수정 가능)"),
+    "F811": ("redefined-while-unused", "이름 재정의 — 앞 정의가 죽은 코드"),
+    "F841": ("unused-variable", "미사용 지역 변수 제거"),
+    "F823": ("undefined-local", "지역변수 참조 오류 — 실제 버그 가능성 높음"),
+    "I001": ("unsorted-imports", "import 블록 정렬 (자동 수정 가능)"),
+    "UP045": ("non-pep604-annotation-optional", "`Optional[X]` → `X | None`"),
+    "UP035": ("deprecated-import", "deprecated 모듈 import → 신규 위치"),
+    "UP006": ("non-pep585-annotation", "`typing.List` 등 → `list` 내장 제네릭"),
+    "UP012": ("unnecessary-encode-utf8", "`.encode('utf-8')` 불필요"),
+    "UP022": ("replace-stdout-stderr", "`Popen(stdout=PIPE)` → `capture_output`"),
+    "PLW1510": ("subprocess-run-without-check", "`subprocess.run`에 `check=` 필요"),
+    "SIM102": ("collapsible-if", "중첩 if 병합 가능"),
+    "SIM114": ("if-with-same-arms", "동일 분기 병합 가능"),
+    "SIM115": ("open-file-with-context-handler", "`open` → `with` 문 사용"),
+    "RUF059": ("unused-unpacked-variable", "unpacking 미사용 변수 → `_` 처리"),
+    "RUF012": ("mutable-class-default", "가변 클래스 기본값 → `ClassVar`"),
+    "RUF013": ("implicit-optional", "암묵적 Optional → 명시적 `| None`"),
+    "RUF100": ("unused-noqa", "불필요한 noqa 제거 (자동 수정 가능)"),
+    "RUF022": ("unsorted-dunder-all", "`__all__` 정렬"),
+    "RUF023": ("unsorted-dunder-slots", "`__slots__` 정렬"),
+    "RUF046": ("unnecessary-cast-to-int", "`int()` 캐스트 불필요"),
+    "RET501": ("unnecessary-return-none", "`return None` 불필요"),
+    "TRY203": ("useless-try-except", "예외 핸들러가 즉시 re-raise → 제거"),
+    "TRY201": ("verbose-raise", "`raise e` → `raise`"),
+    "F541": ("f-string-missing-placeholders", "placeholder 없는 f-string"),
+    "FURB167": ("regex-flag-alias", "`re.I` → `re.IGNORECASE`"),
+    "FURB122": ("for-loop-writes", "for 루프 write → writelines 등"),
+    "PLR1711": ("useless-return", "함수 끝 불필요한 return"),
+    "PIE790": ("unnecessary-placeholder", "불필요한 `pass`/`...`"),
+    "PIE800": ("unnecessary-spread", "불필요한 `**{}` 스프레드"),
+    "PLC0206": ("dict-index-missing-items", "dict 순회 시 `.items()` 사용"),
+    "C408": ("unnecessary-collection-call", "`dict()` → `{}`"),
+    "C402": ("unnecessary-generator-dict", "불필요한 generator→dict"),
+    "DTZ005": ("call-datetime-now-without-tzinfo", "`datetime.now()` tz 미지정"),
+    "FLY002": ("static-join-to-f-string", "`''.join([...])` → f-string"),
+}
+
+# 위험도 등급
+HIGH_RISK = {"F823", "F811", "PLW1510", "SIM115", "RUF012", "DTZ005", "PLC0206", "F841"}
+SILENT_EXC = {"BLE001", "S110", "S112", "TRY203"}
+MECHANICAL = {
+    "I001", "F401", "PLR0402", "UP006", "UP012", "UP035", "UP045",
+    "RUF100", "RUF022", "RUF023", "RET501", "PIE790", "PIE800",
+    "F541", "FURB167", "C408", "RUF046", "PLR1711", "FURB122", "UP022",
+}
+
+
+
+def load(path: str) -> list[dict]:
+    raw = Path(path).read_text(encoding="utf-8-sig")
+    return json.loads(raw)
+
+
+def main() -> int:
+    json_path = sys.argv[1] if len(sys.argv) > 1 else "ruff_src.json"
+    issues = load(json_path)
+
+    by_rule: collections.Counter = collections.Counter(i["code"] for i in issues)
+    by_file: collections.Counter = collections.Counter(i["filename"] for i in issues)
+    combo: dict[tuple[str, str], list[dict]] = collections.defaultdict(list)
+    for it in issues:
+        combo[(it["filename"], it["code"])].append(it)
+
+    total, files = len(issues), len(by_file)
+
+    def bucket(codes: set[str]) -> int:
+        return sum(c for r, c in by_rule.items() if r in codes)
+
+    out: list[str] = []
+    out.append("# Ruff 린트 이슈 전수 목록")
+    out.append("")
+    out.append("읽기 전용 리포트 — 이 문서는 소스를 수정하지 않고 현황만 기록한다.")
+    out.append("")
+    out.append("## 요약")
+    out.append("")
+    out.append(f"- **총 이슈**: {total}건")
+    out.append(f"- **영향 파일**: {files}개")
+    out.append(f"- **룰 종류**: {len(by_rule)}종")
+    out.append("")
+    out.append("### 위험도 분류")
+    out.append("")
+    out.append("| 등급 | 건수 | 의미 |")
+    out.append("|---|---:|---|")
+    out.append(f"| HIGH | {bucket(HIGH_RISK)} | 실제 버그 가능성 (미정의/죽은 코드) |")
+    out.append(f"| SILENT | {bucket(SILENT_EXC)} | 예외 무음 은폐 (디버깅 불가 위험) |")
+    out.append(f"| MECH | {bucket(MECHANICAL)} | 기계적 정리 (자동 수정 가능) |")
+    rest = total - bucket(HIGH_RISK) - bucket(SILENT_EXC) - bucket(MECHANICAL)
+    out.append(f"| 기타 | {rest} | 스타일/관용 개선 |")
+    out.append("")
+    out.append("## 룰별 집계")
+    out.append("")
+    out.append("| 룰 | 건수 | 이름 | 권장 조치 |")
+    out.append("|---|---:|---|---|")
+    for rule, cnt in by_rule.most_common():
+        name, note = RULE_NOTES.get(rule, ("-", "-"))
+        out.append(f"| `{rule}` | {cnt} | {name} | {note} |")
+    out.append("")
+    out.append("## 파일별 집계 (Top 40)")
+    out.append("")
+    out.append("| 파일 | 건수 |")
+    out.append("|---|---:|")
+    for fn, cnt in by_file.most_common(40):
+        out.append(f"| `{fn}` | {cnt} |")
+    out.append("")
+    emit_high_risk(out, issues, by_rule)
+    emit_silent(out, issues)
+    emit_matrix(out, combo, by_file)
+
+    Path("tasks/lint_report.md").write_text("\n".join(out), encoding="utf-8")
+    print(f"wrote tasks/lint_report.md ({total} issues, {files} files)")
+    return 0
+
+
+def emit_high_risk(
+    out: list[str], issues: list[dict], by_rule: collections.Counter
+) -> None:
+    out.append("## HIGH 위험 상세 (실제 버그 후보)")
+    out.append("")
+    if not any(r in HIGH_RISK for r in by_rule):
+        out.append("_없음_")
+        out.append("")
+        return
+    for rule in sorted(HIGH_RISK):
+        if rule not in by_rule:
+            continue
+        name, note = RULE_NOTES.get(rule, ("-", "-"))
+        items = [i for i in issues if i["code"] == rule]
+        out.append(f"### `{rule}` ({name}) — {len(items)}건")
+        out.append("")
+        out.append(note)
+        out.append("")
+        out.append("| 파일 | 행 | 내용 |")
+        out.append("|---|---:|---|")
+        for it in sorted(items, key=lambda i: (i["filename"], i["location"]["row"])):
+            snippet = (it.get("message") or "").replace("|", "\\|")
+            out.append(f"| `{it['filename']}` | {it['location']['row']} | {snippet} |")
+        out.append("")
+
+
+def emit_silent(out: list[str], issues: list[dict]) -> None:
+    out.append("## SILENT 예외 은폐 상세")
+    out.append("")
+    out.append("> `_warn`(platform) 패턴처럼 **삼키되 사유를 남기는** 방식 권장.")
+    out.append("")
+    out.append("| 파일 | 행 | 룰 | 내용 |")
+    out.append("|---|---:|---|---|")
+    silent = [i for i in issues if i["code"] in SILENT_EXC]
+    silent.sort(key=lambda i: (i["filename"], i["location"]["row"]))
+    for it in silent:
+        snippet = (it.get("message") or "").replace("|", "\\|")
+        loc = f"{it['location']['row']}"
+        out.append(
+            f"| `{it['filename']}` | {loc} | `{it['code']}` | {snippet} |"
+        )
+    out.append("")
+
+
+def emit_matrix(out: list[str], combo: dict, by_file: collections.Counter) -> None:
+    out.append("## 파일 × 룰 매트릭스 (이슈 있는 파일 전부)")
+    out.append("")
+    for fn, cnt in by_file.most_common():
+        rules = sorted({r for (f, r) in combo if f == fn})
+        detail = ", ".join(f"`{r}`x{len(combo[(fn, r)])}" for r in rules)
+        out.append(f"- `{fn}` — **{cnt}** : {detail}")
+    out.append("")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
 ```

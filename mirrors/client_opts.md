@@ -15,7 +15,9 @@ def _apply_ffmpeg_opts(opts):
     try:
         from chzzktube.infra.components import ffmpeg_exe
         ffmpeg_path = ffmpeg_exe()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — ffmpeg 해석 실패는 미설치扱이 (옵션 미주입)
+        from chzzktube.core import raw_log
+        raw_log.raw("opts", f"ffmpeg resolver failed: {type(e).__name__}", is_error=True, to_tui=False)
         ffmpeg_path = None
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
@@ -49,13 +51,11 @@ def _apply_post_opts(opts, cfg):
         if not _has("FFmpegEmbedSubtitle"):
             pp.append({"key": "FFmpegEmbedSubtitle", "already_have_subtitle": False})
 
-    if cfg.get("embed_thumbnail"):
-        if not _has("EmbedThumbnail"):
-            pp.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
+    if cfg.get("embed_thumbnail") and not _has("EmbedThumbnail"):
+        pp.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
 
-    if cfg.get("embed_chapters", True):
-        if not _has("FFmpegMetadata"):
-            pp.append({"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": True})
+    if cfg.get("embed_chapters", True) and not _has("FFmpegMetadata"):
+        pp.append({"key": "FFmpegMetadata", "add_chapters": True, "add_metadata": True})
 
     return opts
 
@@ -84,12 +84,11 @@ def _apply_client_opts(opts, cfg, forced=None):
     (web_embedded, tv_downgraded 등)과 내장 EJS JS 솔버를 최우선 존중한다.
     """
     client = str(forced or cfg.get("yt_player_client", "auto") or "auto")
-    if client == "auto":
+    if client == "auto" and forced is None:
         # [핵심 변경] 쿠키 유무와 무관하게 강제 client 지정 없이 yt-dlp 순정
         # 클라이언트 선택 로직과 EJS 솔버가 작동하도록 즉시 반환.
         # forced 인자가 있는 경우(분석/다운로드에서 검증된 클라이언트)만 적용.
-        if forced is None:
-            return opts
+        return opts
     opts.setdefault("extractor_args", {}).setdefault("youtube", {}) \
         .setdefault("player_client", []).append(client)
     return opts
@@ -125,7 +124,7 @@ def _apply_ejs_opts(opts):
             opts.setdefault("js_runtimes", {})
             if "node" not in opts["js_runtimes"]:
                 opts["js_runtimes"]["node"] = {"path": node}
-    except Exception:  # noqa: BLE001 — 탐색 실패 시 기본(deno) 폴백
+    except Exception:  # noqa: BLE001, S110 — 탐색 실패 시 기본(deno) 폴백
         pass
     if "remote_components" not in opts:
         opts["remote_components"] = []

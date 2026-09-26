@@ -15,7 +15,8 @@
 """
 import subprocess
 import threading
-from typing import Iterable, Optional, Protocol
+from collections.abc import Iterable
+from typing import Protocol
 
 
 class ToolLogger(Protocol):
@@ -36,7 +37,7 @@ class LineRunner(Protocol):
 class TokenProvider(Protocol):
     """PO 토큰 공급 형상 — video_id → 토큰 또는 None."""
 
-    def fetch(self, video_id: str) -> Optional[str]: ...
+    def fetch(self, video_id: str) -> str | None: ...
 
 
 def make_ytdlp_logger():
@@ -63,7 +64,7 @@ def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
     반환: (proc, stderr_thread) — 호출부는 stdout 처리 후 proc.wait() +
     stderr_thread.join()으로 마감할 것.
     """
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
     from chzzktube.core.log_event import LogEvent
     from chzzktube.infra.platform import spawn_kwargs
 
@@ -85,53 +86,34 @@ def pump(cmd, tag, stage, scope="-", to_tui=False, cancel=None,
                     break
 
                 try:
-
                     line = raw.decode(encoding, "replace").strip()
-
-                except Exception:
-
+                except (UnicodeDecodeError, LookupError):
                     continue
 
                 if not line:
-
                     continue
 
                 if len(line) > line_budget:
-
                     line = line[:line_budget] + "…"
 
                 try:
-
                     raw_log.raw(
-
                         tag,
-
                         LogEvent(stage=stage, status="OK", scope=scope,
-
                                  msg=line, rendered=True),
-
                         to_tui=bool(to_tui),
-
                     )
-
-                except Exception:
-
+                except Exception:  # noqa: BLE001, S110 — 로그 펌프 중 버스 쓰기 실패는 무시 (프로세스 계속)
                     pass
 
                 if cancel is not None:
-
                     try:
-
                         if cancel():
-
                             break
-
-                    except Exception:
-
+                    except Exception:  # noqa: BLE001, S110 — cancel 콜백 실패 시 취소되지 않은 것으로 간주
                         pass
 
-        except Exception:
-
+        except Exception:  # noqa: BLE001, S110 — stderr reader 스레드 전체 종료 흡수
             pass
     t = threading.Thread(target=_drain, daemon=True)
     t.start()
@@ -143,5 +125,5 @@ def run_cli(label, *args, timeout=15):
 
     절취는 호출부가 updater.truncate_for_full_log로 적재 시점에 수행할 것.
     """
-    import chzzktube.infra.updater as updater
+    from chzzktube.infra import updater
     return updater.cli_raw(label, *args, timeout=timeout)

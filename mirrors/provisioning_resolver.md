@@ -5,10 +5,10 @@
 - 미러 체인: 우선순위 기반 자동 폴백
 - 플랫폼별 asset 필터링: resolver 내부에서 처리
 """
+import sys
 from dataclasses import dataclass
 from enum import Enum
 from typing import Literal
-import sys
 
 
 class ComponentType(Enum):
@@ -98,8 +98,8 @@ def get_platform_asset_filters() -> tuple[str, ...]:
     try:
         import platform as _platform
         machine = _platform.machine().lower()
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — arch 조회 실패는 raw 버스 로깅 후 빈 값 유지
+        from chzzktube.core import raw_log
         raw_log.raw("DEPS", f"get_platform_asset_filters error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     if platform == "darwin":

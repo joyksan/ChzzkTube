@@ -78,7 +78,7 @@ class ConciseLogConsole:
                 self.reflow()
 
     def append(self, msg, is_status=False, is_error=False, fg_color=None, no_wrap=False, 
-           component_id: str = None, is_progress: bool = False):
+           component_id: str | None = None, is_progress: bool = False):
         """빈 줄 생성 차단 및 정밀 문단 삭제 파이프라인.
 
         [진행률 갱신형 계약] 진행률/진행 중 상태 로그는 반드시 is_status=True로

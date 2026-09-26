@@ -306,13 +306,12 @@ def cleanup_temp_files(filepath):
                     ".jpg",
                     ".png",
                 )
-            ):
-                if os.path.exists(target):
-                    try:
-                        os.remove(target)
-                    except Exception:
-                        pass
-    except Exception:
+            ) and os.path.exists(target):
+                try:
+                    os.remove(target)
+                except OSError:
+                    pass
+    except OSError:
         pass
 
 def remux_live_to_container(ts_path, container_setting="mp4"):
@@ -326,14 +325,14 @@ def remux_live_to_container(ts_path, container_setting="mp4"):
     cmd = ["ffmpeg", "-y", "-i", ts_path, "-c", "copy", out_path]
 
     try:
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(cmd, capture_output=True, check=True)
         if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             os.remove(ts_path)
             return out_path
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — remux 실패는 raw 버스 로깅
         # [증거 남김] windowed 빌드에선 print가 소멸하므로 히스토리에 기록 —
         # 임시 ts는 실패 시 보존되므로 사용자가 재시도할 수 있다.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "media",

@@ -14,10 +14,10 @@ import chzzktube.pipeline.progress_emitter as _pe
 import chzzktube.pipeline.target_downloader as _td
 from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.core.log_emitter import emit_error_warn
 from chzzktube.core.speed_window import SpeedWindow
 from chzzktube.core.watchdog import GATE_TIMEOUT_SEC, LivenessWatchdog
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
-from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
 
 # [플러그인 기생 차단] analyze_worker.py와 동일 사유. 값 대입은 idempotent라
 # 모듈 로딩 순서와 무관하게 안전 (첫 YoutubeDL 생성 전 1회 유효하면 된다).
@@ -140,7 +140,7 @@ class DownloadWorker(QThread):
                 # [v3.8.1] 표준 에러 헬퍼로 변환
                 from chzzktube.core.log_emitter import emit_error_standard
                 raw_log.raw("dl", emit_error_standard("DL", _dl_platform(""), "download failed", message), to_tui=True)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 로그 장애가 종료 통지를 막지 않음
                 pass
 
         try:

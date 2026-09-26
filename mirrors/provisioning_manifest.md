@@ -4,10 +4,8 @@ writable_base()/provision_manifest.json에 저장.
 모든 구성요소의 버전/출처/경로/검증시점 영구 기록.
 """
 import json
-import time
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -46,8 +44,8 @@ class ProvisionManifest:
                     last_check=data.get("last_check", 0),
                     last_full_update=data.get("last_full_update", 0),
                 )
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 매니페스트 손상 시 raw 버스 로깅 후 기본값
+                from chzzktube.core import raw_log
                 raw_log.raw("DEPS", f"manifest load error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return cls()
 
@@ -64,7 +62,7 @@ class ProvisionManifest:
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
 
-    def is_stale(self, name: str, latest_version: str, base_dir: Optional[Path] = None) -> bool:
+    def is_stale(self, name: str, latest_version: str, base_dir: Path | None = None) -> bool:
         """manifest 버전 vs 최신 버전 비교 및 디스크 실존 확인."""
         rec = self.components.get(name)
         if not rec:
@@ -77,7 +75,7 @@ class ProvisionManifest:
                 return True
         return False
 
-    def get_record(self, name: str) -> Optional[ComponentRecord]:
+    def get_record(self, name: str) -> ComponentRecord | None:
         return self.components.get(name)
 
     def update_component(self, record: ComponentRecord) -> None:

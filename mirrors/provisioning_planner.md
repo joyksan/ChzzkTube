@@ -3,24 +3,25 @@
 ProvisioningManager에서 resolve 로직을 분리한 순수 플래너.
 미러 체인에서 최신 버전/URL/sha256 조회 → ProvisionPlan 리스트 생성.
 """
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional
 import asyncio
 import json
 import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
 
-from chzzktube.core import config
-from chzzktube.infra.provisioning.resolver import (
-    ComponentSpec, ComponentType, MIRROR_REGISTRY, filter_assets,
-)
-from chzzktube.infra.provisioning.manifest import ProvisionManifest
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.raw_log import log_f12_net
+from chzzktube.core import config, raw_log
 from chzzktube.core.log_emitter import emit_component
+from chzzktube.core.raw_log import log_f12_net
+from chzzktube.infra.provisioning.manifest import ProvisionManifest
+from chzzktube.infra.provisioning.resolver import (
+    MIRROR_REGISTRY,
+    ComponentSpec,
+    ComponentType,
+    filter_assets,
+)
 
 
 @dataclass
@@ -30,7 +31,7 @@ class ProvisionPlan:
     mirror_name: str
     version: str
     download_url: str
-    expected_sha256: Optional[str]
+    expected_sha256: str | None
     install_path: Path
     is_update: bool
     archive_type: str  # "whl", "zip", "tar.gz", "tar.xz", "server"
@@ -58,14 +59,14 @@ class Planner:
             component_id=component_id, is_progress=is_progress,
         )
 
-    async def _fetch_json(self, url: str, *, headers: Optional[dict[str, str]] = None):
+    async def _fetch_json(self, url: str, *, headers: dict[str, str] | None = None):
         """Worker thread에서 동기 urllib JSON 요청을 수행한다."""
         return await asyncio.to_thread(self._fetch_json_sync, url, headers)
 
     @staticmethod
     def _fetch_json_sync(
-        url: str, headers: Optional[dict[str, str]] = None
-    ) -> Optional[dict | list]:
+        url: str, headers: dict[str, str] | None = None
+    ) -> dict | list | None:
         log_f12_net(f"HTTP GET {url}")
         request = urllib.request.Request(url, headers=headers or {})
         try:
@@ -75,12 +76,12 @@ class Planner:
             log_f12_net(f"HTTP GET failed ({url}): {e}", is_error=True)
             return None
 
-    async def _fetch_text(self, url: str) -> Optional[str]:
+    async def _fetch_text(self, url: str) -> str | None:
         """Worker thread에서 동기 urllib 텍스트 요청을 수행한다."""
         return await asyncio.to_thread(self._fetch_text_sync, url)
 
     @staticmethod
-    def _fetch_text_sync(url: str) -> Optional[str]:
+    def _fetch_text_sync(url: str) -> str | None:
         log_f12_net(f"HTTP GET {url}")
         request = urllib.request.Request(url, headers={"User-Agent": "ChzzkTube-Provisioner/1.0"})
         try:
@@ -112,11 +113,10 @@ class Planner:
                 if result and result[0] and result[1]:
                     log_f12_net(f"resolved {spec.name}: v{result[0]} via {result[3]} -> {result[1]}")
                     return result
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 개별 미러 조회 실패는 다음 미러로 폴백
+                from chzzktube.core import raw_log
                 raw_log.raw("DEPS", f"_fetch_latest mirror {mirror.name} error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 log_f12_net(f"mirror {mirror.name} query error for {spec.name}: {e}", is_error=True)
-                pass
         return None, None, None, None, None
 
     async def _fetch_from_homebrew(self, spec, mirror):
@@ -140,7 +140,7 @@ class Planner:
 
         try:
             darwin_major = int(_platform.release().split(".")[0])
-        except Exception:
+        except (ValueError, IndexError):  # 빌드 번호 판정 실패 시 기본값(sequoia=24)
             darwin_major = 24
 
         _BUILD_ORDERS = (
@@ -262,7 +262,7 @@ class Planner:
         sha256 = await self._fetch_nodejs_sha256(ver, url)
         return ver, url, sha256, "nodejs.org", archive_type
 
-    async def _fetch_nodejs_sha256(self, version: str, download_url: str) -> Optional[str]:
+    async def _fetch_nodejs_sha256(self, version: str, download_url: str) -> str | None:
         """nodejs.org SHASUMS256.txt에서 특정 버전/플랫폼 파일의 SHA256 조회."""
         # SHASUMS256.txt URL 구성
         shasums_url = f"https://nodejs.org/dist/{version}/SHASUMS256.txt"
@@ -281,8 +281,8 @@ class Planner:
                 parts = line.split()
                 if len(parts) >= 2 and parts[1] == filename:
                     return parts[0]
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — SHASUMS 조회 실패는 None (무검증 채택 금지)
+            from chzzktube.core import raw_log
             raw_log.raw("DEPS", f"_fetch_nodejs_sha256 error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 

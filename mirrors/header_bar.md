@@ -3,20 +3,20 @@
 MainWindow Layer 1을 단일 책임 위젯으로 분리하고 Qt Signal을 통해 느슨하게 결합한다.
 """
 import os
-from typing import Optional
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QFileDialog,
     QSizePolicy,
     QWidget,
 )
 
-from chzzktube.ui import theme
 from chzzktube.core.utils import _open_windows_explorer
+from chzzktube.ui import theme
 
 
 def _create_tui_tag(text: str, tooltip: str, slot=None) -> QPushButton:
@@ -41,7 +41,7 @@ class HeaderBarWidget(QGroupBox):
     toggle_log_requested = Signal()
     open_settings_requested = Signal()
 
-    def __init__(self, cfg: Optional[dict] = None, parent: Optional[QWidget] = None):
+    def __init__(self, cfg: dict | None = None, parent: QWidget | None = None):
         super().__init__("", parent)
         self.cfg = cfg if cfg is not None else {}
         self.setObjectName("header_group")

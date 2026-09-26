@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-26 - v3.12.3 — Windows 의존성 정합성 루프 정비·다운로드 진행률 규격 개편·F12 터미널 원문 로깅 체계 구축
+> 마지막 갱신: 2026-09-26 - v3.12.4 — pot_server DEFAULT_HOST re-export 누락 회귀 복구·POT 워커 크래시 F12 추적 보강·에러 버스 배선 안정화
 ---
 ## 목차
 
@@ -55,7 +55,7 @@
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.12.3` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.12.3"` (최신: 2026-09-26 Windows 의존성 정합성 루프 정비·다운로드 진행률 규격 개편·F12 터미널 원문 로깅 체계 구축)
+- **버전**: `v3.12.4` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.12.4"` (최신: 2026-09-26 pot_server DEFAULT_HOST re-export 누락 회귀 복구·POT 워커 크래시 F12 추적 보강·에러 버스 배선 안정화)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -734,6 +734,10 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
     - 그러나 GUI 뷰(`VerboseLogWindow`) 및 메모리 링 버퍼(`_full_log_buf`)에서 다운로드 진행률 틱(`is_status=True` 또는 `component_id` 보유)을 단순 개행으로 무차별 적재하는 행위는 엄격히 금지함.
     - F12 창이 열려 있을 때는 `win.append(..., component_id)`를 통한 실시간 제자리 치환을, 창이 닫혀 있을 때는 `_full_log_buf`의 상태 줄 스냅샷 치환을 강제하여 F12 오픈 시 수천 줄의 게이지 잔해가 덤프되는 뷰 폭발을 방지해야 함.
 
+- [ ] 34. **re-export 심볼 보존 및 F401 린트 자동 삭제 금지 (v3.12.4)**: 하위 모듈이 타 계층 심볼(예: `pot_server.py`의 `DEFAULT_HOST`, `DEFAULT_PORT`)을 재수출하는 경우 `__all__`을 명시하여 F401 자동 삭제로 인한 `ImportError` 런타임 크래시를 원천 차단. 호출부는 가급적 원천 모듈(`po_client.py`)을 직접 import.
+- [ ] 35. **워커 스레드 예외의 F12 Traceback 강제 발행 (v3.12.4)**: `_POTWorker` 등 QThread의 `run()` 최상위 예외 블록(`except Exception`)에서 예외 문자열만 `outcome`에 격리하고 버스에 남기지 않는 은폐 패턴 절대 금지. 반드시 F12 전용 채널(`log_f12_cli`, `raw_log.raw` 등)로 전체 Traceback을 물리적으로 발행해 진단성 유지.
+- [ ] 36. **스폰 인자 딕셔너리 방어적 초기화 (v3.12.4)**: `daemon_spawn_kwargs` 등 플랫폼 HAL에서 옵션(`use_no_window=False`)에 따라 빈 dict가 반환될 수 있으므로, OS 종속 키 조작 시 `kw["creationflags"] |= ...`가 아닌 `kw["creationflags"] = kw.get("creationflags", 0) | ...` 방어적 패턴을 강제하여 `KeyError` 방지.
+
 ## 14. 하지 말 것 (회귀 방지)
 
 - [ ] ❌ `state/cfg` 딕셔너리를 복사해서 워커에 넘기는 것
@@ -760,6 +764,9 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - [ ] ❌ **표준 에러 헬퍼에 임의 문자열을 넘겨 `unknown error`로 뭉개는 것**: `emit_error_warn` 등에 정규화 규격에 없는 문장을 던져 TUI를 오염시키지 말고, 허용된 표준 키워드(`binary incompatible` 등)만 엄격히 사용할 것.
 - [ ] ❌ **'전량 기록'을 핑계로 F12 뷰에 수천 줄의 진행 틱을 개행 누적하는 것**: 디스크 파일 기록과 GUI 뷰 렌더링을 혼동하여 F12 창을 쓸모없는 게이지 바 폭포수로 마비시키는 행위 전면 금지.
 - [ ] ❌ **'제자리 갱신'을 핑계로 CLI/네트워크 감사 원문을 파일에서 누락하는 것**: 화면을 정돈하겠답시고 `$ cmd` 실행문이나 HTTP 요청 원문 자체를 발행 단계에서 드롭시키는 행위 금지.
+- [ ] ❌ **F401 린트 자동 수정 후 런타임 import 테스트 없이 커밋**: re-export 전용 심볼이 Ruff/린터의 unused import 제거(`--fix`)로 삭제되어 실행 시 `ImportError` 크래시를 유발하는 참사 방지.
+- [ ] ❌ **QThread `run()` 예외 은폐 및 무음 크래시**: 워커 스레드의 최상위 예외 핸들러에서 에러를 내부 변수(`outcome`)에만 담고 F12 로깅 없이 조용히 종료하여 디버깅을 불가능하게 만드는 것.
+- [ ] ❌ **플랫폼 스폰 딕셔너리의 무방비 키 접근 (`kw['creationflags']`)**: 플랫폼별 옵션에 따라 키가 존재하지 않을 수 있으므로 `.get()` 없이 직접 인덱싱하여 `KeyError`로 자식 프로세스 생성을 무너뜨리는 것.
 
 ## 15. 검증 워크플로우
 

@@ -23,14 +23,13 @@ import os
 import re
 import time
 
-from chzzktube.core.log_emitter import (
-    emit_event,
-    emit_dl,
-)
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.media import cli_format_desc, format_bytes
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.core.watchdog import LivenessWatchdog
+from chzzktube.core.log_emitter import (
+    emit_dl,
+    emit_event,
+)
+from chzzktube.core.media import cli_format_desc, format_bytes
 
 
 def _dl_spec(ctx):
@@ -84,8 +83,6 @@ def emit_progress_tick(ctx, d):
     speed_s = f"{format_bytes(rate)}/s" if rate else "-"
 
     pct = (done / total * 100.0) if total else 0.0
-    # 제목은 이미 ANAL 단계에서 표시되었으므로 제외 (중복 방지)
-    title = ""
 
     raw_log.raw(
         "dl",
@@ -141,13 +138,13 @@ def pp_hook(ctx, d):
     중복 방지: 이미 발행한 경로는 재발행하지 않는다 (ctx._pp_last_file).
     """
     if not isinstance(d, dict) or d.get("status") != _PP_FINAL_STATUS:
-        return None
+        return
     info = d.get("info_dict") or {}
     final = info.get("filepath") or info.get("_filename") or ""
     if not final or _is_intermediate_stream(os.path.basename(final)):
-        return None
+        return
     if getattr(ctx, "_pp_last_file", None) == final:
-        return None
+        return
     ctx._pp_last_file = final
     size = os.path.getsize(final) if os.path.exists(final) else 0
     raw_log.raw(

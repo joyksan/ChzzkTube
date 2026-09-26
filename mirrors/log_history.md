@@ -17,10 +17,13 @@ KEEP_DAYS = 30
 _LOCK = threading.Lock()
 
 def _now():
-    return datetime.datetime.now()
+    # 로그 타임스탬프는 로컬 타임존 aware로 — naive와 포맷 출력은 동일하고,
+    # DST 경계 등에서 파일명/정리 cutoff 비교가 모호해지는 것을 방지한다.
+    # (dialogs.py의 파일명 미리보기와 동일한 패턴)
+    return datetime.datetime.now().astimezone()
 
 def _log_path(now):
-    import chzzktube.core.config as config
+    from chzzktube.core import config
     return os.path.join(config.LOG_DIR, f"chzzktube_{now:%Y-%m-%d}.log")
 
 def log(msg, level="INFO", **kwargs):
@@ -36,11 +39,8 @@ def log(msg, level="INFO", **kwargs):
             path = _log_path(now)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "a", encoding="utf-8") as f:
-                for l in lines:
-                    f.write(
-                        f"[{now:%Y-%m-%d %H:%M:%S}] [{level:<5}] {l}\n"
-                    )
-    except Exception:
+                f.writelines(f"[{now:%Y-%m-%d %H:%M:%S}] [{level:<5}] {l}\n" for l in lines)
+    except Exception:  # noqa: BLE001, S110 — 히스토리 기록 실패가 앱을 죽이지 않도록 흡수
         pass  # 히스토리 기록 실패가 앱을 죽이지 않도록 흡수
 
 def session_begin(app_name, app_version):
@@ -69,14 +69,14 @@ def exception(tag, t=None, v=None, tb=None):
         t, v, tb = sys.exc_info()
     try:
         body = "".join(traceback.format_exception(t, v, tb) or []).strip()
-    except Exception:
+    except Exception:  # noqa: BLE001 — 트레이스백 포맷 실패 시 단순 문자열 폴백
         body = f"{t}: {v}"
     log(f"[{tag}]\n{body}", "ERROR")
 
 def _prune():
     """KEEP_DAYS 초과 히스토리 파일 삭제 (세션 시작 시 1회)."""
     try:
-        import chzzktube.core.config as config
+        from chzzktube.core import config
         d = config.LOG_DIR
         cutoff = (_now() - datetime.timedelta(days=KEEP_DAYS)).timestamp()
         with _LOCK:
@@ -91,5 +91,5 @@ def _prune():
                         os.remove(p)
                 except OSError:
                     pass
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — 오래된 로그 정리 실패는 무시
         pass

@@ -1,7 +1,5 @@
 ### 유틸리티 및 코어 로직
-import os
 import re
-import subprocess
 
 # Python 3.11+의 FutureWarning (nested set) 방지를 위해 대괄호 이스케이프 정밀화 적용
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\-_]|\[[0-?]*[ -/]*[@-~])")

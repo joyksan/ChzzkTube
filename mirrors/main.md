@@ -18,7 +18,7 @@ _PYLIB_PATH = _pylib_bootstrap.bootstrap()
 # 앱 기동 시 이전 세션 잔재 정리
 _cleanup.cleanup_on_startup()
 
-from chzzktube.ui.main_window import main  # noqa: E402
+from chzzktube.ui.main_window import main
 
 if __name__ == "__main__":
     sys.exit(main())

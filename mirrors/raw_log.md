@@ -11,14 +11,13 @@
 파일 I/O와 구독자 호출은 단일 dispatcher 스레드에서 순차 처리하며,
 구독자 콜백은 dispatcher lock을 잡지 않은 상태에서 호출한다.
 """
-from collections import deque
 import queue
 import threading
 import time
-from typing import Callable
+from collections import deque
+from collections.abc import Callable
 
 from chzzktube.core.log_event import LogEvent
-
 
 MAX_QUEUE = 2048
 MAX_FULL_EVENTS = 4096
@@ -65,7 +64,7 @@ class _RawDispatcher:
         try:
             from chzzktube.core import log_history
             log_history.log(f"[raw-log] {_HISTORY_SUMMARY}", level="WARN")
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 버스 오버플로 기록 중 히스토리 실패는 격리
             pass
         event = LogEvent(
             stage="SYS",
@@ -87,7 +86,7 @@ class _RawDispatcher:
                 continue
             try:
                 self._dispatch(event, to_tui)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 개별 디스패치 예외가 러너 스레드를 죽이지 않음
                 # A subscriber must never kill the log pipeline.
                 pass
             finally:
@@ -95,12 +94,12 @@ class _RawDispatcher:
 
     def _dispatch(self, event: LogEvent, to_tui: bool) -> None:
         try:
-            import chzzktube.core.log_history as log_history
+            from chzzktube.core import log_history
             log_history.log(
                 f"[{getattr(event, 'tag', 'raw')}] {event.msg}",
                 level="ERROR" if event.is_error else "INFO",
             )
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 파일 히스토리 쓰기 실패가 구독자 전달을 막지 않음
             pass
 
         with self._lock:
@@ -114,9 +113,9 @@ class _RawDispatcher:
             except TypeError:
                 try:
                     fn(event)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 — 개별 구독자 실패는 다른 구독자 전달 방해 금지
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 구독자 버그로부터 디스패처 스레드 보호
                 pass
         for fn in concise_subs:
             try:
@@ -124,9 +123,9 @@ class _RawDispatcher:
             except TypeError:
                 try:
                     fn(event)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 — 개별 구독자 실패는 다른 구독자 전달 방해 금지
                     pass
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 구독자 버그로부터 디스패처 스레드 보호
                 pass
 
     def shutdown(self, timeout: float = 1.0) -> None:
@@ -196,19 +195,21 @@ def flush(timeout: float = 1.0) -> None:
 def shutdown(timeout: float = 1.0) -> None:
     _dispatcher.shutdown(timeout)
 
-def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str = "deps-cli"):
+def log_f12_cli(cmd: str | None = None, output: str | None = None, is_error: bool = False,
+                tag: str = "deps-cli", stage: str = "DEPS", scope: str = "CLI"):
     """F12 상세로그 전용 CLI 실행 결과 발행 ($ cmdline + 원문 출력).
 
     - to_tui=False 강제: 메인 TUI 콘솔 오염을 완벽히 차단
     - truncate_for_full_log 적용: 최대 6줄, 160자 제한
     """
-    if not cmd:
+    if cmd == "":
         return
-    raw(
-        tag,
-        LogEvent(stage="DEPS", status="RUN", scope="CLI", msg=f"$ {cmd}", is_error=is_error, rendered=True),
-        to_tui=False,
-    )
+    if cmd:
+        raw(
+            tag,
+            LogEvent(stage=stage, status="RUN", scope=scope, msg=f"$ {cmd}", is_error=is_error, rendered=True),
+            to_tui=False,
+        )
     if output:
         from chzzktube.infra.updater import truncate_for_full_log
         clean_out = truncate_for_full_log(output, max_lines=6, max_width=160)
@@ -216,9 +217,9 @@ def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str =
             raw(
                 tag,
                 LogEvent(
-                    stage="DEPS",
+                    stage=stage,
                     status="FAIL" if is_error else "OK",
-                    scope="CLI",
+                    scope=scope,
                     msg=line,
                     is_error=is_error,
                     rendered=True,

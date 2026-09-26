@@ -12,7 +12,6 @@ import time
 
 from chzzktube.core.utils import clean_ansi
 
-
 _PROGRESS_RE = re.compile(r"^\s*\[download\].*?(\d+(?:\.\d+)?)%(?:\s|$)")
 _MERGE_TEXT = "Merging formats into"
 _ALREADY_DOWNLOADED = "has already been downloaded"
@@ -41,7 +40,7 @@ class YtLoggerBridge:
                 return
             self._last_progress = msg
             self._last_progress_at = now
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "ytdlp",
@@ -56,7 +55,7 @@ class YtLoggerBridge:
         )
 
     def _emit_non_progress(self, clean_msg: str, level: str) -> None:
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         status = {
             "warning": "WARN",

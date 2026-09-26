@@ -1,6 +1,5 @@
 ##### target_downloader/youtube_vod.py - 유튜브 VOD 다운로드 (yt-dlp)
 """YouTube VOD 다운로드 — yt-dlp 기반, 품질 우선 폴백 + PO 토큰 주입."""
-import os
 import time
 
 import yt_dlp
@@ -16,22 +15,19 @@ except AttributeError:
         class YtDownloadError(Exception):
             pass
 
+from chzzktube.core import raw_log
+from chzzktube.core.log_emitter import emit_event
+from chzzktube.pipeline.target_downloader.options import (
+    _format_selector,
+    _make_ytdl_opts,
+)
 from chzzktube.pipeline.target_downloader.utils import (
-    _WATCHDOG_HEARTBEAT_INTERVAL,
-    _FormatQualityLoss,
     _emit_error_log,
     _emit_skip_log,
-    _extract_yt_id,
-    _is_retryable_bot_error,
+    _FormatQualityLoss,
     _has_configured_cookies,
+    _is_retryable_bot_error,
 )
-from chzzktube.pipeline.target_downloader.options import _make_ytdl_opts, _format_selector
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
-
 
 # 품질 우선 폴백 체인 (v3.8.0): web → web_safari → ios → tv
 _QUALITY_CLIENT_CHAIN = ("web", "web_safari", "ios", "tv")
@@ -57,9 +53,7 @@ def _ensure_pot_server_ready(ctx, timeout=60.0) -> bool:
         True  : 서버가 /ping에 응답 (PO 토큰 패칭 가능)
         False : 미준비/타임아웃 — 호출부는 PO 없이 진행 여부를 판단한다
     """
-    import time
     import chzzktube.pipeline.progress_emitter as _pe
-
     from chzzktube.infra.po_client import server_ping
 
     def _alive():
@@ -80,14 +74,16 @@ def _ensure_pot_server_ready(ctx, timeout=60.0) -> bool:
         if wd is not None:
             try:
                 wd.heartbeat()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 워치독 하트비트 실패는 무시 (POT 준비 계속)
                 pass
 
     try:
         from chzzktube.infra.pot_server import (
-            _spawn_existing, acquire_prewarm_lock, built_server_js,
-            ensure_node_server, release_prewarm_lock, server_home,
-            _SERVER_FALLBACK_VER,
+            _spawn_existing,
+            acquire_prewarm_lock,
+            built_server_js,
+            ensure_node_server,
+            release_prewarm_lock,
         )
     except Exception as ex:  # noqa: BLE001 — 인프라 import 실패 시 PO 없이 진행
         _log(f"pot infra unavailable ({type(ex).__name__})")

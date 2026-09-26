@@ -95,14 +95,8 @@ class StartupCoordinator(QObject):
             # [HANDOVER §9.4] prewarm 완료(staged) 및 gate 완료(ready) 시 pot_ready=True 승격
             ready = ok and status in ("ready", "staged")
             self._state.set_pot(status, ready=ready)
-            if not ok:
-                # [v3.8.1] POT 실패 시 표준 에러 헬퍼 사용
-                from chzzktube.core.log_emitter import emit_error_standard
-                raw_log.raw(
-                    "startup",
-                    emit_error_standard("POT", "POT", "server failed", "check logs (F12)"),
-                    to_tui=True,
-                )
+            # _on_pot_status("failed")에서 이미 표준 실패 에러를 TUI에 발행하므로
+            # report_pot에서 중복 발행하지 않는다.
             self._try_emit_ready()
 
     def report_ready(self, ok: bool = True, msg: str = "ready — input unlocked"):
@@ -128,7 +122,7 @@ class StartupCoordinator(QObject):
             "starting": ("RUN",  "server starting..."),
             "staged":   ("OK",   "server staged — lazy standby"),
             "ready":    ("OK",   "server running"),
-            "failed":   ("FAIL", "server failed"),
+            "failed":   ("FAIL", "server failed → check logs (F12)"),
         }
         st, msg = _POT_TOGGLE.get(status, ("RUN", str(status)))
         raw(

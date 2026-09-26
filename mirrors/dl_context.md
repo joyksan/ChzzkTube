@@ -10,7 +10,7 @@ DownloadContext를 생성해 파이프라인에 넘기고, 파이프라인은 �
 Qt Signal(YtLoggerBridge)은 그대로 참조로 전달된다 (QThread 상속 구조 유지).
 """
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -23,14 +23,14 @@ class DownloadContext:
     """
 
     # 설정 (worker.cfg 딕셔너리 참조)
-    cfg: Dict[str, Any]
+    cfg: dict[str, Any]
 
     # 포맷 선택 ("auto"면 자동 선택)
     v_sel: str = "auto"
     a_sel: str = "auto"
 
     # 비디오 스펙 (v_list[0]에서 추출된 height/fps 등)
-    v_spec: Dict[str, Any] = field(default_factory=dict)
+    v_spec: dict[str, Any] = field(default_factory=dict)
 
     # 오디오 설명 (a_list[0]에서 추출)
     audio_desc: str = ""
@@ -40,10 +40,10 @@ class DownloadContext:
 
     # 현재 처리 중인 대상
     current_url: str = ""
-    current_file: Optional[str] = None
+    current_file: str | None = None
 
     # 세션 상태 (UI→워커 단방향: canceled, skip)
-    state: Dict[str, bool] = field(default_factory=lambda: {"canceled": False, "skip": False})
+    state: dict[str, bool] = field(default_factory=lambda: {"canceled": False, "skip": False})
 
     # 속도 계산 (SpeedWindow — 이동평균)
     speed_win: Any = None
@@ -79,14 +79,14 @@ class DownloadContext:
     finished_all: Any = None
 
     # 오류 수집 (다운로드 실패 시 메시지 누적)
-    _errors: List[str] = field(default_factory=list, repr=False)
+    _errors: list[str] = field(default_factory=list, repr=False)
 
     def add_error(self, msg: str) -> None:
         """오류 메시지를 수집한다. finalizer가 배치 마감에서 참조한다."""
         self._errors.append(msg)
 
     @property
-    def errors(self) -> List[str]:
+    def errors(self) -> list[str]:
         """수집된 오류 목록 (읽기 전용)."""
         return list(self._errors)
 

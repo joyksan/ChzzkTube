@@ -12,10 +12,9 @@
 """
 import threading
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from PySide6.QtCore import QObject, Slot
-
 
 # ── 상수 단일 출처 (HANDOVER §3 표와 동기화) ───────────────────────────
 FALLBACK_TIMEOUT_SEC = 15.0   # 기동 폴백 (READY 강제 개방)
@@ -31,7 +30,7 @@ class LivenessWatchdog(QObject):
     스레드 안전: Lock으로 _last_heartbeat / _grace_used 보호.
     """
 
-    __slots__ = ("timeout_sec", "grace_sec", "_clock", "_lock", "_last_heartbeat", "_grace_used")
+    __slots__ = ("_clock", "_grace_used", "_last_heartbeat", "_lock", "grace_sec", "timeout_sec")
 
     def __init__(
         self,

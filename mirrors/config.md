@@ -43,7 +43,7 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.12.2"
+_APP_VERSION = "v3.12.4"
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -126,7 +126,7 @@ def load_config():
                     loaded["download_path"]
                 ):
                     cfg.update(loaded)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 설정 파일 손상 시 기본 설정 유지
             pass
     return cfg
 

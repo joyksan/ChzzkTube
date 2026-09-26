@@ -14,11 +14,10 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
-import socket
 import urllib.request
-from chzzktube.infra.platform import spawn_kwargs
+
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
+from chzzktube.infra.platform import spawn_kwargs
 
 # (log_label, pypi_name, pypi_nightly) — log_label is shown in the DEPS PLATFORM column
 # pypi_nightly: Nightly 채널 사용 시 설치할 PyPI 패키지명 (None이면 Stable only)
@@ -40,7 +39,7 @@ def installed_version(pypi_name):
     """
     # yt-dlp는 독립 실행형 바이너리 사용
     if pypi_name == "yt-dlp":
-        from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+        from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
         exe = yt_dlp_path()
         if exe:
             ver = yt_dlp_version(exe)
@@ -50,6 +49,7 @@ def installed_version(pypi_name):
 
     import glob
     import os
+
     from chzzktube.core.config import pylib_overlay_path
 
     pylib_root = pylib_overlay_path()
@@ -68,8 +68,8 @@ def installed_version(pypi_name):
                     for line in f:
                         if line.startswith("Version:"):
                             return line.split(":", 1)[1].strip()
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 메타데이터 판독 실패는 다음 dist-info로 계속
+                from chzzktube.core import raw_log
                 raw_log.raw("DEPS", f"installed_version metadata read error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 continue
     return None
@@ -93,8 +93,8 @@ def latest_version(pypi_name, timeout=1.5):
             fut = ex.submit(_fetch)
             data = fut.result(timeout=timeout + 0.5)
             return (data.get("info") or {}).get("version")
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — PyPI 조회 실패는 None 폴백 (판정 유지)
+        from chzzktube.core import raw_log
         raw_log.raw("DEPS", f"latest_version PyPI fetch error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
@@ -110,8 +110,8 @@ def is_outdated(current, latest):
     """True if latest > current (numeric tuple compare avoids string pitfalls)."""
     try:
         return _ver_tuple(latest) > _ver_tuple(current)
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 버전 비교 실패는 False (업데이트 미표시)
+        from chzzktube.core import raw_log
         raw_log.raw("DEPS", f"is_outdated version compare error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False
 
@@ -147,18 +147,16 @@ def check_deps(log_func=None):
     msg: "vX.Y.Z at <path>" | "not installed" | "<reason>"
     log_func(msg): POT readiness 판정 근거를 raw 스택으로 반환 (단일 호출).
     """
-    import os
     results = []
 
     # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로 확인
     # yt-dlp-nightly는 dist 명이 달라 .pylib 체크가 실패하므로
     # nightly 설치물로 폴백 표기 (정상 설치 판정 유지)
     label = "ytdlp"
-    pypi_name = "yt-dlp"
     pypi_nightly = "yt-dlp-nightly"
     
     # yt-dlp는 독립 실행형 바이너리 사용 (yt_dlp_binary 모듈)
-    from chzzktube.infra.yt_dlp_binary import yt_dlp_version, yt_dlp_path
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
     exe = yt_dlp_path()
     if exe:
         ver_tuple = yt_dlp_version(exe)
@@ -186,7 +184,8 @@ def check_deps(log_func=None):
     try:
         from chzzktube.infra.components import ffmpeg_exe
         path = ffmpeg_exe()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 컴포넌트 import 실패는 미설치扱い
+        log_f12_net(f"ffmpeg resolver import failed: {type(e).__name__}", is_error=True)
         path = None
     if path:
         ver_str = _ffmpeg_version(path)
@@ -202,10 +201,11 @@ def check_deps(log_func=None):
 
     # 3. node — 앱 전용 포터블 런타임 단일 참조
     try:
-        import chzzktube.infra.pot_provider as pot_provider
+        from chzzktube.infra import pot_provider
         path = pot_provider.node_exe()
         maj = pot_provider.node_major_version(path)
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 런타임 조회 실패는 미설치扱い
+        log_f12_net(f"node resolver failed: {type(e).__name__}", is_error=True)
         path, maj = None, None
     if path and maj:
         results.append(("node", "OK", f"v{maj} at {path}"))
@@ -216,7 +216,7 @@ def check_deps(log_func=None):
 
     # 4. bgutil 소스코드 무결성 검증
     try:
-        from chzzktube.infra.pot_server import server_installed_ver, server_home
+        from chzzktube.infra.pot_server import server_home, server_installed_ver
         ver = server_installed_ver()
         if ver:
             results.append(("bgutil", "OK", f"v{ver} at {server_home()}"))
@@ -224,7 +224,7 @@ def check_deps(log_func=None):
         else:
             results.append(("bgutil", "FAIL", "not installed"))
             log_f12_net("bgutil provider source not installed", is_error=True)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — bgutil 조회 실패는 FAIL(unknown) 행으로 기록
         results.append(("bgutil", "FAIL", "unknown"))
         log_f12_net(f"bgutil check failed: {e}", is_error=True)
 
@@ -240,8 +240,9 @@ def check_deps(log_func=None):
                 results.append(("pot", "SKIP", "standby"))
             else:
                 results.append(("pot", "SKIP", reason or "not ready"))
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — POT 판별 실패는 SKIP(unknown) 행으로 기록
         results.append(("pot", "SKIP", "unknown"))
+        log_f12_net(f"pot readiness probe failed: {type(e).__name__}", is_error=True)
 
     return results
 
@@ -252,16 +253,15 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
     Returns:
         (ok, missing_list): ok=True면 모든 필수 deps 정상, False면 누락/실패 목록 반환
     """
-    from chzzktube.core import config
-    import chzzktube.infra.components as components
-    import chzzktube.infra.pot_provider as pot_provider
     import subprocess
+
+    from chzzktube.infra import components, pot_provider
     from chzzktube.infra.platform import spawn_kwargs
 
     missing = []
 
     # 1. yt-dlp (독립 실행형 바이너리) — 앱 전용 경로에서 실행 확인
-    from chzzktube.infra.yt_dlp_binary import yt_dlp_path, yt_dlp_version
+    from chzzktube.infra.yt_dlp_binary import yt_dlp_path
     exe = yt_dlp_path()
     if not exe:
         missing.append("yt-dlp (not found in app binary path)")
@@ -271,6 +271,7 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
             [exe, "--version"],
             capture_output=True,
             timeout=5,
+            check=False,  # PLW1510: 존재 확인용 프로브 — returncode 분기로 판정
             **spawn_kwargs(),
         )
         if result.returncode != 0:
@@ -287,11 +288,12 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
                 [ffmpeg_path, "-version"],
                 capture_output=True,
                 timeout=5,
-                **{**{}, **__import__("chzzktube.infra.platform").spawn_kwargs()}
+                check=False,  # PLW1510: 존재 확인용 프로브 — returncode 분기로 판정
+                **__import__("chzzktube.infra.platform").spawn_kwargs()
             )
             if result.returncode != 0:
                 missing.append("ffmpeg (execution failed)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — ffmpeg 검증 예외는 missing 목록에 사유 기록
         missing.append(f"ffmpeg (check error: {e})")
 
     # 3. node — 격리 캐시에서 실행 가능 확인
@@ -304,11 +306,12 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
                 [node_path, "--version"],
                 capture_output=True,
                 timeout=5,
-                **{**{}, **__import__("chzzktube.infra.platform").spawn_kwargs()}
+                check=False,  # PLW1510: 존재 확인용 프로브 — returncode 분기로 판정
+                **__import__("chzzktube.infra.platform").spawn_kwargs()
             )
             if result.returncode != 0:
                 missing.append("node (execution failed)")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — node 검증 예외는 missing 목록에 사유 기록
         missing.append(f"node (check error: {e})")
 
     # 4. bgutil 소스코드 무결성 검증
@@ -316,8 +319,8 @@ def verify_deps_integrity() -> tuple[bool, list[str]]:
         from chzzktube.infra.pot_server import server_installed_ver
         if not server_installed_ver():
             missing.append("bgutil (not installed)")
-    except Exception:
-        missing.append("bgutil (check error)")
+    except Exception as e:  # noqa: BLE001 — bgutil 검증 예외는 missing 목록에 사유 기록
+        missing.append(f"bgutil (check error: {e})")
 
     return len(missing) == 0, missing
 
@@ -343,21 +346,24 @@ def _cli_base(label):
         try:
             from chzzktube.infra.components import ffmpeg_exe
             p = ffmpeg_exe()
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — 해석기 실패는 None (도구 없음扱い)
+            log_f12_net(f"ffmpeg exe resolve failed: {type(e).__name__}", is_error=True)
             p = None
         return [p] if p else None
     if label == "node":
         try:
-            import chzzktube.infra.pot_provider as pot_provider
+            from chzzktube.infra import pot_provider
             p = pot_provider.node_exe()
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — 해석기 실패는 None (도구 없음扱い)
+            log_f12_net(f"node exe resolve failed: {type(e).__name__}", is_error=True)
             p = None
         return [p] if p else None
     if label == "npm":
         try:
-            import chzzktube.infra.pot_provider as pot_provider
+            from chzzktube.infra import pot_provider
             p = pot_provider.npm_exe()
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — 해석기 실패는 None (도구 없음扱い)
+            log_f12_net(f"npm exe resolve failed: {type(e).__name__}", is_error=True)
             p = None
         return [p] if p else None
     return None
@@ -368,9 +374,10 @@ def _cli_env(label):
     if label != "npm":
         return None
     try:
-        import chzzktube.infra.pot_provider as pot_provider
+        from chzzktube.infra import pot_provider
         node = pot_provider.node_exe()
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — node 해석 실패는 PATH 미보강 (npm 미사용 경로)
+        log_f12_net(f"npm PATH resolve failed: {type(e).__name__}", is_error=True)
         node = None
     if not node:
         return None
@@ -404,9 +411,10 @@ def cli_raw(label, *args, timeout=15):
             errors="replace",
             timeout=timeout,
             env=env,
+            check=False,  # PLW1510: CLI 원문 수집 — 실패도 (cmdline, 원문)으로 반환 계약
             **spawn_kwargs(),
         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — CLI 실행 실패도 (cmdline, 원문) 반환 계약
         return " ".join(full_cmd), f"[{type(e).__name__}] {e}"
     out = ((proc.stdout or "") + (proc.stderr or "")).strip()
     if not out:
@@ -471,13 +479,15 @@ def _ffmpeg_version(path, timeout=3):
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
+            check=False,  # PLW1510: returncode!=0 → None 반환 계약 (아래 분기)
             **spawn_kwargs(),
         )
         if out.returncode != 0:
             return None
         text = (out.stdout or out.stderr or "")
         return _parse_ffmpeg_version_text(text)
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 버전 파싱 실패는 None (미확인扱い)
+        log_f12_net(f"ffmpeg version parse failed: {type(e).__name__}", is_error=True)
         return None
 
 def _exe_suffix():
@@ -489,7 +499,8 @@ def _download_to(url, dest, timeout=120):
         with urllib.request.urlopen(url, timeout=timeout) as resp, open(dest, "wb") as f:
             shutil.copyfileobj(resp, f)
         return True
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 다운로드 실패는 False (다음 미러/재시도)
+        log_f12_net(f"download failed: {url} [{type(e).__name__}]", is_error=True)
         return False
 
 def _get_pypi_whl_url(pypi_name):
@@ -502,8 +513,8 @@ def _get_pypi_whl_url(pypi_name):
         preferred = [f for f in urls if "whl" in f.get("filename", "")]
         if preferred:
             return preferred[0].get("url")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — whl 메타 조회 실패는 None (업데이트 스킵)
+        log_f12_net(f"pypi whl lookup failed: {pypi_name} [{type(e).__name__}]", is_error=True)
     return None
 
 def _extract_from_whl(whl_path, dest_dir):
@@ -513,7 +524,8 @@ def _extract_from_whl(whl_path, dest_dir):
         with zipfile.ZipFile(whl_path) as zf:
             zf.extractall(dest_dir)
         return True
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — whl 해제 실패는 False (업데이트 스킵)
+        log_f12_net(f"whl extract failed: {whl_path} [{type(e).__name__}]", is_error=True)
         return False
 
 def _frozen_upgrade_ytdlp(channel="stable"):
@@ -552,7 +564,8 @@ def _extract_pylib_whl(whl_path, pylib_root, prefix):
                 if os.path.basename(old) != keep_dist:
                     shutil.rmtree(old, ignore_errors=True)
         return True
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 오버레이 해제 실패는 False (업데이트 스킵)
+        log_f12_net(f"overlay extract failed: {whl_path} [{type(e).__name__}]", is_error=True)
         return False
 
 
@@ -566,7 +579,8 @@ def _overlay_root():
         from chzzktube.core.config import pylib_overlay_path
 
         return os.path.abspath(pylib_overlay_path())
-    except Exception:
+    except Exception as e:  # noqa: BLE001 — 경로 해석 실패는 "" (sys.path 미삽입)
+        log_f12_net(f"overlay root resolve failed: {type(e).__name__}", is_error=True)
         return ""
 
 
@@ -580,8 +594,8 @@ def _refresh_overlay_sys_path():
         import importlib
 
         importlib.invalidate_caches()
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — 캐시 무효화 실패는 무시 (다음 import 시 갱신)
+        log_f12_net(f"overlay sys.path refresh failed: {type(e).__name__}", is_error=True)
 
 
 

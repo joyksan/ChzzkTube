@@ -7,8 +7,8 @@ import time
 import unicodedata
 from typing import TYPE_CHECKING
 
-from chzzktube.core.log_event import STAGES, STATUSES
 from chzzktube.core.dl_platform import _short_platform
+from chzzktube.core.log_event import STAGES, STATUSES
 
 if TYPE_CHECKING:  # 타입 힌트 전용 — 런타임 순환 참조 방지
     from chzzktube.core.log_event import LogEvent
@@ -222,7 +222,7 @@ def _log_bar(bar_frac, width=10):
         frac = min(max(float(bar_frac), 0.0), 1.0)
     except (TypeError, ValueError):
         return ""
-    filled = int(round(frac * width))
+    filled = round(frac * width)
     return f"[{'█' * filled}{'░' * (width - filled)}]"
 
 def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None,
@@ -286,7 +286,7 @@ def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None
     msg_clean = str(msg or "").rstrip("\r\n ")
     head_parts = [p for p in (tag, gauge, msg_clean) if p]
     head = _log_ts() + " " + stage_s
-    fixed = head + " │ " + " │ ".join((status_s, scope_s))
+    fixed = head + " │ " + f"{status_s} │ {scope_s}"
     if not head_parts:
         return fixed
     return fixed + " │ " + " · ".join(head_parts)
@@ -407,9 +407,9 @@ _MAX_ERR_MSG_LEN = 55
 def _normalize_cause(cause: str) -> str:
     """원인 문자열을 표준 키워드로 정규화 (알려지지 않은 원인도 보존)."""
     cause_lower = cause.lower()
-    for std_cause in _ERROR_CAUSES:
+    for std_cause, mapped in _ERROR_CAUSES.items():
         if std_cause in cause_lower:
-            return _ERROR_CAUSES[std_cause]
+            return mapped
     return cause.strip() if cause else "unknown error"
 
 def _normalize_action(action: str) -> str:

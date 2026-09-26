@@ -3,7 +3,7 @@
 import yt_dlp
 
 from chzzktube.core.playlist import normalize_youtube_channel_url
-from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
+from chzzktube.pipeline.classifier import ClassifiedTarget, ItemClassifier
 from chzzktube.pipeline.target_downloader.utils import _has_configured_cookies
 
 
@@ -115,7 +115,6 @@ def expand_targets(ctx) -> list[ClassifiedTarget]:
                 # 단일 영상 - 정규화 팩토리를 통해 즉시 승격
                 expanded.append(_normalize_single_item(url))
         except Exception as ex:  # noqa: BLE001
-            url_short = url[:40] + ("..." if len(url) > 40 else "")
             # [v3.8.1] 즉시 TUI 발행 금지 — finalizer에서 단일 출력
             _emit_error_log(ctx, url, str(ex), failed_targets=[])
             expanded.append(_normalize_single_item(url))

@@ -1,14 +1,13 @@
 ### chzzk_api.py - 치지직 공개 API 통신 (클립/VOD/LIVE 메타데이터 + 스트림 목록)
-import datetime
 import json
 import re
 import urllib.error
-from urllib.parse import urljoin
 import urllib.request
+from urllib.parse import urljoin
 
+from chzzktube.core import SHORT_API_TIMEOUT
 from chzzktube.core.cookies import get_browser_cookies
 from chzzktube.core.media import get_video_codec_rank
-from chzzktube.core import SHORT_API_TIMEOUT
 
 
 class ChzzkAuthError(Exception):
@@ -81,9 +80,9 @@ def analyze_chzzk_clip_api(target_url):
         # 채널명 파싱
         owner = d_data.get("ownerChannel") or {}
         channel_name = owner.get("channelName") or d_data.get("channelName")
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 세부 정보 폴백(제목=ID)으로 계속 진행
         # [증거 남김] 세부 정보 폴백(제목=ID 표기)으로 계속 진행 — 원인은 히스토리에.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -136,9 +135,9 @@ def analyze_chzzk_clip_api(target_url):
                         "acodec": a_codec,
                     }
                 )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — play-info 실패는 raw 버스 로깅
         # [증거 남김] play-info 실패 → formats 비어 상위에서 RuntimeError fail-fast.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -229,9 +228,9 @@ def analyze_chzzk_vod_api(target_url):
                                 "acodec": codecs[1] if len(codecs) > 1 else "AAC",
                             }
                         )
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — VOD API 실패는 raw 버스 로깅
         # [증거 남김] VOD API 실패 → formats 비어 상위에서 RuntimeError fail-fast.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -310,7 +309,7 @@ def _parse_live_playback_url(content):
     raw = content.get("livePlaybackJson") or ""
     try:
         playback = json.loads(raw) if isinstance(raw, str) else {}
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return ""
     media = playback.get("media") if isinstance(playback, dict) else None
     if not isinstance(media, list):
@@ -331,7 +330,7 @@ def _parse_live_status(content):
         playback = json.loads(raw) if isinstance(raw, str) else {}
         inner = (playback.get("live") or {}) if isinstance(playback, dict) else {}
         live_state = inner.get("status", "")
-    except Exception:
+    except (json.JSONDecodeError, TypeError, AttributeError):
         live_state = ""
     status = str(content.get("status") or "").upper()
     live_state = str(live_state or "").upper()
@@ -436,7 +435,7 @@ def analyze_chzzk_live_api(target_url):
         else:
             try:
                 info = _analyze_chzzk_live_v2(live_id, headers)
-            except Exception:
+            except Exception:  # noqa: BLE001 — v2 실패 시 v1 폴백
                 info = _analyze_chzzk_live_v1(live_id, headers)
         title = info.get("title") or live_id
         date = info.get("date")
@@ -445,9 +444,9 @@ def analyze_chzzk_live_api(target_url):
         live_status = info.get("live_status", "UNKNOWN")
         video_formats = info.get("formats") or []
         live_id_out = info.get("live_id") or live_id
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — live API 전체 실패는 raw 버스 로깅
         # [증거 남김] live API 실패 → formats 비어 상위에서 fail-fast.
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         from chzzktube.core.log_event import LogEvent
         raw_log.raw(
             "chzzk",
@@ -459,19 +458,18 @@ def analyze_chzzk_live_api(target_url):
             to_tui=False,
         )
 
-    if not video_formats:
-        if live_status != "PROGRESS":
-            import chzzktube.core.raw_log as raw_log
-            from chzzktube.core.log_event import LogEvent
-            raw_log.raw(
-                "chzzk",
-                LogEvent(
-                    stage="ANAL", status="WARN", scope="CHZ",
-                    msg=f"chzzk live offline ({live_status}) - live/{live_id_out}",
-                    is_error=False,
-                ),
-                to_tui=False,
-            )
+    if not video_formats and live_status != "PROGRESS":
+        from chzzktube.core import raw_log
+        from chzzktube.core.log_event import LogEvent
+        raw_log.raw(
+            "chzzk",
+            LogEvent(
+                stage="ANAL", status="WARN", scope="CHZ",
+                msg=f"chzzk live offline ({live_status}) - live/{live_id_out}",
+                is_error=False,
+            ),
+            to_tui=False,
+        )
 
     video_formats.sort(
         key=lambda x: (x["height"], get_video_codec_rank(x["vcodec"]), x["bitrate"]),

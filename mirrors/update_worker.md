@@ -12,11 +12,12 @@
 """
 import traceback
 
-import chzzktube.infra.updater as updater
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_event import LogEvent
 from PySide6.QtCore import QThread, Signal
+
+from chzzktube.core import raw_log
 from chzzktube.core.log_emitter import emit_component, emit_error_standard
+from chzzktube.core.log_event import LogEvent
+from chzzktube.infra import updater
 
 # CLI 원문 캡처 대상 — (label, args). _do_check에서 updater.cli_raw로 실행된다.
 _RAW_VERSION_CMDS = (
@@ -50,7 +51,7 @@ class UpdateWorker(QThread):
                 self._do_upgrade()
             else:
                 self._do_check()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 워커 크래시를 raw 버스 기록 후 정리 발행
             traceback.print_exc()
             raw_log.raw("deps", LogEvent(stage="DEPS", status="FAIL", scope="DEPS",
                                          msg=f"worker crash: {e}", is_error=True), to_tui=True)
@@ -133,6 +134,7 @@ class UpdateWorker(QThread):
 
     def _do_upgrade(self):
         import asyncio
+
         from chzzktube.infra.provisioning import ProvisioningManager
 
         # ProvisioningManager 단일 파이프라인으로 ytdlp, ffmpeg, node, bgutil 4개 컴포넌트 일괄 병렬 수급
@@ -147,7 +149,7 @@ class UpdateWorker(QThread):
         try:
             # [대역폭 수호] stale_only=True로 이미 정상인 의존성의 불필요한 재수급 차단
             results = asyncio.run(mgr.ensure_all(stale_only=True, channel=self.channel))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 프로비저닝 예외는 raw 버스 + 거부 발행
             import traceback
             raw_log.raw("deps", f"provisioning error: {e}\n{traceback.format_exc()}", is_error=True)
             self.upgrade_done.emit(False, f"provisioning error: {e}")

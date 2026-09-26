@@ -6,12 +6,11 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
 
 from chzzktube.core.raw_log import log_f12_net
-
 
 _CHUNK_SIZE = 64 * 1024
 _USER_AGENT = "ChzzkTube-Provisioner/1.0"
@@ -23,7 +22,7 @@ class DownloadTask:
     component: str
     url: str
     dest: Path
-    expected_sha256: Optional[str] = None
+    expected_sha256: str | None = None
     mirror_name: str = ""
 
 
@@ -31,9 +30,9 @@ class DownloadTask:
 class DownloadResult:
     task: DownloadTask
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
     bytes_downloaded: int = 0
-    sha256: Optional[str] = None
+    sha256: str | None = None
 
 
 ProgressCallback = Callable[[str, int, int, float, float], Awaitable[None]]
@@ -43,7 +42,7 @@ def _format_network_error(exc: BaseException) -> str:
     """네트워크/수급 에러를 사용자가 쉽게 파악할 수 있는 안내 문구로 변환."""
     if isinstance(exc, urllib.error.HTTPError):
         if exc.code == 404:
-            return f"HTTP 404 Not Found (asset removed or unavailable at mirror) — check update/mirror"
+            return "HTTP 404 Not Found (asset removed or unavailable at mirror) — check update/mirror"
         if exc.code == 403 or exc.code == 429:
             return f"HTTP {exc.code} Rate Limited by host — please try again in a few minutes"
         if exc.code >= 500:
@@ -69,7 +68,7 @@ class ParallelDownloader:
         max_concurrent: int = 5,
         max_retries: int = 3,
         base_timeout: float = 120.0,
-        progress_cb: Optional[ProgressCallback] = None,
+        progress_cb: ProgressCallback | None = None,
     ):
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self.max_retries = max_retries
@@ -86,14 +85,14 @@ class ParallelDownloader:
         return await asyncio.gather(*[_download_one(task) for task in tasks])
 
     async def _download_with_retry(self, task: DownloadTask) -> DownloadResult:
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
 
         for attempt in range(self.max_retries):
             try:
                 return await self._download_once(task)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — 재시도 루프는 지수 백오프 후 다음 시도
                 last_error = exc
                 self._remove_part_file(task)
                 log_f12_net(
@@ -123,7 +122,7 @@ class ParallelDownloader:
             tok_req = urllib.request.Request(tok_url, headers={"User-Agent": _USER_AGENT})
             with urllib.request.urlopen(tok_req, timeout=10.0) as tok_resp:
                 return _json.load(tok_resp).get("token")
-        except Exception:
+        except Exception:  # noqa: BLE001 — ghcr 토큰 조회 실패는 None (무인증 폴백)
             return None
 
     async def _download_once(self, task: DownloadTask) -> DownloadResult:
@@ -168,10 +167,8 @@ class ParallelDownloader:
                             return
                         now = time.monotonic()
                         pct = int(d_bytes * 100 / t_bytes) if t_bytes > 0 else 0
-                        if not is_final:
-                            # 0.15초 이내이면서 퍼센트 변화도 없으면 스킵
-                            if (now - last_cb_time < 0.15) and (pct == last_cb_pct):
-                                return
+                        if not is_final and (now - last_cb_time < 0.15) and (pct == last_cb_pct):
+                            return
                         elapsed = now - start_time
                         speed_bps = d_bytes / elapsed if elapsed > 0 else 0.0
                         eta_sec = (t_bytes - d_bytes) / speed_bps if (speed_bps > 0 and t_bytes > d_bytes) else 0.0
@@ -195,7 +192,8 @@ class ParallelDownloader:
                             hasher.update(chunk)
                         report(downloaded, total)
 
-                    report(downloaded, total, is_final=True)
+                    effective_total = total if total > 0 else downloaded
+                    report(downloaded, effective_total, is_final=True)
 
                 computed_sha256 = hasher.hexdigest() if hasher is not None else None
                 if hasher is not None and computed_sha256 != task.expected_sha256:

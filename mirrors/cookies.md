@@ -10,7 +10,6 @@ yt-dlp의 extract_cookies_from_browser를 위임하여 브라우저별 경로 �
 from __future__ import annotations
 
 import platform
-from typing import Dict, Optional
 
 try:
     from yt_dlp.cookies import extract_cookies_from_browser
@@ -38,7 +37,7 @@ _BROWSER_ALIASES = {
 }
 
 
-def _normalize_browser_name(name: str) -> Optional[str]:
+def _normalize_browser_name(name: str) -> str | None:
     """사용자 입력/설정값을 yt-dlp 표준 브라우저명으로 정규화."""
     if not name:
         return None
@@ -46,7 +45,7 @@ def _normalize_browser_name(name: str) -> Optional[str]:
     return _BROWSER_ALIASES.get(key)
 
 
-def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, str]]:
+def get_browser_cookies(browser: str | None = None) -> dict[str, dict[str, str]]:
     """
     yt-dlp 네이티브 쿠키 추출기로 브라우저 쿠키 획득.
     
@@ -60,7 +59,7 @@ def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, st
     if extract_cookies_from_browser is None:
         return {}
     
-    cookie_data: Dict[str, Dict[str, str]] = {}
+    cookie_data: dict[str, dict[str, str]] = {}
     
     # 브라우저 지정 시 단일 시도
     if browser:
@@ -72,7 +71,7 @@ def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, st
                     domain = c.get("domain", "")
                     if domain:
                         cookie_data.setdefault(domain, {})[c["name"]] = c["value"]
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 브라우저 쿠키 추출 실패는 다음 브라우저로/빈 데이터
                 pass  # yt-dlp 내부에서 로깅/처리
         return cookie_data
     
@@ -95,13 +94,13 @@ def get_browser_cookies(browser: Optional[str] = None) -> Dict[str, Dict[str, st
                     cookie_data.setdefault(domain, {})[c["name"]] = c["value"]
             if cookie_data:
                 break  # 첫 성공 시 종료 (충돌 방지)
-        except Exception:
+        except Exception:  # noqa: BLE001, S112 — 개별 브라우저 실패 시 다음 브라우저 후보 시도
             continue
     
     return cookie_data
 
 
-def get_cookie_string_for_domain(domain: str, browser: Optional[str] = None) -> str:
+def get_cookie_string_for_domain(domain: str, browser: str | None = None) -> str:
     """
     특정 도메인의 쿠키를 'name=value; name=value' 문자열로 반환.
     yt-dlp의 cookiefile 포맷 또는 requests headers 용도.

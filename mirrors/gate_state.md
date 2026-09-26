@@ -11,7 +11,7 @@ Qt 무의존 — LivenessWatchdog 인스턴스는 MainWindow.__init__에서 생�
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Set
+from typing import Any
 
 
 class GateState:
@@ -26,8 +26,8 @@ class GateState:
         self.analysis_active = False
         # POT 봇 체크 재시도 상태 (URL당 1회 계약)
         self.pot_retry_pending: bool = False
-        self.pot_retry_url: Optional[str] = None
-        self.pot_retry_done: Set[str] = set()
+        self.pot_retry_url: str | None = None
+        self.pot_retry_done: set[str] = set()
 
 
 # ── 게이트 무장/해제 ──────────────────────────────────────────────────
@@ -82,7 +82,7 @@ def schedule_retry(gate_state: GateState, url: str) -> bool:
     return True
 
 
-def consume_retry(gate_state: GateState) -> Optional[str]:
+def consume_retry(gate_state: GateState) -> str | None:
     """재시도 대기 URL 회수 — pending 해제 후 URL 반환, 없으면 None."""
     url = gate_state.pot_retry_url
     gate_state.pot_retry_pending = False

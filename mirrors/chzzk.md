@@ -4,13 +4,10 @@ import os
 import time
 import urllib.request
 
-import chzzktube.core.chzzk_api as chzzk_api
+from chzzktube.core import chzzk_api, raw_log
 from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api
-from chzzktube.pipeline.target_downloader import utils as td_utils
-from chzzktube.pipeline.classifier import ContentKind
-import chzzktube.core.raw_log as raw_log
 from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
+from chzzktube.pipeline.target_downloader import utils as td_utils
 
 
 def _http_download(ctx, url: str, out_path: str) -> bool:
@@ -39,11 +36,11 @@ def _http_download(ctx, url: str, out_path: str) -> bool:
                         if wd and hasattr(wd, "heartbeat"):
                             try:
                                 wd.heartbeat()
-                            except Exception:
+                            except Exception:  # noqa: BLE001, S110 — 하트비트 실패는 다운로드 계속
                                 pass
                             break
         return True
-    except Exception as ex:  # noqa: BLE001
+    except Exception as ex:  # noqa: BLE001 — HTTP 다운로드 실패는 raw 버스 기록
         raw_log.raw(emit_event("DL", "FAIL", "CHZZK", f"HTTP 다운로드 실패: {ex}"), to_tui=False)
         return False
 
@@ -84,8 +81,8 @@ def _download_chzzk(ctx, url: str, content_type: str) -> bool | str:
 def _download_chzzk_live(ctx, url: str) -> bool:
     """치지직 API의 HLS 포맷을 FFmpeg stdout 릴레이로 녹화한다."""
     import os
+
     import chzzktube.pipeline.live_recorder as _lr
-    import chzzktube.core.chzzk_api as chzzk_api
     import chzzktube.pipeline.progress_emitter as _pe
 
     info = chzzk_api.analyze_chzzk_live_api(url)
