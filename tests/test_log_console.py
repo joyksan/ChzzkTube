@@ -1,5 +1,4 @@
 """chzzktube.ui.log_console 단위 테스트 — format_log_line 포맷 규격."""
-import chzzktube
 import os
 
 import pytest
@@ -116,6 +115,7 @@ class TestResizeBudgetPath:
 
     def test_update_tree_budget_sets_total_width(self, qapp):
         from PySide6.QtWidgets import QTextEdit
+
         from chzzktube.ui.log_console import update_tree_budget
 
         te = QTextEdit()
@@ -127,6 +127,7 @@ class TestResizeBudgetPath:
 
     def test_console_on_resize_smoke(self, qapp):
         from PySide6.QtWidgets import QTextEdit
+
         from chzzktube.ui.log_console import ConciseLogConsole
 
         te = QTextEdit()

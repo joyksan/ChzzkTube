@@ -1,6 +1,4 @@
 """외부 방송 없이 치지직 API 분석부터 실제 HLS 녹화까지 검증한다."""
-from io import BytesIO
-from pathlib import Path
 import shutil
 import subprocess
 from unittest.mock import Mock

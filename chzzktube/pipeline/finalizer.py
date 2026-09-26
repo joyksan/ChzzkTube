@@ -9,10 +9,10 @@
 """
 import os
 
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
-from chzzktube.pipeline.progress_emitter import emit_dl
 from chzzktube.core.log_emitter import emit_error_standard
+from chzzktube.pipeline.progress_emitter import emit_dl
 
 
 def finalize(ctx, total, failed_targets, success_count, skip_targets=None, *, notify=True):
@@ -42,9 +42,8 @@ def finalize(ctx, total, failed_targets, success_count, skip_targets=None, *, no
             ff_path = os.path.join(ctx.cfg["download_path"], "failed_urls.txt")
             try:
                 with open(ff_path, "w", encoding="utf-8") as f:
-                    for u, _ in failed_targets:
-                        f.write(u + "\n")
-            except Exception:
+                    f.writelines(u + "\n" for u, _ in failed_targets)
+            except OSError:  # 실패 URL 목록 기록 실패는 최종 마감 로그가 대체
                 pass
         # [개별 실패 라인] — ERR 컬럼 포맷으로 1건 1줄 (v3.8.0 규격: cause → action)
         for u, reason in failed_targets:

@@ -5,14 +5,12 @@
 - emit_dl / emit_err: 포맷 규격 (stage/status/platform/spec/speed/pct/bar)
 - chzzktube.infra.pot_provider facade: chzzktube.infra.node_provider/chzzktube.infra.pot_server 함수 재수출 확인
 """
-import chzzktube
 from contextlib import contextmanager
 from unittest.mock import Mock, patch
 
-import pytest
-
+import chzzktube
+from chzzktube.core.log_emitter import emit_dl, emit_err, format_log_line_for_event
 from chzzktube.pipeline.dl_context import DownloadContext
-from chzzktube.core.log_emitter import format_log_line, format_log_line_for_event, emit_dl, emit_err
 
 
 def _rendered(event):
@@ -24,7 +22,6 @@ def _rendered(event):
 def patch_cli_raw_output(fake_out):
     """updater.cli_raw의 subprocess 실행을 우회 — 출력 가공 로직만 검증."""
     import subprocess
-    import chzzktube.infra.updater as updater
     fake_proc = Mock()
     fake_proc.stdout = fake_out
     fake_proc.stderr = ""
@@ -97,8 +94,6 @@ class TestPotProviderFacade:
 
     def test_reexports_from_node_provider(self):
         """facade가 chzzktube.infra.node_provider 함수들을 올바르게 재수출하는지 확인."""
-        import chzzktube.infra.pot_provider as pot_provider
-        import chzzktube.infra.node_provider as node_provider
         for name in ["node_exe", "node_major_version", "npm_exe", "node_ok",
                       "ensure_node_runtime", "bundled_npm_ok"]:
             assert hasattr(chzzktube.infra.pot_provider, name), f"pot_provider.{name} missing"
@@ -107,8 +102,6 @@ class TestPotProviderFacade:
 
     def test_reexports_from_pot_server(self):
         """facade가 chzzktube.infra.pot_server 함수들을 올바르게 재수출하는지 확인."""
-        import chzzktube.infra.pot_provider as pot_provider
-        import chzzktube.infra.pot_server as pot_server
         for name in ["server_home", "latest_server_ver", "server_installed_ver",
                       "built_server_js", "pot_readiness", "_spawn_existing", "ensure_node_server",
                       "download_and_install_source"]:
@@ -125,8 +118,8 @@ class TestPotProviderFacade:
 
     def test_deps_pot_readiness_labels(self):
         """check_deps POT 분기: FAIL 오경보 금지 — OK running / SKIP *."""
-        import chzzktube.infra.updater as updater
-        results = dict((label, (status, msg)) for label, status, msg in updater.check_deps())
+        from chzzktube.infra import updater
+        results = {label: (status, msg) for label, status, msg in updater.check_deps()}
         assert "pot" in results
         status, msg = results["pot"]
         assert status in ("OK", "SKIP"), f"POT DEPS must not FAIL on idle: {status} {msg}"
@@ -138,7 +131,8 @@ class TestPotProviderFacade:
     def test_prewarm_lock_mutual_exclusion(self):
         """acquire_prewarm_lock: O_EXCL 원자 생성 상호배제 + 해제 후 재획득."""
         import os
-        import chzzktube.infra.pot_server as pot_server
+
+        from chzzktube.infra import pot_server
         try:
             os.remove(pot_server._prewarm_lock_path())
         except OSError:
@@ -160,7 +154,8 @@ class TestPotProviderFacade:
         """죽은 PID + mtime 30분 초과 stale 락은 회수되어 획득 가능."""
         import os
         import time
-        import chzzktube.infra.pot_server as pot_server
+
+        from chzzktube.infra import pot_server
         path = pot_server._prewarm_lock_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -174,7 +169,8 @@ class TestPotProviderFacade:
     def test_pot_readiness_stale(self):
         """pot_readiness(check_stale): 버전 불일치 시 stale reason."""
         from unittest.mock import patch
-        import chzzktube.infra.pot_server as pot_server
+
+        from chzzktube.infra import pot_server
         with patch.object(chzzktube.infra.pot_server, "built_server_js", return_value="/tmp/main.js"), \
              patch("chzzktube.infra.node_provider.node_exe", return_value="/tmp/node"), \
              patch.object(chzzktube.infra.pot_server, "server_installed_ver", return_value="1.3.1"), \
@@ -194,21 +190,22 @@ class TestPotProviderFacade:
     def test_check_deps_single_call(self):
         """check_deps(log_func): POT 판정+로그 단일 호출 (중복 standby 금지)."""
         from unittest.mock import patch
-        import chzzktube.infra.updater as updater
+
+        from chzzktube.infra import updater
         notes = []
         with patch("chzzktube.infra.pot_server.built_server_js", return_value="/tmp/main.js"), \
              patch("chzzktube.infra.node_provider.node_exe", return_value="/tmp/node"), \
              patch("chzzktube.infra.po_client.server_ping", return_value=False):
-            results = dict(
-                (label, (status, msg))
+            results = {
+                label: (status, msg)
                 for label, status, msg in updater.check_deps(log_func=notes.append)
-            )
+            }
         assert results["pot"][0] == "SKIP"
         assert len(notes) == 1, f"readiness log must fire once, got {len(notes)}"
 
     def test_cli_raw_returns_full_output(self):
         """cli_raw: 수집층은 원문 전량 반환 (절취는 truncate_for_full_log가 담당)."""
-        import chzzktube.infra.updater as updater
+        from chzzktube.infra import updater
         long_line = "configuration: " + "x" * 500
         with patch_cli_raw_output(long_line + "\nline2\nline3"):
             cmdline, out = updater.cli_raw("ffmpeg", "-version")
@@ -219,7 +216,7 @@ class TestPotProviderFacade:
 
     def test_truncate_for_full_log(self):
         """truncate_for_full_log: configuration 블록 제거 + max_lines 초과 시 절단 꼬리."""
-        import chzzktube.infra.updater as updater
+        from chzzktube.infra import updater
 
         # 1. configuration: 및 하위 빌드 설정 줄이 완벽히 제거되는지 검증
         ffmpeg_sample = (
@@ -246,7 +243,8 @@ class TestPotProviderFacade:
     def test_pid_alive_self(self):
         """_pid_alive: 자기 PID는 살아있음, 존재 불가 PID는 죽음."""
         import os
-        import chzzktube.infra.pot_server as pot_server
+
+        from chzzktube.infra import pot_server
         assert pot_server._pid_alive(os.getpid()) is True
         assert pot_server._pid_alive(999999) is False
         assert pot_server._pid_alive(None) is False
@@ -256,7 +254,8 @@ class TestPotProviderFacade:
         """살아있는 홀더의 락은 mtime이 오래돼도 회수 금지."""
         import os
         import time
-        import chzzktube.infra.pot_server as pot_server
+
+        from chzzktube.infra import pot_server
         try:
             os.remove(pot_server._prewarm_lock_path())
         except OSError:
@@ -275,7 +274,8 @@ class TestPotProviderFacade:
     def test_prewarm_lock_log_callback(self):
         """log_func 콜백: 획득/해제 경로에서 호출됨."""
         import os
-        import chzzktube.infra.pot_server as pot_server
+
+        from chzzktube.infra import pot_server
         try:
             os.remove(pot_server._prewarm_lock_path())
         except OSError:
@@ -292,7 +292,7 @@ class TestPotProviderFacade:
 
         구 병렬-분리 계약(full_only 존재)은 v3.3.0에서 폐기 — 채널은 to_tui 1비트.
         """
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         concise_got, full_got = [], []
         raw_log.subscribe_concise(lambda m, is_status=False, is_error=False: concise_got.append(m))
         raw_log.subscribe_full(lambda m, t=None: full_got.append(m))
@@ -311,8 +311,6 @@ class TestPotProviderFacade:
 
     def test_reexports_from_po_client(self):
         """facade가 chzzktube.infra.po_client 함수들을 올리바르게 재수출하는지 확인."""
-        import chzzktube.infra.pot_provider as pot_provider
-        import chzzktube.infra.po_client as po_client
         for name in ["DEFAULT_HOST", "DEFAULT_PORT", "probe_server", "fetch_po_token"]:
             assert hasattr(chzzktube.infra.pot_provider, name), f"pot_provider.{name} missing"
             assert getattr(chzzktube.infra.pot_provider, name) is getattr(chzzktube.infra.po_client, name), \
@@ -322,14 +320,14 @@ class TestPotProviderFacade:
 class TestContextPipelineFlow:
     """DownloadContext가 파이프라인 함수들과 함께 흐르는 흐름 테스트."""
 
-    def test_context_passed_to_pipeline(self):
-        """emit_dl이 ctx 속성을 올바르게 사용하는지 검증."""
-        ctx = DownloadContext(
-            cfg={},
-            current_url="https://youtu.be/abc123",
-            current_file="/tmp/test.mp4",
-            v_spec={"height": 1080, "fps": 30, "vcodec": "h264"},
-        )
+    def test_emit_dl_passes_status_scope_and_pct(self):
+        """emit_dl이 status/scope/pct를 이벤트에 그대로 실어 렌더링하는지 검증.
+
+        [F841 정정] 종전에는 사용하지도 않는 `ctx = DownloadContext(...)`를 만들고
+        emit_dl에 넘기지 않아, 테스트명("ctx 속성을 사용하는지")과 실제 검증이
+        어긋났다. emit_dl은 ctx를 받지 않는 순수 함수이므로 죽은 생성을 제거하고
+        이름을 실제 검증 대상에 맞춘다.
+        """
         # progress_emitter에서 emit_dl 호출 패턴 시뮬레이션
         line = _rendered(emit_dl(
             status="RUN",

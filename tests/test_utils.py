@@ -5,7 +5,6 @@
 - 캐리지 리턴(\r)은 제거하지 않는다 — yt-dlp progress tick 조립은
   YtLoggerBridge._flush_carriage가 담당한다 (분리된 책임).
 """
-import chzzktube
 from chzzktube.core.utils import clean_ansi
 
 

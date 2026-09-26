@@ -32,7 +32,7 @@ def server_ping(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1):
         url = f"http://{host}:{port}/ping"
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return resp.status == 200
-    except Exception:
+    except Exception:  # noqa: BLE001 — /ping 실패는 False (서버 미기동/다운 판정)
         return False
 
 
@@ -50,9 +50,9 @@ def probe_server(host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=1.5):
     except urllib.error.URLError as e:
         if isinstance(getattr(e, "reason", None), ConnectionRefusedError):
             return "down", ""
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 그 외 probe 예외는 raw 버스 로깅 후 down
         # [Silent fallback 제거] 예외를 삼키지 않고 로그 후 down 반환
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"probe_server error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return "down", f"error: {type(e).__name__}"
 
@@ -86,9 +86,9 @@ def fetch_po_token(video_id, host=DEFAULT_HOST, port=DEFAULT_PORT, timeout=5):
         visitor_data = data.get("visitorData") or ""
         if token:
             return token, visitor_data
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 토큰 패칭 실패는 (None, None) 폴백
         # [Silent fallback 제거] 예외를 삼키지 않고 로그
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"fetch_po_token error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return None, None
 

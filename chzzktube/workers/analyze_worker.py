@@ -6,12 +6,9 @@
 - [계층] L1 Worker Thread — controller에서 직접 생성, log_full 시그널은
   log_console 경유로 View에 전달.
 """
-import os
 import re
-import subprocess
-import sys
-import time
-import urllib.request
+from typing import ClassVar
+
 import yt_dlp
 
 # 네임스페이스 패키지 대응: yt_dlp.YoutubeDL 또는 yt_dlp.main.YoutubeDL에서 import
@@ -38,22 +35,12 @@ except AttributeError:
 
 from PySide6.QtCore import QThread, Signal
 
-from chzzktube.core.watchdog import ANALYSIS_TIMEOUT_SEC
-from chzzktube.core.chzzk_api import analyze_chzzk_clip_api, analyze_chzzk_vod_api, analyze_chzzk_live_api, ChzzkAuthError
-from chzzktube.core.log_emitter import format_kv_line, format_tree_item
-from chzzktube.core.media import (
-    audio_spec,
-    cli_format_desc,
-    format_bytes,
-    format_dropdown_label,
-    get_audio_codec_rank,
-    get_video_codec_rank,
-    short_codec,
-    codec_detail,
+from chzzktube.core.chzzk_api import (
+    ChzzkAuthError,
+    analyze_chzzk_clip_api,
+    analyze_chzzk_live_api,
+    analyze_chzzk_vod_api,
 )
-from chzzktube.core.utils import clean_ansi, get_filename_template
-from chzzktube.core.dl_platform import detect_content_type
-from chzzktube.core.playlist import normalize_youtube_channel_url
 from chzzktube.core.client_opts import (
     _apply_client_opts,
     _apply_cookie_opts,
@@ -63,8 +50,17 @@ from chzzktube.core.client_opts import (
     _apply_pot_opts,
     _dedupe_by_label,
 )
-from chzzktube.infra.po_client import extract_video_id
+from chzzktube.core.dl_platform import detect_content_type
+from chzzktube.core.media import (
+    format_dropdown_label,
+    get_audio_codec_rank,
+    get_video_codec_rank,
+)
+from chzzktube.core.playlist import normalize_youtube_channel_url
+from chzzktube.core.utils import clean_ansi
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
+from chzzktube.infra.po_client import extract_video_id
+
 
 class AnalyzeWorker(QThread):
     # [v3.3.0] 로그는 raw 버스 단일 경유 — log_full 시그널 폐기.
@@ -87,7 +83,9 @@ class AnalyzeWorker(QThread):
     # [순정 위임] yt-dlp 순정 클라이언트 로테이션 완전 위임 (web_embedded → tv_downgraded → web_safari → mweb → tv...)
     # 앱 레벨 수동 로테이션 제거 — 단일 auto 호출로 순정이 알아서 최적 클라 선택 + EJS 솔버 작동
     # PO token 필요 시(age-gate/봇체크) 동일 호출에 token만 주입
-    _RETRY_CLIENTS = []  # 사용 안 함 — 순정 위임
+    # RUF012: 테스트가 `_RETRY_CLIENTS == []` 계약을 단언하므로 유지 —
+    # 추후 계약 테스트 제거 시 함께 삭제할 것.
+    _RETRY_CLIENTS: ClassVar[list] = []  # 사용 안 함 — 순정 위임
 
     @staticmethod
     def _is_bot_block(ex):
@@ -119,8 +117,8 @@ class AnalyzeWorker(QThread):
         [회전 정책] 사용자가 특정 클라이언트를 지정했으면 그 값 하나만
         시도하고 자동 회전하지 않는다(auto일 때만 ios→tv). 회전 흔적은
         상세 로그(F12)에만 남기고 간결 로그는 조용히 유지한다.
+        upstream client 선택은 _apply_client_opts(forced=None)에 위임한다.
         """
-        configured = str(self.cfg.get("yt_player_client", "auto") or "auto")
         base = {
             "logger": self.logger,
             "skip_download": True,
@@ -155,18 +153,16 @@ class AnalyzeWorker(QThread):
             pot_client = "web" if _has_configured_cookies(self.cfg) else "web_embedded"
             _apply_pot_opts(ydl_opts, video_id, client=pot_client)
 
-        try:
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-            # 순정이 실제 사용한 클라는 extractor_args에 기록되지 않으므로
-            # client_used는 "auto"로 남김 — 다운로드 단계도 auto로 위임
-            self.client_used = "auto"
-            return info
-        except Exception as e:
-            raise e
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        # 순정이 실제 사용한 클라는 extractor_args에 기록되지 않으므로
+        # client_used는 "auto"로 남김 — 다운로드 단계도 auto로 위임
+        # (예외를 삼키지 않고 그대로 상승 — 호출자 run()의 원인 분류가 처리)
+        self.client_used = "auto"
+        return info
 
     def run(self):
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         raw_log.raw("analyze", f"--- [format analysis start] {self.target_url} ---")
         # 분석 시작 통보 — 뷰 워치독 수명 연장
         self.activity.emit()
@@ -348,7 +344,7 @@ class AnalyzeWorker(QThread):
                     )
                 else:
                     self.error_occurred.emit("media info fail")
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001 — 분석 실패는 원인 분류 후 error_occurred 발행
             ex_str = str(ex).lower()
             if (
                 "sign in to confirm your age" in ex_str

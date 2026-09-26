@@ -5,21 +5,20 @@ MainWindow Layer 2(URL 입력, 프롬프트, 디바운스 타이머, TXT 로드,
 """
 import os
 import re
-from typing import Optional
 
-from PySide6.QtCore import Qt, Signal, QTimer, QEvent
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QFileDialog,
     QWidget,
 )
 
-from chzzktube.ui import theme
 from chzzktube.control.gate_state import AppState
+from chzzktube.ui import theme
 
 _ANALYZE_DEBOUNCE_MS = 300
 _BULK_INPUT_DELAY_MS = 600
@@ -56,7 +55,7 @@ class ActionBarWidget(QGroupBox):
     esc_requested = Signal()
     load_txt_requested = Signal(str)
 
-    def __init__(self, parent: Optional[QWidget] = None):
+    def __init__(self, parent: QWidget | None = None):
         super().__init__("", parent)
         self.setObjectName("input_group")
         self.setProperty("class", "tui-panel")
@@ -138,7 +137,7 @@ class ActionBarWidget(QGroupBox):
     def clear(self) -> None:
         self.url_input.clear()
 
-    def _set_validation_style(self, status: Optional[str]) -> None:
+    def _set_validation_style(self, status: str | None) -> None:
         """입력값 유효성에 따른 시각적 피드백 (Soft Warning / Normal)."""
         if status == "invalid":
             self.url_input.setStyleSheet(f"border-bottom: 2px solid {theme.WARN};")

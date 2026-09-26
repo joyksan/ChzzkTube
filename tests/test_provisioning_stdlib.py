@@ -8,8 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from chzzktube.infra.provisioning.resolver import ComponentSpec, ComponentType, Mirror, get_platform_asset_filters
 from chzzktube.infra.node_provider import _platform_node_url
+from chzzktube.infra.provisioning.resolver import (
+    ComponentSpec,
+    ComponentType,
+    Mirror,
+    get_platform_asset_filters,
+)
 
 
 def _import_without_httpx(module_name):
@@ -263,7 +268,6 @@ class TestProvisioningManagerStdlib:
         async def run_resolve():
             async def fetch_from_pypi(spec, mirror):
                 assert mirror is mirrors[0]
-                return None
 
             async def fetch_from_github(spec, mirror):
                 assert mirror is mirrors[1]

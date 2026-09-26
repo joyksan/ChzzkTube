@@ -1,10 +1,6 @@
 """cleanup 모듈 테스트."""
-import os
-import tempfile
-import shutil
-from chzzktube.infra import cleanup
 from chzzktube.core import config
-from chzzktube.infra import components
+from chzzktube.infra import cleanup, components
 
 
 def test_cleanup_provisioning_artifacts(monkeypatch, tmp_path):

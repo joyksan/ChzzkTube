@@ -6,15 +6,16 @@
 - F12 전체 로그 버퍼가 deque(maxlen=4096)로 동작해 4,096건을 초과하면
   오래된 이벤트를 제거하는지 검증한다.
 """
-import chzzktube
 from collections import deque
 from unittest.mock import patch
 
+import chzzktube
+from chzzktube.core import raw_log
 from chzzktube.core.log_event import LogEvent
-import chzzktube.core.raw_log as raw_log
+
+
 def test_raw_bus_overflow_is_bounded_and_summarized_once():
     """raw bus: 포화 시 UI mirror를 드롭하고 overflow 요약을 한 번만 기록."""
-    import chzzktube.core.log_history as log_history
     dispatcher = raw_log._RawDispatcher()
     try:
         # 소비 스레드를 먼저 정지해 결정적으로 포화시킨다 —

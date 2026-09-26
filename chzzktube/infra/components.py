@@ -31,16 +31,18 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-import chzzktube.core.config as config
 from chzzktube.core import (
-    CONNECT_TIMEOUT,
-    READ_TIMEOUT,
     DOWNLOAD_TIMEOUT,
+    READ_TIMEOUT,
     SHORT_API_TIMEOUT,
     TEMP_FILE_MODE,
-    EXECUTABLE_FILE_MODE,
+    config,
 )
-from chzzktube.core.log_emitter import emit_component, emit_error_standard, emit_error_warn
+from chzzktube.core.log_emitter import (
+    emit_component,
+    emit_error_standard,
+    emit_error_warn,
+)
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.infra.platform import strip_macos_quarantine
 from chzzktube.ui import ProgressBar
@@ -73,7 +75,7 @@ def _http_get(url, timeout=READ_TIMEOUT):
         try:
             token = _ghcr_token("repository:homebrew/core/ffmpeg:pull")
             headers["Authorization"] = f"Bearer {token}"
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — ghcr 토큰 실패는 무인증 요청으로 계속
             pass
     req = urllib.request.Request(url, headers=headers)
     return urllib.request.urlopen(req, timeout=timeout)
@@ -105,7 +107,7 @@ def _download(url, dest, log=None, label="", expected_sha256=None):
             try:
                 token = _ghcr_token("repository:homebrew/core/ffmpeg:pull")
                 req.headers["Authorization"] = f"Bearer {token}"
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — ghcr 토큰 실패는 무인증 요청으로 계속
                 pass
 
         hasher = hashlib.sha256() if expected_sha256 else None
@@ -524,7 +526,7 @@ def ensure_ffmpeg(log=None, force=False):
 
         # 2. OS별 정적 바이너리 수급
         return _ensure_ffmpeg_by_platform(log, force)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 플랫폼별 수급 전체 실패는 오류 문자열 반환
         return f"{type(e).__name__}: {e}"
 
 def _record_provision_plan(plan, install_path):
@@ -537,7 +539,8 @@ def _record_provision_plan(plan, install_path):
     """
     try:
         from chzzktube.infra.provisioning.manifest import (
-            ComponentRecord, ProvisionManifest,
+            ComponentRecord,
+            ProvisionManifest,
         )
 
         base = Path(config.writable_base())
@@ -553,7 +556,7 @@ def _record_provision_plan(plan, install_path):
             sha256=plan.get("sha256", ""),
         ))
         manifest.save(base)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — 매니페스트 감사 기록 실패는 수급 성공을 막지 않음
         pass
 
 
@@ -629,7 +632,7 @@ def _ensure_ffmpeg_windows(log, force):
             log(emit_component("DEPS", "OK", "FFMP", f"ok ({plan['version']})"))
             _record_provision_plan(plan, str(exe_path))
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — Windows BtbN 설치 루프 단일 시도 실패는 재시도
             last_err = f"{type(e).__name__}: {e}"
             log_f12_net(f"ffmpeg windows install error: {e}", is_error=True)
             log(emit_error_warn("DEPS", "FFMP", "download failed", f"{type(e).__name__} (F12)"))
@@ -753,7 +756,7 @@ def _ensure_ffmpeg_macos(log, force):
                     log(_ffmpeg_done_event(f"bottle [{key}] verified"))
                     return None
 
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — 개별 Bottle 다운로드/검증 실패는 다음 Bottle로 폴백
                 last_err = str(e)
                 continue
 
@@ -782,7 +785,7 @@ def _ensure_ffmpeg_macos(log, force):
         log(emit_error_standard("DEPS", "FFMP", "binary incompatible", "check logs (F12)"))
         return last_err or "no runnable bottle found"
 
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — Homebrew API 조회 실패는 오류 문자열 반환
         return f"Homebrew formula resolve failed: {e}"
 
 
@@ -874,7 +877,7 @@ def _ensure_ffmpeg_linux(log, force):
             log(emit_component("DEPS", "OK", "FFMP", f"ok ({plan['version']})"))
             _record_provision_plan(plan, str(exe_path))
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — Linux BtbN 설치 루프 단일 시도 실패는 재시도
             last_err = f"{type(e).__name__}: {e}"
             log(emit_error_warn("DEPS", "FFMP", "download failed", f"{type(e).__name__} (F12)"))
 
@@ -894,7 +897,7 @@ def _wire_ffmpeg_path(bin_dir):
             parts = path_env.split(os.pathsep) if path_env else []
             if bin_dir not in parts:
                 os.environ["PATH"] = os.pathsep.join([bin_dir] + parts)
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — PATH 보강 실패는 무시 (원래 PATH 유지)
         pass
 
 def _verify_ffmpeg(ffmpeg_path, env_extra=None):
@@ -912,6 +915,7 @@ def _verify_ffmpeg(ffmpeg_path, env_extra=None):
             capture_output=True,
             timeout=10,
             env=env,
+            check=False,  # PLW1510: returncode로 판정하므로 예외 대신 False 반환 계약 유지
         )
         out = (result.stdout or b"").decode("utf-8", errors="replace")
         err = (result.stderr or b"").decode("utf-8", errors="replace")
@@ -921,7 +925,7 @@ def _verify_ffmpeg(ffmpeg_path, env_extra=None):
             is_error=(result.returncode != 0),
         )
         return result.returncode == 0
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 검증 실행 자체의 예외(권한/경로 오류 등)는 실패 판정
         log_f12_cli(f"{ffmpeg_path} -version", f"[{type(e).__name__}] {e}", is_error=True)
         return False
 

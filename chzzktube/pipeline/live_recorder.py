@@ -111,15 +111,14 @@ def _remux_live_output(ctx, out_file):
     os.close(fd)
     cmd = ["ffmpeg", "-y", "-i", out_file, "-c", "copy", staging]
     try:
-        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                       check=True, timeout=120, **spawn_kwargs())
+        subprocess.run(cmd, capture_output=True, check=True, timeout=120, **spawn_kwargs())
         if not os.path.getsize(staging):
             raise RuntimeError("empty remux output")
         os.replace(staging, out_path)
         if os.path.abspath(out_file) != os.path.abspath(out_path):
             os.remove(out_file)
         return out_path
-    except Exception as ex:
+    except Exception as ex:  # noqa: BLE001 — remux 실패 시 raw 버스 기록 후 None
         raw_log.raw(
             "media",
             emit_dl(status="FAIL", scope=_dl_platform(ctx.current_url or ""),
@@ -211,9 +210,9 @@ def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
                 stdout_queue.put(chunk)
                 if not chunk:
                     break
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — reader 스레드 예외는 raw 버스 기록 후 EOF
             # [Silent fallback 제거] reader 스레드 예외 로그 후 EOF sentinel 주입
-            import chzzktube.core.raw_log as raw_log
+            # [중복 import 제거] 모듈 전역 raw_log(21줄) 사용 — 지역 바인딩 회피
             raw_log.raw("LIVE", f"_read_stdout error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             stdout_queue.put(b"")
 
@@ -228,6 +227,10 @@ def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
 
     def _drain_stderr():
         # stderr 는 별도 스레드로 실시간 상세 로그 유지 (버스 단일 경유)
+        # [F823 수리] 종전에는 이 함수 안 243줄에서만 `import ... as raw_log`를 해
+        # `raw_log`가 지역 변수로 바인딩됐다(LOAD_FAST_CHECK) → 아래 235줄 참조 시
+        # 매 ffmpeg 로그마다 UnboundLocalError가 나 stderr가 통째로 유실됐다.
+        # 모듈 전역 raw_log(21줄)를 그대로 쓰도록 지역 import를 제거한다.
         from chzzktube.core.log_event import LogEvent
         for raw in iter(proc.stderr.readline, b""):
             if raw:
@@ -238,8 +241,7 @@ def record_live_stream(ctx, cmd, out_file, log_tag="FFmpeg"):
                                          msg=raw.decode("utf-8", "replace").strip(),
                                       ),
                                 )
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — stderr 드레인 예외는 raw 버스 기록
                     raw_log.raw("LIVE", f"_drain_stderr error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
     stderr_t = threading.Thread(target=_drain_stderr, daemon=True)
@@ -329,7 +331,7 @@ def _try_watchdog_heartbeat(ctx, last_heartbeat_time):
         if wd and hasattr(wd, "heartbeat"):
             try:
                 wd.heartbeat()
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — 개별 워치독 하트비트 실패는 raw 버스 기록
+                from chzzktube.core import raw_log
                 raw_log.raw("LIVE", f"_try_watchdog_heartbeat error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             break

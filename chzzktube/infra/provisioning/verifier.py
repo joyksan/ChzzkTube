@@ -1,10 +1,9 @@
 """Verifier — 다층 검증 (해시/실행 테스트/헬스체크)."""
-import sys
-import subprocess
 import json
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from chzzktube.infra.platform import spawn_kwargs
 from chzzktube.infra.provisioning.resolver import ComponentSpec, ComponentType
@@ -14,9 +13,9 @@ from chzzktube.infra.provisioning.resolver import ComponentSpec, ComponentType
 class VerifyResult:
     component: str
     success: bool
-    error: Optional[str] = None
-    version: Optional[str] = None
-    installed_path: Optional[Path] = None
+    error: str | None = None
+    version: str | None = None
+    installed_path: Path | None = None
 
 
 class Verifier:
@@ -54,6 +53,7 @@ class Verifier:
                 env=env,
                 encoding="utf-8",
                 errors="replace",
+                check=False,  # PLW1510: returncode로 VerifyResult 판정
                 **spawn_kwargs()
             )
             
@@ -87,7 +87,7 @@ class Verifier:
             
         except subprocess.TimeoutExpired:
             return VerifyResult(spec.name, False, error="verification timeout", installed_path=binary_path)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 검증 실행 예외(권한/경로)는 실패 VerifyResult로
             return VerifyResult(spec.name, False, error=str(e), installed_path=binary_path)
 
     @staticmethod
@@ -130,7 +130,7 @@ class Verifier:
             
             return VerifyResult(spec.name, False, error="dist-info not found", installed_path=overlay_root)
             
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 패키지 검증 중 예외는 실패 VerifyResult로
             return VerifyResult(spec.name, False, error=str(e), installed_path=overlay_root)
 
     @staticmethod
@@ -145,7 +145,7 @@ class Verifier:
             version = json.loads(pkg_json.read_text(encoding="utf-8")).get("version", "unknown")
             return VerifyResult(spec.name, True, version=version, installed_path=server_dir)
             
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — bgutil 검증 예외(package.json 손상 등)는 실패 판정
             return VerifyResult(spec.name, False, error=str(e), installed_path=server_dir)
 
     @classmethod

@@ -20,9 +20,8 @@ from types import SimpleNamespace
 from PySide6.QtCore import QObject, Signal
 
 import chzzktube.control.controller as controller_module
-from chzzktube.control.controller import MediaController
-
 import chzzktube.ui.main_window as main_module
+from chzzktube.control.controller import MediaController
 from chzzktube.core import log_emitter
 
 
@@ -271,8 +270,9 @@ class _EndFake:
     """분석 마감(성공/실패) 경로의 해제 계약 검증용 대역."""
 
     def __init__(self):
-        from chzzktube.control.controller import SessionState
         from dataclasses import replace
+
+        from chzzktube.control.controller import SessionState
         self._state = SessionState(analyzing=True)
         ctrl = SimpleNamespace(
             state=self._state,
@@ -437,6 +437,7 @@ def test_poll_dispatch_calls_analysis_timeout():
 def test_timeout_polling_stops_until_next_analysis():
     """만료 복구는 1회이며 재분석은 이전 만료와 독립된 기한을 갖는다."""
     from unittest.mock import Mock
+
     from chzzktube.core.watchdog import ANALYSIS_TIMEOUT_SEC, LivenessWatchdog
 
     now = [0.0]

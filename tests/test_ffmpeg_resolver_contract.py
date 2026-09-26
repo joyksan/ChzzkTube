@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-import chzzktube.infra.components as components
+from chzzktube.infra import components
 
 
 class _FakeResponse:

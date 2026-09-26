@@ -19,10 +19,12 @@ bot-block 판정에 없어 마지막 폴백까지 도달하지도 못했다.
    단일 auto 호출 1회이며, 실패 시 뷰의 POT 재시도(_maybe_retry_analysis)가
    후속한다.
 """
+from typing import ClassVar
+
 import pytest
 
-import chzzktube.core.client_opts as client_opts
 import chzzktube.workers.analyze_worker as aw
+from chzzktube.core import client_opts
 
 
 def _worker():
@@ -65,9 +67,9 @@ def test_bot_block_covers_no_format_derivatives():
 class _FailThenYDL:
     """fail_times번째 시도까지 실패하고 이후 성공하는 YoutubeDL 대역."""
 
-    failures: list = []
-    fail_times: int = 0
-    seen_clients: list = []
+    failures: ClassVar[list] = []
+    fail_times: ClassVar[int] = 0
+    seen_clients: ClassVar[list] = []
 
     def __init__(self, opts):
         self.opts = opts

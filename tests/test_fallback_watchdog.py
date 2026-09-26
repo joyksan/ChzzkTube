@@ -4,9 +4,6 @@
 """
 from types import SimpleNamespace
 
-from chzzktube.ui import main_window as main_module
-from chzzktube.ui.main_window import MainWindow
-
 
 class _View:
     """deps 에러 상태 잠금 검증용 대역."""

@@ -1,11 +1,11 @@
 # POTManager
-from PySide6.QtCore import QObject, QThread, QTimer, Signal
 import threading
-import subprocess
-import os
+
+from PySide6.QtCore import QObject, QThread, QTimer, Signal
+
+from chzzktube.core import raw_log
+from chzzktube.core.log_emitter import emit_error_standard
 from chzzktube.core.log_event import LogEvent
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
 
 
 class _POTWorker(QThread):
@@ -38,7 +38,7 @@ class _POTWorker(QThread):
     def run(self):
         try:
             self._run()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — 워커 스레드 크래시를 outcome으로 캡슐화
             self.outcome = (False, f"crash: {e}")
         finally:
             self._cleanup()
@@ -53,7 +53,7 @@ class _POTWorker(QThread):
         if self._server_proc:
             try:
                 kill_tree(self._server_proc)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 서버 프로세스 정리 실패는 무시
                 pass
             self._server_proc = None
     
@@ -84,12 +84,18 @@ class _POTWorker(QThread):
         raw_log.raw("POT-DEBUG", event, to_tui=(self.mode != "prewarm"))
     
     def _run(self):
-        from chzzktube.infra.pot_server import probe_server, latest_server_ver, server_installed_ver
-        from chzzktube.infra.pot_server import built_server_js, DEFAULT_HOST, DEFAULT_PORT
+        from chzzktube.infra.pot_server import (
+            DEFAULT_HOST,
+            DEFAULT_PORT,
+            built_server_js,
+            latest_server_ver,
+            probe_server,
+            server_installed_ver,
+        )
         self._dbg(f"POTWorker starting (mode={self.mode})")
         if self.mode == "gate":
             try:
-                import chzzktube.infra.components as components
+                from chzzktube.infra import components
                 self._dbg("entering ffmpeg ensure phase")
                 ff_err = components.ensure_ffmpeg(self._note)
                 if ff_err:
@@ -112,7 +118,7 @@ class _POTWorker(QThread):
                     self._note(emit_error_standard("DEPS", "FFMP", cause, action), False, True)
                 else:
                     self._dbg("ffmpeg fetch done")
-            except Exception as ff_ex:
+            except Exception:  # noqa: BLE001 — ffmpeg ensure 실패는 표준 에러 발행
                 self._note(emit_error_standard("DEPS", "FFMP", "setup failed", "check logs (F12)", is_error=True), False, True)
         else:
             self._dbg("ffmpeg ensure skipped (prewarm)")
@@ -120,10 +126,10 @@ class _POTWorker(QThread):
             from chzzktube.infra.pot_server import clean_stale_plugin
             if clean_stale_plugin():
                 self._dbg("stale removed")
-        except Exception as cp_ex:
+        except Exception as cp_ex:  # noqa: BLE001 — 플러그인 정리 실패는 디버그 로그 후 계속
             self._dbg(f"cleanup failed: {cp_ex}")
         self._note("probing server...", True)
-        state, detail = probe_server()
+        state, _detail = probe_server()
         self._dbg(f"probe: state={state!r}")
         if state == "ok":
             self.outcome = (True, f"pot server bound ({DEFAULT_HOST}:{DEFAULT_PORT})")
@@ -132,14 +138,20 @@ class _POTWorker(QThread):
         local = server_installed_ver()
         if self.mode == "prewarm":
             self._dbg("prewarm mode — staging to disk, no spawn")
-            from chzzktube.infra.pot_server import acquire_prewarm_lock, release_prewarm_lock
+            from chzzktube.infra.pot_server import (
+                acquire_prewarm_lock,
+                release_prewarm_lock,
+            )
             fd = acquire_prewarm_lock(timeout=0, log_func=self._dbg)
             if fd is None:
                 self.outcome = (False, "prewarm skipped — build busy")
                 return
             try:
                 self._note("pot prewarm staging...", True)
-                from chzzktube.infra.pot_server import ensure_node_server, server_home, _SERVER_FALLBACK_VER
+                from chzzktube.infra.pot_server import (
+                    _SERVER_FALLBACK_VER,
+                    ensure_node_server,
+                )
                 ver = remote or local or _SERVER_FALLBACK_VER
                 # [A3 수리] "빌드 존재=재빌드" 반전 로직 교정 — 기존 rebuild=have_build는
                 # 매 기동마다 npm ci+tsc를 강제했다(HANDOVER §1.3 경량 prewarm 위반).

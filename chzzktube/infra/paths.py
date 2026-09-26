@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 
-import chzzktube.core.config as config
+from chzzktube.core import config
 
 
 def get_writable_base() -> str:

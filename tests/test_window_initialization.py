@@ -10,10 +10,9 @@ GUI 검증은 자식 프로세스에서 수행한다 — 다른 테스트가 QCo
 선점하므로 같은 프로세스에서 QApplication을 만들 수 없다.
 """
 import os
-from pathlib import Path
 import subprocess
 import sys
-
+from pathlib import Path
 
 _PROBE = '''
 from PySide6.QtCore import QTimer
@@ -99,6 +98,7 @@ def test_polling_preserves_initialized_window():
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,  # PLW1510: returncode는 아래 assert로 직접 판정
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "initialization and polling contract verified" in result.stdout

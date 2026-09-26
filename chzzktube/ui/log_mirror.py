@@ -4,8 +4,8 @@ HANDOVER §5-33 직교 분리 + §6 Thin Wrapper 금지:
 로직 통째 이전 (위임 껍데기 아님). MainWindow는 이 모듈 함수에
 (fake-self 호환) 바인딩으로 위임한다.
 """
-from chzzktube.core.log_event import LogEvent
 from chzzktube.core import log_emitter
+from chzzktube.core.log_event import LogEvent
 
 
 def finalize_concise_progress(self, line, is_status, is_error, component_id):
@@ -84,7 +84,7 @@ def mirror_event_full(self, event, is_status=False):
         mirror_full_log(self, line, f12_is_status)
 
 
-def mirror_full_log(self, line, is_status=False, component_id: str = None):
+def mirror_full_log(self, line, is_status=False, component_id: str | None = None):
     """F12 전체 로그 버퍼 적재 및 활성 다이얼로그 제자리 갱신 관통 (SSOT).
 
     [v3.9.0 선택지 B] 진행 틱(is_status/component_id)은 버퍼 스냅샷 치환.

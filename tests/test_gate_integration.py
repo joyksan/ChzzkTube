@@ -6,13 +6,11 @@ MainWindow 인스턴스 생성은 헤드리스 스모크 범위라, 여기서는
 - is_ready() False / ok=False 시에는 큐를 소비하지 않음
 - F12 _mirror_event_full이 LogEvent를 format_log_line_for_event로 복원
 """
-import chzzktube
 from types import SimpleNamespace
 
-from chzzktube.core.log_event import LogEvent
-from chzzktube.core.log_emitter import format_log_line_for_event
-
+import chzzktube
 import chzzktube.ui.main_window as main_module
+from chzzktube.core.log_event import LogEvent
 
 
 class _FakeMain:
@@ -93,7 +91,6 @@ def test_emit_format_logs_uses_bus():
     """분석 성공 포맷 로그: _emit_format_logs가 raw 버스로 [codec] · [codec] 1줄 발행 (v3.8.0 명세)."""
     from unittest.mock import patch
 
-    import chzzktube.core.raw_log as raw_log
     m = _FakeMain()
     v_list = [
         {"vcodec": "avc1", "height": 1080},

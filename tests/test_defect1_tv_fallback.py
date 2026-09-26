@@ -4,12 +4,11 @@
 HANDOVER §5-6.x: 앱 수동 클라 로테이션(_RETRY_CLIENTS, client_chain) 완전 제거 →
 yt-dlp 순정 단일 auto 호출 위임. 빈 스텁 테스트를 실제 계약 단언으로 교체.
 """
-from unittest.mock import Mock, patch
 import pytest
 
 import chzzktube.pipeline.target_downloader as td
-from chzzktube.pipeline.dl_context import DownloadContext
 from chzzktube.core.speed_window import SpeedWindow
+from chzzktube.pipeline.dl_context import DownloadContext
 
 
 class TestFormatSelector:
@@ -86,7 +85,11 @@ class TestDownloadVodTerminalFailFast:
 
     def test_private_video_not_retried(self, monkeypatch):
         """비공개 영상은 재시도 없이 즉시 에러."""
-        from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, StreamCapability
+        from chzzktube.pipeline.classifier import (
+            ClassifiedTarget,
+            ContentKind,
+            StreamCapability,
+        )
 
         ctx = DownloadContext(
             cfg={"yt_player_client": "auto"},
@@ -125,9 +128,10 @@ class TestHttpDownloadWatchdogHeartbeat:
 
     def test_http_download_heartbeat_interval(self, monkeypatch, tmp_path):
         """5초마다 워치독 하트비트 호출 — 테스트용 0.5초 간격으로 단축."""
+        import time
+
         import chzzktube.pipeline.target_downloader as td
         import chzzktube.pipeline.target_downloader.utils as td_utils
-        import time
 
         # [테스트용] 모듈 내 상수 단축 (5초 → 0.5초)
         td_utils._WATCHDOG_HEARTBEAT_INTERVAL = 0.5

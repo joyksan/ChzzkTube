@@ -1,10 +1,10 @@
 """대상 확장과 전환 시 DownloadContext 상태의 일관성."""
 from unittest.mock import Mock
 
+import chzzktube.pipeline.progress_emitter as progress
 from chzzktube.core.speed_window import SpeedWindow
 from chzzktube.pipeline.dl_context import DownloadContext
-import chzzktube.pipeline.progress_emitter as progress
-import chzzktube.workers.downloader as downloader
+from chzzktube.workers import downloader
 
 
 def test_next_target_emits_first_tick(monkeypatch):
@@ -41,7 +41,7 @@ def test_expanded_count_reaches_each_target(monkeypatch, tmp_path):
     )
     urls = ["https://example.com/one", "https://example.com/two"]
     # Create ClassifiedTarget objects for the mock
-    from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
+    from chzzktube.pipeline.classifier import ItemClassifier
     classified_urls = [ItemClassifier.classify(u) for u in urls]
     observed = []
     finished = []

@@ -1,14 +1,13 @@
 ##### target_downloader/dispatch.py - 다운로드 디스패처 (메인 엔트리포인트)
 """개별 항목 다운로드 — 사전 분류 스킵 및 정적 디스패치 테이블 실행."""
-from chzzktube.pipeline.classifier import ContentKind, ClassifiedTarget
-from chzzktube.pipeline.target_downloader.chzzk import _download_chzzk, _download_chzzk_live
-from chzzktube.pipeline.target_downloader.youtube_vod import _download_vod
-from chzzktube.pipeline.target_downloader.youtube_live import _download_youtube_live
+from chzzktube.pipeline.classifier import ContentKind
+from chzzktube.pipeline.target_downloader.chzzk import (
+    _download_chzzk,
+    _download_chzzk_live,
+)
 from chzzktube.pipeline.target_downloader.utils import _emit_error_log
-import chzzktube.core.raw_log as raw_log
-from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.dl_platform import _dl_platform
-
+from chzzktube.pipeline.target_downloader.youtube_live import _download_youtube_live
+from chzzktube.pipeline.target_downloader.youtube_vod import _download_vod
 
 # ── 정적 디스패치 테이블 ───────────────────────────────────────────────────
 # ContentKind -> 다운로드 함수 매핑 (확장 용이)

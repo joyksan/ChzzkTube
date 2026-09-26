@@ -5,23 +5,20 @@
 - 없으면 GitHub releases에서 yt-dlp 바이너리 직접 다운로드
 - 업데이트는 동일 경로에 덮어쓰기
 """
-import os
-import sys
-import platform
-import shutil
-import subprocess
-import tempfile
-import urllib.request
 import json
-import stat
+import os
+import platform
 import re
+import stat
+import subprocess
+import sys
+import urllib.request
 from pathlib import Path
 
-import chzzktube.core.config as config
+from chzzktube.core import config
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
-from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
-
+from chzzktube.infra.paths import bundle_root, get_writable_base, is_portable
 
 # ── 상수 ──────────────────────────────────────────────────────────────
 YTDLP_MIN_VERSION = (2024, 1, 1)  # 최소 요구 버전
@@ -52,7 +49,6 @@ def _bin_dir() -> Path:
 def _platform_asset_name(ver: str) -> str:
     """플랫폼별 yt-dlp 배포 에셋 이름 생성."""
     system = platform.system().lower()
-    machine = platform.machine().lower()
     suffix = _exe_suffix()
 
     if system == "windows":
@@ -84,7 +80,7 @@ def _latest_stable_version() -> str:
             tag = data.get("tag_name", "").lstrip("v")
             if tag:
                 return tag
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — GitHub API 실패는 폴백 버전 사용
         log_f12_net(f"GitHub API failed for latest yt-dlp version: {e}")
     return _YTDLP_FALLBACK_VER
 
@@ -119,13 +115,13 @@ def _download_with_progress(url: str, dest: Path, log_func=None, label: str = ""
         if log_func:
             log_func(emit_component("DEPS", "OK", "YTDL", f"{label} done ({dest.stat().st_size / 1048576:.1f} MB)"))
         return True
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 다운로드 실패는 log_func 전달 후 False
         log_f12_net(f"Download failed: {url} ({e})", is_error=True)
         if log_func:
             log_func(emit_component("DEPS", "FAIL", "YTDL", f"{label} download failed: {e}", is_error=True))
         try:
             tmp.unlink(missing_ok=True)
-        except Exception:
+        except OSError:
             pass
         return False
 
@@ -162,8 +158,8 @@ def yt_dlp_path() -> str | None:
         overlay_bin = Path(overlay) / f"yt-dlp{suffix}"
         if overlay_bin.is_file():
             candidates.append(str(overlay_bin))
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — 오버레이 경로 탐색 실패는 candidates 미추가
+        log_f12_net(f"pylib overlay probe failed: {type(e).__name__}", is_error=True)
 
 
     # 실행 가능 여부 확인 후 첫 번째 유효한 것 반환
@@ -183,6 +179,7 @@ def yt_dlp_version(exe_path: str | None = None) -> tuple[int, int, int] | None:
         result = subprocess.run(
             [exe, "--version"],
             capture_output=True, text=True, timeout=10, encoding="utf-8", errors="replace",
+            check=False,  # PLW1510: returncode==0 분기로 버전 판정
         )
         cmd_str = f"{exe} --version"
         output_str = result.stdout or result.stderr or ""
@@ -191,7 +188,7 @@ def yt_dlp_version(exe_path: str | None = None) -> tuple[int, int, int] | None:
             m = re.match(r"(\d+)\.(\d+)\.(\d+)", output_str.strip())
             if m:
                 return tuple(map(int, m.groups()))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — yt-dlp --version 실행 실패는 None (미확인)
         log_f12_cli(f"{exe} --version", f"Exception: {e}", is_error=True)
     return None
 
@@ -208,7 +205,7 @@ def ensure_yt_dlp(log_func=None, channel: str = "stable") -> bool:
     # 이미 유효한 버전이 있으면 스킵
     if yt_dlp_ok():
         if log_func:
-            log_func(emit_component("DEPS", "OK", "YTDL", f"yt-dlp already available"))
+            log_func(emit_component("DEPS", "OK", "YTDL", "yt-dlp already available"))
         return True
 
     if log_func:
@@ -249,7 +246,7 @@ def ensure_yt_dlp(log_func=None, channel: str = "stable") -> bool:
             if log_func:
                 log_func(emit_component("DEPS", "FAIL", "YTDL", "installed binary version check failed", is_error=True))
             return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 바이너리 설치 예외는 log_func 전달 후 False
         if log_func:
             log_func(emit_component("DEPS", "FAIL", "YTDL", f"install failed: {e}", is_error=True))
         return False
@@ -268,7 +265,7 @@ def upgrade_yt_dlp(channel: str = "stable", log_func=None) -> tuple[int, str]:
     # 최신 버전 확인
     if channel == "nightly":
         # nightly는 항상 최신으로 간주 (버전 번호 없음)
-        return 0, f"updated to nightly"
+        return 0, "updated to nightly"
     else:
         latest = _latest_stable_version()
         if current:

@@ -3,14 +3,12 @@ import os
 import re
 import urllib.parse
 from dataclasses import dataclass, replace
-from typing import Optional
 
-from PySide6.QtCore import QObject, Signal, QThread
+from PySide6.QtCore import QObject, Signal
 
 from chzzktube.core.dl_platform import _DOMAIN_EXTRACTORS
 from chzzktube.workers.analyze_worker import AnalyzeWorker
 from chzzktube.workers.downloader import DownloadWorker
-
 
 # ── [v3.8.0] URL Validation Gate — 순수 함수 (컨트롤러/뷰 공용) ──────────────
 # 알려진 도메인 추출기 테이블을 단일 진실 공급원으로 재사용
@@ -76,8 +74,8 @@ class MediaController(QObject):
         super().__init__()
         self.view = view
         self._state = SessionState()
-        self.worker_dl: Optional[DownloadWorker] = None
-        self.worker_analyze: Optional[AnalyzeWorker] = None
+        self.worker_dl: DownloadWorker | None = None
+        self.worker_analyze: AnalyzeWorker | None = None
 
     # ── 상태 읽기 전용 프로퍼티 ──
     @property
@@ -151,12 +149,11 @@ class MediaController(QObject):
             if callable(quit_method):
                 quit_method()
             wait_method = getattr(w, "wait", None)
-            if callable(wait_method):
-                if not wait_method(2000):  # 2초 대기
-                    terminate_method = getattr(w, "terminate", None)
-                    if callable(terminate_method):
-                        terminate_method()
-                    wait_method(500)
+            if callable(wait_method) and not wait_method(2000):  # 2초 대기
+                terminate_method = getattr(w, "terminate", None)
+                if callable(terminate_method):
+                    terminate_method()
+                wait_method(500)
         self.worker_analyze = None
         self._set_analyzing(False)
 

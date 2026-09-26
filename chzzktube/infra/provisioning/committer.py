@@ -2,17 +2,15 @@
 
 Executor가 완료한 결과를 받아 manifest 업데이트, .pylib overlay 리로드, PATH 추가 수행.
 """
-from pathlib import Path
-from typing import Optional
 import os
-import time
 import shutil
+import time
+from pathlib import Path
 
-from chzzktube.core import config
-from chzzktube.infra.provisioning.manifest import ProvisionManifest, ComponentRecord
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import config, raw_log
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.log_event import LogEvent
+from chzzktube.infra.provisioning.manifest import ComponentRecord, ProvisionManifest
 
 
 class Committer:
@@ -87,7 +85,7 @@ class Committer:
                 "DEPS", "OK", "PY", f"overlay refreshed: {path}",
                 component_id="deps_PY", is_progress=False,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — overlay 리로드 실패는 WARN 발행
             self._emit(
                 "DEPS", "WARN", "PY", f"overlay refresh failed: {e}",
                 component_id="deps_PY", is_progress=False,
@@ -107,7 +105,7 @@ class Committer:
                         bin_str = str(bin_dir)
                         if bin_str not in parts:
                             os.environ["PATH"] = os.pathsep.join([bin_str] + parts)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — PATH 갱신 실패는 WARN 발행
             self._emit(
                 "DEPS", "WARN", "PATH", f"PATH refresh failed: {e}",
                 component_id="deps_PATH", is_progress=False,

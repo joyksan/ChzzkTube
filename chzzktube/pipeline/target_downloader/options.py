@@ -9,15 +9,12 @@ from chzzktube.core.client_opts import (
     _apply_cookie_opts,
     _apply_ejs_opts,
     _apply_ffmpeg_opts,
-    _apply_light_analysis_opts,
     _apply_post_opts,
     _apply_pot_opts,
     _concurrent_fragments,
 )
-from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.utils import get_filename_template
-from chzzktube.infra.po_client import extract_video_id
-from chzzktube.pipeline.target_downloader.utils import _extract_yt_id, _has_configured_cookies
+from chzzktube.pipeline.target_downloader.utils import _extract_yt_id
 
 
 def _format_selector(ctx):

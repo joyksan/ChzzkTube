@@ -284,3 +284,99 @@ def test_log_f12_cli_and_net_isolated_from_tui():
     for tag, event, to_tui in emitted:
         assert to_tui is False
         assert getattr(event, "stage", None) == "DEPS"
+
+
+def test_platform_warn_writes_single_stderr_diagnostic_line(capsys):
+    """무음 pass 금지 계약: _warn은 scope + 예외 타입명을 stderr 1줄로 남긴다.
+
+    stdout/stderr 직접 기록이어야 한다 — 상위 로깅 계층 역참조는 '바보 모듈' 원칙 위반.
+    """
+    from chzzktube.infra import platform
+
+    platform._warn("selftest scope", ValueError("boom"))
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "[platform] selftest scope: ValueError" in captured.err
+
+
+def test_strip_macos_quarantine_logs_when_xattr_spawn_fails(tmp_path, capsys):
+    """xattr 스폰이 예외로 실패해도 전파하지 않고 진단만 남긴다 (S110/BLE001 해소 계약)."""
+    with (
+        patch("chzzktube.infra.platform.is_macos", return_value=True),
+        patch(
+            "chzzktube.infra.platform.subprocess.run",
+            side_effect=FileNotFoundError("xattr"),
+        ),
+    ):
+        strip_macos_quarantine(str(tmp_path / "ffmpeg"))  # 예외 미전파
+
+    err = capsys.readouterr().err
+    assert "[platform]" in err
+    assert "FileNotFoundError" in err
+
+
+def test_kill_tree_stops_when_poll_signals_already_exited():
+    """poll()이 값을 보고하면 종료로 판단해 kill을 시도하지 않는다 (멱등 정리)."""
+    from chzzktube.infra import platform
+
+    proc = MagicMock()
+    proc.poll.return_value = 0
+
+    platform.kill_tree(proc)
+
+    proc.poll.assert_called_once()
+    proc.kill.assert_not_called()
+
+
+def test_attach_to_parent_lifecycle_returns_false_offsets(monkeypatch):
+    """[계약] 할당 실패는 False로 보고된다 — 종전엔 무음 None이라 오탐 여지가 있었다."""
+    from chzzktube.infra import platform
+
+    # 비-Windows / proc 없음 → False (no-op)
+    monkeypatch.setattr(platform, "is_windows", lambda: False)
+    assert platform.attach_to_parent_lifecycle(MagicMock()) is False
+    monkeypatch.setattr(platform, "is_windows", lambda: True)
+    assert platform.attach_to_parent_lifecycle(None) is False
+
+
+def test_attach_to_parent_lifecycle_false_when_assign_fails():
+    """AssignProcessToJobObject 실패 시 False — Job 핸들은 닫고 미할당으로 보고한다."""
+    from chzzktube.infra import platform
+
+    fake_k32 = MagicMock()
+    fake_k32.CreateJobObjectW.return_value = 0x1234  # 유효 핸들
+    fake_k32.SetInformationJobObject.return_value = 1
+    fake_k32.AssignProcessToJobObject.return_value = 0  # 할당 실패
+
+    proc = MagicMock()
+    proc._handle = 0x5678
+
+    fake_ctypes = MagicMock()
+    fake_ctypes.windll.kernel32 = fake_k32
+    fake_ctypes.c_int64 = fake_ctypes.c_size_t = int
+
+    with (
+        patch("chzzktube.infra.platform.is_windows", return_value=True),
+        patch.dict("sys.modules", {"ctypes": fake_ctypes}),
+    ):
+        result = platform.attach_to_parent_lifecycle(proc)
+
+    assert result is False
+    fake_k32.CloseHandle.assert_called_once_with(0x1234)  # 실패 시 핸들 누수 없음
+
+
+def test_assign_to_job_object_marks_only_on_real_assignment():
+    """[오탐 회귀] _ct_job은 실할당 시에만 True — 핸들 존재만으로 True가 되면 안 된다."""
+    from chzzktube.infra import pot_server
+
+    proc = MagicMock()
+    proc._handle = 0x5678  # 핸들은 있으나 할당은 실패하는 상황
+
+    with patch.object(pot_server, "attach_to_parent_lifecycle", return_value=False):
+        pot_server.assign_to_job_object(proc)
+    assert proc._ct_job is False
+
+    with patch.object(pot_server, "attach_to_parent_lifecycle", return_value=True):
+        pot_server.assign_to_job_object(proc)
+    assert proc._ct_job is True

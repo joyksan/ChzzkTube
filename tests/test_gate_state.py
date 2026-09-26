@@ -6,12 +6,12 @@ gate_state 모듈에 존재해야 한다.
 """
 from chzzktube.control.gate_state import (
     GateState,
-    start_gate,
-    stop_gate,
     arm_analysis,
+    consume_retry,
     disarm_analysis,
     schedule_retry,
-    consume_retry,
+    start_gate,
+    stop_gate,
 )
 
 

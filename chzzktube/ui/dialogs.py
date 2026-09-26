@@ -883,7 +883,7 @@ class VerboseLogWindow(QDialog):
         # 갱신형 라인 추적: component_id -> block number
         self._status_lines: dict[str, int] = {}
 
-    def append(self, msg, is_status=False, component_id: str = None):
+    def append(self, msg, is_status=False, component_id: str | None = None):
         if not msg:
             return
         if is_status and component_id:

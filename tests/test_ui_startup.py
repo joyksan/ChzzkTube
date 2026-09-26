@@ -1,7 +1,9 @@
 """실제 창 표시, 첫 워치독 폴링, 로그 렌더링 회귀 검증."""
 from unittest.mock import patch
+
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+
 from chzzktube.core.log_emitter import emit_event
 from chzzktube.ui.main_window import MainWindow
 

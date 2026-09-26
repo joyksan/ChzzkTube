@@ -9,10 +9,8 @@ ProvisioningManager(async)를 직접 호출할 수 있게 하는 어댑터.
 없으면 새로 생성. 중첩 호출 시 안전하게 동작. 생성한 루프는 사용 후 close로 정리.
 """
 import asyncio
-from typing import Optional
 
 from chzzktube.infra.provisioning.manager import ProvisioningManager, ProvisionResult
-
 
 _created_loops: set[int] = set()
 
@@ -57,7 +55,7 @@ def provision_component_sync(
     log_func=None,
     channel: str = "stable",
     force: bool = False,
-) -> Optional[ProvisionResult]:
+) -> ProvisionResult | None:
     """단일 구성요소 동기 수급 - 기존 동기 코드에서 호출.
 
     Args:

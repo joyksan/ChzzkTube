@@ -1,7 +1,6 @@
 """chzzktube.infra.po_client 단위 테스트 — 순수 HTTP 클라이언트 계층."""
-import chzzktube
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -10,7 +9,6 @@ from chzzktube.infra.po_client import (
     DEFAULT_PORT,
     extract_video_id,
     fetch_po_token,
-    probe_server,
     server_ping,
 )
 

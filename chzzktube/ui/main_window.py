@@ -32,9 +32,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from chzzktube.control import gate_state
 from chzzktube.control.controller import MediaController, _is_valid_url
 from chzzktube.control.gate_state import GateState
-import chzzktube.control.gate_state as gate_state
 from chzzktube.control.pot_manager import POTManager
 from chzzktube.control.startup_coordinator import StartupCoordinator
 from chzzktube.core import config, log_emitter, log_history, raw_log
@@ -52,7 +52,12 @@ from chzzktube.core.watchdog import (
 from chzzktube.infra.po_client import server_ping
 from chzzktube.infra.pylib_bootstrap import bootstrap as _bootstrap
 from chzzktube.ui import log_console, theme
-from chzzktube.ui.dialogs import DepsProvisioningDialog, ExitConfirmDialog, SettingsDialog, VerboseLogWindow
+from chzzktube.ui.dialogs import (
+    DepsProvisioningDialog,
+    ExitConfirmDialog,
+    SettingsDialog,
+    VerboseLogWindow,
+)
 from chzzktube.workers.update_worker import UpdateWorker
 
 try:
@@ -861,8 +866,9 @@ class MainWindow(QMainWindow):
                 True,
             )
             try:
-                from chzzktube.ui.dialogs import TuiNoticeDialog
                 from PySide6.QtWidgets import QWidget
+
+                from chzzktube.ui.dialogs import TuiNoticeDialog
                 # 부모가 유효한 QWidget인지 확인 (테스트 mock 환경 방지)
                 if isinstance(self, QWidget):
                     TuiNoticeDialog(
@@ -871,7 +877,7 @@ class MainWindow(QMainWindow):
                         text=f"missing dependencies:\n{', '.join(missing)}\nrestart to auto-provision",
                         ok_label="OK",
                     ).exec()
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 — 다이얼로그 표시 실패는 deps 게이트만 유지
                 pass
             return False
         return True
@@ -1437,7 +1443,7 @@ class MainWindow(QMainWindow):
 
         return _lm.mirror_event_full(self, event, is_status)
 
-    def _mirror_full_log(self, line, is_status=False, component_id: str = None):
+    def _mirror_full_log(self, line, is_status=False, component_id: str | None = None):
         from chzzktube.ui import log_mirror as _lm
 
         return _lm.mirror_full_log(self, line, is_status, component_id)

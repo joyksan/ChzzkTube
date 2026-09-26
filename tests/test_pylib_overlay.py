@@ -43,7 +43,7 @@ def test_pylib_overlay_env_override(tmp_path, monkeypatch):
 
 def test_pylib_overlay_frozen_mode_uses_writable_base(tmp_path, monkeypatch):
     """Frozen 모드에서 pylib_overlay_path()가 writable_base()/.pylib 반환하는지 검증."""
-    from chzzktube.core.config import pylib_overlay_path, writable_base, _repo_root
+    from chzzktube.core.config import _repo_root, pylib_overlay_path, writable_base
 
     monkeypatch.delenv("CHZZKTUBE_PYLIB_DIR", raising=False)
     # sys.frozen 시뮬레이션
@@ -79,8 +79,8 @@ def test_pylib_bootstrap_inserts_first(tmp_path, monkeypatch):
 
 def test_pylib_bootstrap_frozen_mode_creates_writable_base_pylib(tmp_path, monkeypatch):
     """Frozen 모드에서 bootstrap()이 writable_base()/.pylib 생성하고 sys.path에 삽입하는지 검증."""
-    from chzzktube.infra.pylib_bootstrap import bootstrap
     from chzzktube.core.config import writable_base
+    from chzzktube.infra.pylib_bootstrap import bootstrap
 
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.delenv("CHZZKTUBE_PYLIB_DIR", raising=False)

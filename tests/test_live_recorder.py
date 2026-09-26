@@ -9,15 +9,14 @@
 - handle_stream_finish 내부의 worker.log_success_info 오호출(DownloadContext에
   없는 메서드) → chzzktube.pipeline.progress_emitter 모듈 함수 계약 회귀 방지.
 """
-import chzzktube
 import inspect
 from io import BytesIO
 from unittest.mock import Mock
 
+import chzzktube
 from chzzktube.core.speed_window import SpeedWindow
+from chzzktube.pipeline import live_recorder
 from chzzktube.pipeline.dl_context import DownloadContext
-
-import chzzktube.pipeline.live_recorder as live_recorder
 
 
 def test_prepare_live_paths_derives_temp_and_thumb():
@@ -185,10 +184,9 @@ def test_real_ffmpeg_relay_and_remux(tmp_path):
 
 def test_record_live_stream_nonblocking_read(monkeypatch, tmp_path):
     """FFmpeg stdout 읽기가 논블로킹 타임아웃으로 동작하여 취소 체크가 가능해야 한다."""
-    import selectors
+    import time
     from io import BytesIO
     from unittest.mock import Mock
-    import time
 
     # 천천히 데이터를 내보내는 가짜 프로세스 (블로킹 시뮬레이션)
     class SlowStdout:
@@ -234,9 +232,9 @@ def test_record_live_stream_nonblocking_read(monkeypatch, tmp_path):
 
 def test_record_live_stream_cancel_during_read(monkeypatch, tmp_path):
     """읽기 도중 취소 신호가 오면 즉시 프로세스를 죽이고 빠져나와야 한다."""
+    import time
     from io import BytesIO
     from unittest.mock import Mock
-    import time
 
     # 무한히 블로킹하는 것처럼 보이는 stdout (하지만 논블로킹이면 타임아웃으로 빠져나옴)
     class BlockingStdout:

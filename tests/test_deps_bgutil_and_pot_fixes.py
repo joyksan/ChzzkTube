@@ -1,18 +1,13 @@
 """Tests for bgutil concurrent progress display, POT server creationflags fix, and duplicate log suppression."""
 import asyncio
 import subprocess
-import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
-from PySide6.QtCore import QCoreApplication
-
 from chzzktube.control.startup_coordinator import StartupCoordinator
-from chzzktube.core.log_event import LogEvent
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.infra import platform
-from chzzktube.infra.provisioning.executor import Executor, ProvisionResult
+from chzzktube.infra.provisioning.executor import Executor
 from chzzktube.infra.provisioning.planner import ProvisionPlan
 from chzzktube.infra.provisioning.resolver import MIRROR_REGISTRY
 
@@ -98,10 +93,12 @@ def test_executor_provision_emits_initial_zero_progress(tmp_path):
         ]
 
     executor._downloader.download_all = fake_download_all
-    with patch.object(executor, "_extract_and_install", return_value=tmp_path / "installed"):
-        with patch("chzzktube.infra.provisioning.verifier.Verifier.verify") as mock_v:
-            mock_v.return_value = MagicMock(success=True, version="1.0")
-            results = asyncio.run(executor.provision(plans))
+    with (
+        patch.object(executor, "_extract_and_install", return_value=tmp_path / "installed"),
+        patch("chzzktube.infra.provisioning.verifier.Verifier.verify") as mock_v,
+    ):
+        mock_v.return_value = MagicMock(success=True, version="1.0")
+        results = asyncio.run(executor.provision(plans))
 
     assert len(results) == 2
     assert all(r.success for r in results)
@@ -111,7 +108,9 @@ def test_log_f12_cli_two_phase_no_cmd_duplication():
     """Calling log_f12_cli(cmd) then log_f12_cli(None, output) does not duplicate $ cmd."""
     emitted = []
 
-    def mock_raw(tag, event, to_tui=False):
+    def mock_raw(tag, event, **_kwargs):
+        # **_kwargs absorbs optional raw() parameters (e.g. to_tui, is_status) without
+        # declaring unused named parameters (avoids Pylance "not accessed" hints).
         emitted.append((tag, event))
 
     with patch("chzzktube.core.raw_log.raw", side_effect=mock_raw):

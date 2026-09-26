@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from chzzktube.core.log_event import LogEvent
+from chzzktube.core import raw_log
 from chzzktube.core.log_emitter import emit_component
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core.log_event import LogEvent
 
 
 def _subscribe(collector, kind="concise"):
@@ -68,6 +68,7 @@ def test_raw_log_normal_event_has_no_component(concise_collector):
     assert evs[-1].is_progress is False
 def test_log_console_updates_progress_line_by_component_id():
     from PySide6.QtWidgets import QTextEdit
+
     from chzzktube.ui.log_console import ConciseLogConsole
     console = ConciseLogConsole(QTextEdit())
     console.append("ffmpeg 10%", component_id="deps_ffmpeg", is_progress=True)
@@ -82,6 +83,7 @@ def test_log_console_updates_progress_line_by_component_id():
 def test_log_console_finalizes_progress_line():
     """완료(is_progress=False) 시 진행 라인은 히스토리로 남고 중복되지 않는다."""
     from PySide6.QtWidgets import QTextEdit
+
     from chzzktube.ui.log_console import ConciseLogConsole
     console = ConciseLogConsole(QTextEdit())
     console.append("ffmpeg 10%", component_id="deps_ffmpeg", is_progress=True)
@@ -118,14 +120,15 @@ def test_verbose_log_window_set_content_resets_component_blocks():
 
 def test_provisioning_manager_emits_component_id_on_progress():
     import asyncio
+
     from chzzktube.infra.provisioning.manager import ProvisioningManager
 
     captured = {}
 
     def fake_log(msg, is_status=False, is_error=False,
                  component_id=None, is_progress=False):
-        captured["kwargs"] = dict(is_status=is_status, is_error=is_error,
-                                 component_id=component_id, is_progress=is_progress)
+        captured["kwargs"] = {"is_status": is_status, "is_error": is_error,
+                                 "component_id": component_id, "is_progress": is_progress}
 
     mgr = ProvisioningManager(log_func=fake_log)
     asyncio.run(mgr._on_progress("ffmpeg", 50, 100, 1024.0, 10.0))
@@ -211,8 +214,9 @@ def test_f12_buffer_snapshot_replaces_progress_ticks():
 
     class FakeMainWindow:
         from collections import deque
-        _full_log_buf = deque(maxlen=4096)
-        _last_full_was_status = False
+        from typing import ClassVar
+        _full_log_buf: ClassVar = deque(maxlen=4096)
+        _last_full_was_status: ClassVar = False
 
     FakeMainWindow._mirror_full_log = MainWindow._mirror_full_log
 
@@ -246,7 +250,7 @@ def test_f12_buffer_snapshot_replaces_progress_ticks():
 
 def test_f12_full_history_keeps_every_tick():
     """전량 보존은 dispatcher full_events ring이 담당 (버퍼 치환과 직교)."""
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
     from chzzktube.core.log_emitter import emit_component
 
     seen = []

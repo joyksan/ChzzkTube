@@ -10,9 +10,8 @@
   → "F12가 안 받는 로그"는 존재하지 않는다.
 - 콘텐츠 정규식(is_tui_line) 라우팅 제로 — 렌더링 책임은 구독자(View)에게.
 """
-from dataclasses import dataclass, field
 import time
-
+from dataclasses import dataclass, field
 
 # v3.4.0 허용 STAGE 8종 / STATUS 9종 — 이외 값 발행 금지.
 STAGES = ("SYS", "DEPS", "ANAL", "DL", "LIVE", "MERG", "BATCH", "POT")

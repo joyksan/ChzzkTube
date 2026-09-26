@@ -19,10 +19,8 @@ import re
 import subprocess
 import urllib.request
 
-import chzzktube.core.config as config
-from chzzktube.core.raw_log import log_f12_cli
+from chzzktube.core.raw_log import log_f12_cli, log_f12_net
 from chzzktube.infra.paths import get_writable_base
-
 
 # ── 상수 (node_provider 전용) ──────────────────────────────────────
 NODE_MIN_MAJOR = 22  # bgutil 서버의 Node 요구사항 (require(esm) 기본 지원선)
@@ -47,14 +45,15 @@ def node_major_version(node_path, timeout=10):
             [node_path, "--version"],
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
-            timeout=timeout, **spawn_kwargs(),
+            timeout=timeout, check=False,  # PLW1510: 파싱 실패는 None 반환 계약
+            **spawn_kwargs(),
         )
         version_out = (out.stdout or "").strip()
         log_f12_cli(f"{node_path} --version", version_out)
         m = re.match(r"v?(\d+)", version_out)
         if m:
             major = int(m.group(1))
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — node --version 파싱 예외는 F12 로깅 후 None
         major = None
         # [Silent fallback 제거] 버전 판별 실패 로그
         log_f12_cli(f"{node_path} --version", f"Exception: {e}", is_error=True)
@@ -82,8 +81,8 @@ def latest_lts_node_url(major=NODE_MIN_MAJOR):
         )
         if ver:
             return _platform_node_url(ver)
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 — nodejs.org dist 조회 실패는 폴백 URL 사용
+        log_f12_net(f"nodejs.org dist fetch failed: {type(e).__name__}", is_error=True)
     return _platform_node_url(_NODE_FALLBACK_VER)
 
 
@@ -130,7 +129,8 @@ def node_exe():
     - 실행 비트 보장(macOS) + 요구 버전 필터
     - 후보 없으면 None → ProvisioningManager 수급 트리거
     """
-    from chzzktube.infra.platform import exe_suffix, is_windows as _np_is_win
+    from chzzktube.infra.platform import exe_suffix
+    from chzzktube.infra.platform import is_windows as _np_is_win
 
     _exe_suffix = exe_suffix()
 
@@ -158,7 +158,7 @@ def node_exe():
                 mode = os.stat(c).st_mode
                 if not (mode & 0o111):
                     os.chmod(c, mode | 0o755)
-            except Exception:
+            except OSError:
                 pass
 
     majors = [(c, node_major_version(c)) for c in cands]
@@ -232,7 +232,7 @@ def ensure_node_runtime(log_func):
         if result is None or not result.success:
             log_func(f"Node.js provisioning failed: {result.error if result else 'unavailable'}", False, True)
             return False
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 프로비저닝 예외는 log_func 전달 후 False
         log_func(f"Node.js provisioning failed: {e}", False, True)
         return False
 
@@ -271,11 +271,11 @@ def _prune_outdated_node_dirs():
         try:
             if os.path.samefile(full, keep_root) or keep_root.startswith(full + os.sep):
                 continue
-        except Exception:
+        except OSError:
             continue
         # npm/node_modules가 포함된 폴더만 대상 (안전장치)
         if any(f.startswith("node") for f in os.listdir(full)[:5]):
             try:
                 _shutil.rmtree(full, ignore_errors=True)
-            except Exception:
+            except OSError:
                 pass

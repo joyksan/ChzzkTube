@@ -7,7 +7,6 @@
 - 기존 서버 감지(server_ping True) 시 use_existing()으로 즉시 ready 승격 —
   _pending_download 영구 큐잉 방지.
 """
-import chzzktube
 from types import SimpleNamespace
 
 from PySide6.QtCore import QCoreApplication

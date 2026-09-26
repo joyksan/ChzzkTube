@@ -6,9 +6,9 @@
 - warning/error는 버퍼에 갇히지 않고 즉시 보존
 - progress tick 0.5초 스로틀 (2Hz 상한)
 """
-import chzzktube
 from unittest.mock import patch
 
+import chzzktube
 from chzzktube.core.yt_logger_bridge import YtLoggerBridge
 
 
@@ -45,7 +45,6 @@ def test_warning_immediate_not_buffered():
 
 
 def test_progress_throttle_blocks_rapid_ticks():
-    import chzzktube.core.raw_log as raw_log
     b = YtLoggerBridge()
     b._last_progress = None
     b._last_progress_at = 0.0

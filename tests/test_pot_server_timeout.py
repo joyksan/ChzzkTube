@@ -7,7 +7,6 @@ npm ci / tsc 러너에 상한이 없으면(무제한 communicate()) 무응답 �
 """
 import subprocess
 
-import chzzktube
 from chzzktube.infra import pot_server
 
 

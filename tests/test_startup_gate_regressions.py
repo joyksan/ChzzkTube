@@ -16,13 +16,11 @@ from dataclasses import field
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-import chzzktube
 from PySide6.QtCore import QCoreApplication
 
+import chzzktube.ui.main_window as main_module
 from chzzktube.control.controller import MediaController
 from chzzktube.workers.update_worker import UpdateWorker
-
-import chzzktube.ui.main_window as main_module
 
 # 게이트 하드닝 상수 — 소스와 값이 어긋나면 테스트가 즉시 잡아낸다.
 _FALLBACK_GRACE_MS = main_module._FALLBACK_GRACE_MS
@@ -40,7 +38,6 @@ class _SignalStub:
 
     def connect(self, slot, *a, **k):
         self.slots.append(slot)
-        return None
 
 
 class _WorkerStub:
@@ -286,7 +283,6 @@ class _TimerFake:
 
     def _on_pot_activity(self, status):
         """[v3.8.1] 폴백 타이머 제거로 더 이상 연장하지 않음."""
-        pass
 
 
 def test_no_fallback_timer():
@@ -399,7 +395,7 @@ class _GateFake:
 
 def test_gate_watchdog_cancels_pot_and_clears_queue(monkeypatch):
     """[Followup-3] gate hang 시 POT를 트리 종료하고 대기 큐를 해제한다."""
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
 
     monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)  # 전역 버스 오염 격리
     fake = _GateFake(pot_busy=True)
@@ -411,7 +407,7 @@ def test_gate_watchdog_cancels_pot_and_clears_queue(monkeypatch):
 
 
 def test_gate_watchdog_noop_when_pot_idle(monkeypatch):
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
 
     monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)  # 전역 버스 오염 격리
     fake = _GateFake()
@@ -427,7 +423,7 @@ def test_no_fallback_grace():
 
 def test_deps_fail_promoted_to_gate(monkeypatch):
     """[Followup-5] DEPS 실제 FAIL은 게이트를 막는다(stale은 막지 않는다)."""
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
 
     monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)  # 전역 버스 오염 격리
     fake = _GateFake()
@@ -446,7 +442,7 @@ def test_needs_pot_retry_detection():
 
 def test_bot_retry_schedules_once_and_blocks_loop(monkeypatch):
     """[Followup-6] 재시도는 URL당 1회 — 재실패 시 루프를 만들지 않는다."""
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
 
     monkeypatch.setattr(raw_log, "raw", lambda *a, **k: None)
     fake = _GateFake(pot_ready=False)

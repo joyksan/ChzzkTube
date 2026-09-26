@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-import chzzktube.workers.downloader as downloader
+from chzzktube.workers import downloader
 
 
 @pytest.mark.parametrize("failure", ["extract", "expand", "download", "finalize", "logging", None])

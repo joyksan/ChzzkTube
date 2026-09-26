@@ -7,15 +7,12 @@
 - 치지직 파일명 생성
 - YouTube ID 추출
 """
-import os
 import re
 
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.core.dl_platform import _dl_platform
 from chzzktube.core.log_emitter import emit_event
-from chzzktube.core.utils import get_filename_template
 from chzzktube.pipeline.classifier import ClassifiedTarget
-
 
 # ── 봇 차단 재시도 가능 마커 vs 터미널 에러 판별 (SSOT) ───────────────────────
 _RETRYABLE_BOT_MARKERS = frozenset({

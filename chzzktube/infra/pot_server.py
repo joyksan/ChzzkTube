@@ -9,41 +9,37 @@
 
 Node.js 런타임 수급은 node_provider.py가 담당. 공유 경로 헬퍼는 infra.paths에서 import.
 """
-import os
-import sys
-import time
 import json
+import os
 import shutil
-import zipfile
-import tarfile
 import subprocess
-import urllib.request
 import tempfile
+import time
+import urllib.request
+import zipfile
+from dataclasses import dataclass
 
-import chzzktube.core.config as config
 from chzzktube.core import DOWNLOAD_TIMEOUT, READ_TIMEOUT
 from chzzktube.core.log_emitter import emit_component
 from chzzktube.core.raw_log import log_f12_cli, log_f12_net
-from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
 from chzzktube.infra.node_provider import NODE_MIN_MAJOR
-from chzzktube.infra.paths import get_writable_base, is_portable, bundle_root
-from chzzktube.ui import ProgressBar
+from chzzktube.infra.paths import get_writable_base
 from chzzktube.infra.platform import (
     attach_to_parent_lifecycle,
     daemon_spawn_kwargs,
     is_windows,
 )
 from chzzktube.infra.platform import kill_tree as kill_tree_platform
-from dataclasses import dataclass
-from typing import Optional
+from chzzktube.infra.po_client import DEFAULT_PORT, probe_server
+from chzzktube.ui import ProgressBar
 
 
 @dataclass
 class Result:
     """표준화된 성공/실패 결과 (예외 대신 명시적 반환)."""
     success: bool
-    value: Optional[object] = None
-    error: Optional[str] = None
+    value: object | None = None
+    error: str | None = None
 
 
 _TAG_ZIP = (
@@ -73,14 +69,18 @@ def assign_to_job_object(proc):
     """Windows: 프로세스를 Job Object에 할당해 부모 종료 시 자동 정리.
 
     실체는 platform.attach_to_parent_lifecycle — 여기는 하위 호환 재수출.
+
+    [표식 정확성] `proc._ct_job`은 "Job Object에 실제로 할당됨"을 뜻한다.
+    종전에는 `_handle` 존재만 보고 무조건 True를 붙여, 할당이 실패해도
+    할당된 것처럼 보였다(부모 종료 정리가 무력화된 사실이 은폐됨).
+    이제 platform의 반환값(실할당 여부)을 그대로 옮긴다.
     """
-    attach_to_parent_lifecycle(proc)
-    # 레거시 계약: 성공 시 proc._ct_job 부착을 기대하는 코드가 있어 핸들 표식 유지.
+    assigned = attach_to_parent_lifecycle(proc)
     try:
-        if is_windows() and proc is not None and getattr(proc, "_handle", None):
-            proc._ct_job = True
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+        if proc is not None:
+            proc._ct_job = bool(assigned)
+    except Exception as e:  # noqa: BLE001 — 표식 부착 실패는 무시 (raw 버스 진단 유지)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"assign_to_job_object error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -92,8 +92,8 @@ def read_server_log_tail(n=10):
             with open(log_file_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
             return "".join(lines[-n:])
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — 로그 꼬리 읽기 실패는 빈 문자열 폴백
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"read_server_log_tail error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return ""
 
@@ -116,8 +116,8 @@ def latest_server_ver(timeout=3):
         )
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return (json.load(resp).get("tag_name") or "").strip() or None
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — GitHub API 실패는 None 폴백 (판정 유지)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"latest_server_ver error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None
 
@@ -142,7 +142,7 @@ def server_installed_ver():
         if os.path.isfile(pkg_json):
             with open(pkg_json, encoding="utf-8") as f:
                 return json.load(f).get("version")
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 — package.json 판독 실패는 None 폴백
         pass
     return None
 
@@ -154,7 +154,7 @@ def clean_stale_plugin():
     자동 로드해 fetch_po_token과 이중 주입 → 토큰 충돌 위험. 기동 시 1회.
     대상: <writable_base>/yt_dlp_plugins, <components>/yt-dlp/yt_dlp_plugins
     """
-    import chzzktube.infra.components as components
+    from chzzktube.infra import components
     roots = [
         os.path.join(get_writable_base(), "yt_dlp_plugins"),
         os.path.join(components.components_root(), "yt-dlp", "yt_dlp_plugins"),
@@ -190,8 +190,8 @@ def _kill(proc):
     """서버 프로세스 강제 종료 (침묵형)."""
     try:
         proc.kill()
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 강제 종료 자체가 best-effort
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_kill error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -201,8 +201,8 @@ def kill_tree(proc):
     try:
         if getattr(proc, "_ct_job", None):
             proc._ct_job = None
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 표식 해제 실패는 무시 (종료 경로)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"kill_tree error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -230,12 +230,13 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
                                     ["taskkill", "/F", "/PID", pid],
                                     stdout=_sub.DEVNULL,
                                     stderr=_sub.DEVNULL,
+                                    check=False,  # PLW1510: 좀비 정리는 best-effort
                                 )
                                 if log_func:
                                     log_func(f"[pot:zombie] killed windows pid={pid} on port {port}")
                                 killed = True
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — netstat/taskkill 실패는 로그 후 계속
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"kill_process_on_port windows error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         else:
             # macOS/Linux: lsof로 PID 찾기 → kill
@@ -251,11 +252,11 @@ def kill_process_on_port(port=DEFAULT_PORT, log_func=None):
                         if log_func:
                             log_func(f"[pot:zombie] killed posix pid={pid} on port {port}")
                         killed = True
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — lsof/kill 실패는 로그 후 계속
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"kill_process_on_port posix error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — 포트 정리 실패해도 killed 플래그 반환
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"kill_process_on_port error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return killed
 
@@ -296,12 +297,12 @@ def pot_readiness(log_func=None, check_stale=False, want_refresh=False):
             if log_func:
                 try:
                     log_func("[pot-readiness] not ready: node missing")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — log_func 실패는 raw 버스 진단으로 흡수
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return False, "node missing"
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — node 판별 실패는 "node missing" 폴백
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"node check error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False, "node missing"
     try:
@@ -310,12 +311,12 @@ def pot_readiness(log_func=None, check_stale=False, want_refresh=False):
             if log_func:
                 try:
                     log_func("[pot-readiness] not ready: no build")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return False, "no build"
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"built_server_js error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return False, "no build"
     if check_stale:
@@ -332,20 +333,20 @@ def pot_readiness(log_func=None, check_stale=False, want_refresh=False):
                 if log_func:
                     try:
                         log_func(f"[pot-readiness] stale build (local {local} → remote {remote})")
-                    except Exception as e:
-                        import chzzktube.core.raw_log as raw_log
+                    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                        from chzzktube.core import raw_log
                         raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 if want_refresh:
                     return True, f"stale {local}→{remote} (refresh pending)"
                 return False, f"stale {local}→{remote}"
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"stale check error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     if log_func:
         try:
             log_func(f"[pot-readiness] standby (node ok, build {js})")
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
     return True, "standby"
 
@@ -363,10 +364,12 @@ def _spawn_node_server(log_full_func=None):
         return None
 
     log_file_path = os.path.join(get_writable_base(), "bgutil_server.log")
+    # SIM115: open() 핸들은 Popen에 stdout/stderr로 넘겨지므로 with로 닫으면 안 된다 —
+    # 자식 프로세스가 살아있는 동안 부모가 핸들을 유지해야 한다. 실패 시 DEVNULL 폴백.
     try:
-        log_file = open(log_file_path, "w", encoding="utf-8", errors="replace")
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+        log_file = open(log_file_path, "w", encoding="utf-8", errors="replace")  # noqa: SIM115
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"open server log error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         log_file = subprocess.DEVNULL
 
@@ -385,7 +388,7 @@ def _spawn_node_server(log_full_func=None):
             **kwargs,
         )
         assign_to_job_object(proc)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — 스폰 실패는 호출자 로그 + None 반환 계약
         if log_full_func:
             log_full_func(f"server Popen failed: {e}")
         return None
@@ -445,8 +448,8 @@ def _download_with_progress(url, dest_path, log_func=None, desc="downloading", t
             if os.path.exists(temp_dest):
                 try:
                     os.remove(temp_dest)
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"temp file cleanup error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -487,8 +490,8 @@ def _pid_alive(pid):
                     return True
                 finally:
                     _k32.CloseHandle(h)
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"_pid_alive windows error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 return True  # 판별 자체 실패 → 보수적 유지
         else:
@@ -498,13 +501,13 @@ def _pid_alive(pid):
                 return False
             except PermissionError:
                 return True  # 존재하나 권한 없음 → 살아있음
-            except Exception as e:
-                import chzzktube.core.raw_log as raw_log
+            except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                from chzzktube.core import raw_log
                 raw_log.raw("POT", f"_pid_alive posix error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 return True
             return True
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_pid_alive error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return True
 
@@ -517,8 +520,8 @@ def _read_lock_info(path):
         pid = int(parts[0]) if parts else None
         epoch = float(parts[1]) if len(parts) > 1 else None
         return pid, epoch
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_read_lock_info error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         return None, None
 
@@ -546,14 +549,14 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             try:
-                os.write(fd, f"{os.getpid()} {_time.time()}".encode("utf-8"))
+                os.write(fd, f"{os.getpid()} {_time.time()}".encode())
             except OSError:
                 pass
             if log_func:
                 try:
                     log_func("[prewarm-lock] acquired")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return fd
         except FileExistsError:
@@ -567,8 +570,8 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
                 if log_func:
                     try:
                         log_func(f"[prewarm-lock] stale reclaimed (pid={pid} dead, age={int(age)}s)")
-                    except Exception as e:
-                        import chzzktube.core.raw_log as raw_log
+                    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                        from chzzktube.core import raw_log
                         raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
                 try:
                     os.remove(path)
@@ -579,8 +582,8 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
                 waited_note = True
                 try:
                     log_func(f"[prewarm-lock] waiting (holder pid={pid}, alive={alive})")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
         except OSError:
             return None
@@ -588,8 +591,8 @@ def acquire_prewarm_lock(timeout=0, log_func=None):
             if log_func:
                 try:
                     log_func("[prewarm-lock] busy — acquire timeout")
-                except Exception as e:
-                    import chzzktube.core.raw_log as raw_log
+                except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+                    from chzzktube.core import raw_log
                     raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
             return None
         _time.sleep(0.2)
@@ -608,8 +611,8 @@ def release_prewarm_lock(fd, log_func=None):
     if log_func:
         try:
             log_func("[prewarm-lock] released")
-        except Exception as e:
-            import chzzktube.core.raw_log as raw_log
+        except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+            from chzzktube.core import raw_log
             raw_log.raw("POT", f"log_func error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -642,8 +645,8 @@ def download_and_install_source(want_ver, log_func=None):
                 vf.write(str(want_ver))
             with open(os.path.join(dest_dir, "server", ".version"), "w", encoding="utf-8") as vf:
                 vf.write(str(want_ver))
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — 버전 마커 기록 실패는 무시 (소스 전개 완료가 본질)
+            log_f12_net(f".version marker write failed: {type(e).__name__}", is_error=True)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -723,7 +726,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
                     if stripped:
                         log_full_func(stripped)
         return proc.returncode
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — Popen 실패는 F12 진단 + -1 반환 계약
         log_f12_cli(None, f"[{type(e).__name__}] {e}", is_error=True, stage="POT", tag="pot-cli")
         if log_full_func:
             log_full_func(f"subprocess Popen error: {e}")
@@ -738,8 +741,8 @@ def _prune_outdated_node_dirs(node_dir):
             m = _re.match(r"node-v(\d+)\.", name)
             if m and int(m.group(1)) < NODE_MIN_MAJOR:
                 shutil.rmtree(os.path.join(node_dir, name), ignore_errors=True)
-    except Exception as e:
-        import chzzktube.core.raw_log as raw_log
+    except Exception as e:  # noqa: BLE001 — raw 버스 진단 유지 (동작 불변)
+        from chzzktube.core import raw_log
         raw_log.raw("POT", f"_prune_outdated_node_dirs error: {type(e).__name__}: {e}", is_error=True, to_tui=False)
 
 
@@ -787,7 +790,7 @@ def _ensure_source_fetched(ver, log, log_full):
         log(emit_component("pot", "RUN", "pot", f"bgutil source fetching (v{ver})"))
         try:
             download_and_install_source(ver, log)
-        except Exception as ds_ex:
+        except Exception as ds_ex:  # noqa: BLE001 — 소스 수급 실패는 호출자 로그 후 폴백
             log_full(f"[pot] source fetch failed: {ds_ex}")
     else:
         log(emit_component("pot", "RUN", "pot", "bgutil source detected — building"))
@@ -866,8 +869,8 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
     반환: Result(success=True, value=server_dir) 또는 Result(success=False, error=str)
     """
     from chzzktube.infra.node_provider import (
-        node_exe, node_ok, node_major_version,
-        ensure_node_runtime, bundled_npm_ok,
+        ensure_node_runtime,
+        node_ok,
     )
 
     js = built_server_js()
@@ -912,8 +915,8 @@ def ensure_node_server(log, log_full, want_ver, rebuild=False,
                 vf.write(str(ver))
             with open(os.path.join(server_home(), "server", ".version"), "w", encoding="utf-8") as vf:
                 vf.write(str(ver))
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 — 버전 마커 기록 실패는 무시 (빌드 성공이 본질)
+            log_f12_net(f".version marker write failed: {type(e).__name__}", is_error=True)
 
         return Result(success=True, value=server_dir)
 

@@ -8,23 +8,16 @@
 3. Hyper-Minimalist TUI: 중간 임시 스트림(.fNNN) 은닉 + 최종 결과물 1줄 (Task 5-2).
 4. FAIL 단일 출력: target_downloader는 즉시 TUI 발행하지 않는다 (Task 4-3).
 """
-import asyncio
 import hashlib
-import io
 import json
 import os
 import re
-import sys
 import tarfile
-from types import SimpleNamespace
 
-import chzzktube.core.client_opts as client_opts
-import chzzktube.infra.components as components
-import chzzktube.infra.node_provider as node_provider
-import chzzktube.infra.pot_provider as pot_provider
-import chzzktube.infra.updater as updater
 import chzzktube.pipeline.progress_emitter as _pe
 import chzzktube.pipeline.target_downloader as _td
+from chzzktube.core import client_opts
+from chzzktube.infra import components, node_provider, updater
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -110,7 +103,7 @@ class TestEnvironmentIsolation:
 
     def test_ffmpeg_exe_returns_none_without_cache(self, monkeypatch, tmp_path):
         # [격리 계약] 시스템 ffmpeg가 있더라도 캐시가 비면 None.
-        import chzzktube.core.config as config
+        from chzzktube.core import config
         monkeypatch.setattr(config, "writable_base", lambda: str(tmp_path / "empty"))
         assert components.ffmpeg_exe() is None
 
@@ -135,7 +128,7 @@ class TestEnvironmentIsolation:
         사용하고, relocatable bottle(:any_skip_relocation)만 채택하며, SHA-256을
         반드시 검증한다.
         """
-        import chzzktube.core.config as config
+        from chzzktube.core import config
 
         bottle_root = tmp_path / "bottle"
         bin_dir = bottle_root / "opt" / "homebrew" / "Cellar" / "ffmpeg" / "9.0" / "bin"
@@ -351,7 +344,7 @@ class TestAnalyzeErrorResetAndCookiePopup:
 
     def _body(self):
         src = _read("chzzktube/ui/main_window.py")
-        m = re.search(r"def on_analyze_error.*?(?=\n    def )", src, re.S)
+        m = re.search(r"def on_analyze_error.*?(?=\n    def )", src, re.DOTALL)
         assert m, "on_analyze_error not found"
         return m.group(0)
 
@@ -376,7 +369,7 @@ class TestUrlGateWiring:
 
     def test_start_download_has_second_defense(self):
         src = _read("chzzktube/ui/main_window.py")
-        m = re.search(r"def _start_download.*?(?=\n    def )", src, re.S)
+        m = re.search(r"def _start_download.*?(?=\n    def )", src, re.DOTALL)
         assert m and "_is_valid_url" in m.group(0)
 
 
@@ -389,7 +382,7 @@ class TestAnalTuiSpec:
 
     def test_stop_analysis_anim_emits_spec_lines(self):
         src = _read("chzzktube/ui/main_window.py")
-        m = re.search(r"def stop_analysis_anim.*?(?=\n    def )", src, re.S)
+        m = re.search(r"def stop_analysis_anim.*?(?=\n    def )", src, re.DOTALL)
         body = m.group(0)
         assert "analysis_done_msg" in body
         assert 'scope="POT"' in body
@@ -414,7 +407,11 @@ class TestErrorLogFormat:
 
         """TUI 포맷 정규식 검증: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG (구분자 │ U+2502)"""
         import re
-        from chzzktube.core.log_emitter import format_log_line_for_event, emit_error_standard
+
+        from chzzktube.core.log_emitter import (
+            emit_error_standard,
+            format_log_line_for_event,
+        )
         evt = emit_error_standard("DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)")
         line = format_log_line_for_event(evt)
         # 검증: [HH:MM:SS] STAGE │ STATUS │ SCOPE │ MSG (구분자는 U+2502 │)
@@ -428,7 +425,7 @@ class TestErrorLogFormat:
         assert len(evt.msg) <= 55
 
     def test_forbidden_patterns_absent(self):
-        from chzzktube.core.log_emitter import emit_error_standard, emit_error_warn
+        from chzzktube.core.log_emitter import emit_error_standard
         forbidden = ["원인:", "해결:", "::", "dyld:", "URLError", "traceback", "fallback", "timeout"]
         evt = emit_error_standard("DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)")
         msg = str(evt.msg)
@@ -436,7 +433,7 @@ class TestErrorLogFormat:
             assert f not in msg, f"금지 패턴 {f} 발견: {msg}"
 
     def test_cause_action_keywords_standardized(self):
-        from chzzktube.core.log_emitter import _normalize_cause, _normalize_action
+        from chzzktube.core.log_emitter import _normalize_action, _normalize_cause
         assert _normalize_cause("binary incompatible") == "binary incompatible"
         assert _normalize_cause("BINARY INCOMPATIBLE") == "binary incompatible"
         assert _normalize_cause("Symbol not found: _av_default_item_name") == "not found"
@@ -474,7 +471,10 @@ class TestErrorLogFormat:
 
     def test_msg_contains_delimiter_is_sanitized(self):
         """MSG에 구분자(│) 포함 시 컬럼 포맷 깨짐 방지."""
-        from chzzktube.core.log_emitter import emit_error_standard, format_log_line_for_event
+        from chzzktube.core.log_emitter import (
+            emit_error_standard,
+            format_log_line_for_event,
+        )
         # 사용자 입력이 구분자 포함
         evt = emit_error_standard("DEPS", "FFMP", "evil │ injected", "try again")
         line = format_log_line_for_event(evt)
@@ -484,7 +484,10 @@ class TestErrorLogFormat:
 
     def test_msg_contains_newline_is_sanitized(self):
         """MSG에 개행 포함 시 단일 라인 유지."""
-        from chzzktube.core.log_emitter import emit_error_standard, format_log_line_for_event
+        from chzzktube.core.log_emitter import (
+            emit_error_standard,
+            format_log_line_for_event,
+        )
         evt = emit_error_standard("DEPS", "FFMP", "evil\ninjected", "try again")
         line = format_log_line_for_event(evt)
         assert "\n" not in line, "개행이 라인을 분리함"
@@ -493,7 +496,10 @@ class TestErrorLogFormat:
 
     def test_msg_contains_multiple_delimiters(self):
         """MSG에 다중 구분자 포함 시에도 컬럼 보존."""
-        from chzzktube.core.log_emitter import emit_error_standard, format_log_line_for_event
+        from chzzktube.core.log_emitter import (
+            emit_error_standard,
+            format_log_line_for_event,
+        )
         evt = emit_error_standard("DEPS", "FFMP", "a│b│c│d", "try again")
         line = format_log_line_for_event(evt)
         parts = line.split("│")
@@ -514,37 +520,6 @@ class TestErrorLogFormat:
         assert len(parts) == 3  # 시간 │ 스테이지 │ 스코프 (msg 컬럼 생략)
         assert line.endswith("MAIN ")
 
-    def test_emit_error_standard_returns_logevent(self):
-        from chzzktube.core.log_emitter import emit_error_standard
-        from chzzktube.core.log_event import LogEvent
-        evt = emit_error_standard("DEPS", "FFMP", "binary incompatible", "retry mirror (1/3)")
-        assert isinstance(evt, LogEvent)
-        assert evt.stage == "DEPS" and evt.scope == "FFMP" and evt.status == "FAIL" and evt.is_error is True
-
-    def test_emit_error_warn_returns_logevent(self):
-        from chzzktube.core.log_emitter import emit_error_warn
-        from chzzktube.core.log_event import LogEvent
-        evt = emit_error_warn("DEPS", "FFMP", "cached not working", "retry mirror (1/3)")
-        assert isinstance(evt, LogEvent) and evt.status == "WARN"
-        # Note: 현재 구현은 is_error=True로 고정되어 있음 (emit_error_standard에서 하드코딩)
-
-    def test_emit_error_warn_default_status(self):
-        from chzzktube.core.log_emitter import emit_error_warn
-        evt = emit_error_warn("DEPS", "FFMP", "cached not working", "retry mirror (1/3)")
-        assert evt.status == "WARN"
-
-class TestAnalTuiSpec:
-    """Task 5-1 -- ANAL 마감 정갈 명세."""
-    def test_done_msg_constant(self):
-        from chzzktube.core import log_emitter
-        assert log_emitter.analysis_done_msg() == "analyzing complete!"
-    def test_stop_analysis_anim_emits_spec_lines(self):
-        src = _read("chzzktube/ui/main_window.py")
-        import re
-        m = re.search(r"def stop_analysis_anim.*?(?=\n    def )", src, re.S)
-        body = m.group(0)
-        assert "analysis_done_msg" in body and 'scope="POT"' in body and "availability" in body
-
 
 class TestF12CliNetHelpers:
     """Task 3 — F12 CLI/Network 원문 수급 헬퍼 계약 (v3.10.0).
@@ -563,7 +538,7 @@ class TestF12CliNetHelpers:
         return tui, full
 
     def test_log_f12_cli_emits_prompt_and_truncated_output(self):
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         tui, full = self._capture(raw_log)
         raw_log.log_f12_cli("yt-dlp --version", "2026.8.19\nline2\nline3\nline4\nline5\nline6\nline7")
         raw_log.flush()
@@ -576,7 +551,7 @@ class TestF12CliNetHelpers:
         assert tui == []
 
     def test_log_f12_net_never_reaches_tui(self):
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         tui, full = self._capture(raw_log)
         raw_log.log_f12_net("GET https://example.invalid/x -> /tmp/x")
         raw_log.flush()
@@ -584,7 +559,7 @@ class TestF12CliNetHelpers:
         assert tui == []
 
     def test_helpers_ignore_empty_input(self):
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
         tui, full = self._capture(raw_log)
         raw_log.log_f12_cli("", "body")
         raw_log.log_f12_net("")

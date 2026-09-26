@@ -8,17 +8,17 @@
 - live_recorder가 proc를 DownloadContext에 부착하는데 worker만 보던 정리 계약 (A4)
 - main의 needs_pot 3중 중복 판정식 단일화 (E1)
 """
-import chzzktube
 from collections import deque
 from types import SimpleNamespace
 
-import chzzktube.core.raw_log as raw_log
+import chzzktube
 import chzzktube.ui.main_window as main_module
-from chzzktube.workers.downloader import DownloadWorker, _dl_platform as _dl_platform_dl
-from chzzktube.pipeline.finalizer import _dl_platform as _dl_platform_fin, finalize
 from chzzktube.control.pot_manager import _POTWorker
+from chzzktube.pipeline.finalizer import _dl_platform as _dl_platform_fin
+from chzzktube.pipeline.finalizer import finalize
 from chzzktube.pipeline.target_downloader import _chzzk_filename
-
+from chzzktube.workers.downloader import DownloadWorker
+from chzzktube.workers.downloader import _dl_platform as _dl_platform_dl
 
 # ── P0-1: chzzktube.pipeline.finalizer 배치 마감 NameError ───────────────────────────────
 
@@ -181,9 +181,7 @@ def test_mirror_full_log_index_advances_only_when_visible():
 # ── B5/B1/B2: 죽은 코드 제거 가드 ────────────────────────────────────
 
 def test_removed_dead_symbols():
-    import chzzktube.pipeline.progress_emitter as progress_emitter
     assert not hasattr(chzzktube.pipeline.progress_emitter, "emit_live_header")
     assert not hasattr(chzzktube.pipeline.progress_emitter, "_apply_client_opts")
-    import chzzktube.control.pot_manager as pot_manager
     assert not hasattr(chzzktube.control.pot_manager, "POTProviderWorker")
     assert _chzzk_filename({}, {}, {}) == "chzzk.mp4"

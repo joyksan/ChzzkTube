@@ -11,12 +11,10 @@
 여기서는 test_gate_integration.py와 동일하게 MainWindow 비공개 메서드를
 가벼운 self 대역에 바인딩해 계약만 검증한다 (헤드리스 위젯 불필요).
 """
-import chzzktube
 from types import SimpleNamespace
 
-from chzzktube.control.controller import MediaController
-
 import chzzktube.ui.main_window as main_module
+from chzzktube.control.controller import MediaController
 
 
 class _FakeInput:

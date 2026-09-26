@@ -1,0 +1,2522 @@
+﻿[
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 52,
+      "row": 8
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\control\\controller.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from PySide6.QtCore import QObject, Signal",
+          "end_location": {
+            "column": 52,
+            "row": 8
+          },
+          "location": {
+            "column": 1,
+            "row": 8
+          }
+        }
+      ],
+      "message": "Remove unused import: `PySide6.QtCore.QThread`"
+    },
+    "location": {
+      "column": 45,
+      "row": 8
+    },
+    "message": "`PySide6.QtCore.QThread` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 8,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 18,
+      "row": 4
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\control\\pot_manager.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 5
+          },
+          "location": {
+            "column": 1,
+            "row": 4
+          }
+        }
+      ],
+      "message": "Remove unused import: `subprocess`"
+    },
+    "location": {
+      "column": 8,
+      "row": 4
+    },
+    "message": "`subprocess` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 4,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 5
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\control\\pot_manager.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 6
+          },
+          "location": {
+            "column": 1,
+            "row": 5
+          }
+        }
+      ],
+      "message": "Remove unused import: `os`"
+    },
+    "location": {
+      "column": 8,
+      "row": 5
+    },
+    "message": "`os` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 5,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 76,
+      "row": 8
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\control\\pot_manager.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.log_emitter import emit_error_standard",
+          "end_location": {
+            "column": 76,
+            "row": 8
+          },
+          "location": {
+            "column": 1,
+            "row": 8
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.log_emitter.emit_error_warn`"
+    },
+    "location": {
+      "column": 61,
+      "row": 8
+    },
+    "message": "`chzzktube.core.log_emitter.emit_error_warn` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 8,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 87,
+      "row": 142
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\control\\pot_manager.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import ensure_node_server, _SERVER_FALLBACK_VER",
+          "end_location": {
+            "column": 109,
+            "row": 142
+          },
+          "location": {
+            "column": 17,
+            "row": 142
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.infra.pot_server.server_home`"
+    },
+    "location": {
+      "column": 76,
+      "row": 142
+    },
+    "message": "`chzzktube.infra.pot_server.server_home` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 142,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 16,
+      "row": 2
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\core\\chzzk_api.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 3
+          },
+          "location": {
+            "column": 1,
+            "row": 2
+          }
+        }
+      ],
+      "message": "Remove unused import: `datetime`"
+    },
+    "location": {
+      "column": 8,
+      "row": 2
+    },
+    "message": "`datetime` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 2,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 2
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\core\\utils.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 3
+          },
+          "location": {
+            "column": 1,
+            "row": 2
+          }
+        }
+      ],
+      "message": "Remove unused import: `os`"
+    },
+    "location": {
+      "column": 8,
+      "row": 2
+    },
+    "message": "`os` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 2,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 18,
+      "row": 4
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\core\\utils.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 5
+          },
+          "location": {
+            "column": 1,
+            "row": 4
+          }
+        }
+      ],
+      "message": "Remove unused import: `subprocess`"
+    },
+    "location": {
+      "column": 8,
+      "row": 4
+    },
+    "message": "`subprocess` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 4,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 20,
+      "row": 36
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\components.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core import (\n    READ_TIMEOUT,\n    DOWNLOAD_TIMEOUT,\n    SHORT_API_TIMEOUT,\n    TEMP_FILE_MODE,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 42
+          },
+          "location": {
+            "column": 1,
+            "row": 35
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 36
+    },
+    "message": "`chzzktube.core.CONNECT_TIMEOUT` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 36,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 25,
+      "row": 41
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\components.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core import (\n    READ_TIMEOUT,\n    DOWNLOAD_TIMEOUT,\n    SHORT_API_TIMEOUT,\n    TEMP_FILE_MODE,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 42
+          },
+          "location": {
+            "column": 1,
+            "row": 35
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 41
+    },
+    "message": "`chzzktube.core.EXECUTABLE_FILE_MODE` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 41,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 39,
+      "row": 22
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\node_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 23
+          },
+          "location": {
+            "column": 1,
+            "row": 22
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.config`"
+    },
+    "location": {
+      "column": 33,
+      "row": 22
+    },
+    "message": "`chzzktube.core.config` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 22,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 15,
+      "row": 29
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.node_provider import (  # SRP: Node.js 런타임만 담당\n    NODE_MIN_MAJOR,\n    node_major_version,\n    latest_lts_node_url,\n    _platform_node_url,\n    npm_exe,\n    node_ok,\n    node_exe,\n    bundled_npm_ok,\n    ensure_node_runtime,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 39
+          },
+          "location": {
+            "column": 1,
+            "row": 27
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 29
+    },
+    "message": "`chzzktube.infra.node_provider._NO_WINDOW` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 29,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 20,
+      "row": 30
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.node_provider import (  # SRP: Node.js 런타임만 담당\n    NODE_MIN_MAJOR,\n    node_major_version,\n    latest_lts_node_url,\n    _platform_node_url,\n    npm_exe,\n    node_ok,\n    node_exe,\n    bundled_npm_ok,\n    ensure_node_runtime,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 39
+          },
+          "location": {
+            "column": 1,
+            "row": 27
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 30
+    },
+    "message": "`chzzktube.infra.node_provider._node_ver_cache` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 30,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 16,
+      "row": 43
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.paths import (  # 공통 경로 헬퍼\n    get_writable_base,\n    is_portable,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 44
+          },
+          "location": {
+            "column": 1,
+            "row": 40
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.infra.paths.bundle_root`"
+    },
+    "location": {
+      "column": 5,
+      "row": 43
+    },
+    "message": "`chzzktube.infra.paths.bundle_root` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 43,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 25,
+      "row": 46
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당\n    server_home,\n    assign_to_job_object,\n    read_server_log_tail,\n    latest_server_ver,\n    server_installed_ver,\n    clean_stale_plugin,\n    built_server_js,\n    pot_readiness,\n    acquire_prewarm_lock,\n    release_prewarm_lock,\n    _spawn_existing,\n    download_and_install_source,\n    ensure_node_server,\n    kill_process_on_port,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 65
+          },
+          "location": {
+            "column": 1,
+            "row": 45
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 46
+    },
+    "message": "`chzzktube.infra.pot_server._SERVER_FALLBACK_VER` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 46,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 13,
+      "row": 47
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당\n    server_home,\n    assign_to_job_object,\n    read_server_log_tail,\n    latest_server_ver,\n    server_installed_ver,\n    clean_stale_plugin,\n    built_server_js,\n    pot_readiness,\n    acquire_prewarm_lock,\n    release_prewarm_lock,\n    _spawn_existing,\n    download_and_install_source,\n    ensure_node_server,\n    kill_process_on_port,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 65
+          },
+          "location": {
+            "column": 1,
+            "row": 45
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 47
+    },
+    "message": "`chzzktube.infra.pot_server._TAG_ZIP` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 47,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 15,
+      "row": 54
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당\n    server_home,\n    assign_to_job_object,\n    read_server_log_tail,\n    latest_server_ver,\n    server_installed_ver,\n    clean_stale_plugin,\n    built_server_js,\n    pot_readiness,\n    acquire_prewarm_lock,\n    release_prewarm_lock,\n    _spawn_existing,\n    download_and_install_source,\n    ensure_node_server,\n    kill_process_on_port,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 65
+          },
+          "location": {
+            "column": 1,
+            "row": 45
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 54
+    },
+    "message": "`chzzktube.infra.pot_server._wait_port` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 54,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 55
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당\n    server_home,\n    assign_to_job_object,\n    read_server_log_tail,\n    latest_server_ver,\n    server_installed_ver,\n    clean_stale_plugin,\n    built_server_js,\n    pot_readiness,\n    acquire_prewarm_lock,\n    release_prewarm_lock,\n    _spawn_existing,\n    download_and_install_source,\n    ensure_node_server,\n    kill_process_on_port,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 65
+          },
+          "location": {
+            "column": 1,
+            "row": 45
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 55
+    },
+    "message": "`chzzktube.infra.pot_server._kill` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 55,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 24,
+      "row": 62
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_provider.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import (  # SRP: bgutil 서버 빌드/기동만 담당\n    server_home,\n    assign_to_job_object,\n    read_server_log_tail,\n    latest_server_ver,\n    server_installed_ver,\n    clean_stale_plugin,\n    built_server_js,\n    pot_readiness,\n    acquire_prewarm_lock,\n    release_prewarm_lock,\n    _spawn_existing,\n    download_and_install_source,\n    ensure_node_server,\n    kill_process_on_port,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 65
+          },
+          "location": {
+            "column": 1,
+            "row": 45
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 62
+    },
+    "message": "`chzzktube.infra.pot_server._run_and_stream_log` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 62,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 11,
+      "row": 13
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 14
+          },
+          "location": {
+            "column": 1,
+            "row": 13
+          }
+        }
+      ],
+      "message": "Remove unused import: `sys`"
+    },
+    "location": {
+      "column": 8,
+      "row": 13
+    },
+    "message": "`sys` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 13,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 15,
+      "row": 18
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 19
+          },
+          "location": {
+            "column": 1,
+            "row": 18
+          }
+        }
+      ],
+      "message": "Remove unused import: `tarfile`"
+    },
+    "location": {
+      "column": 8,
+      "row": 18
+    },
+    "message": "`tarfile` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 18,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 39,
+      "row": 23
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 24
+          },
+          "location": {
+            "column": 1,
+            "row": 23
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.config`"
+    },
+    "location": {
+      "column": 33,
+      "row": 23
+    },
+    "message": "`chzzktube.core.config` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 23,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 51,
+      "row": 27
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.po_client import DEFAULT_PORT, probe_server",
+          "end_location": {
+            "column": 79,
+            "row": 27
+          },
+          "location": {
+            "column": 1,
+            "row": 27
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.infra.po_client.DEFAULT_HOST`"
+    },
+    "location": {
+      "column": 39,
+      "row": 27
+    },
+    "message": "`chzzktube.infra.po_client.DEFAULT_HOST` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 27,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 65,
+      "row": 29
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.paths import get_writable_base",
+          "end_location": {
+            "column": 78,
+            "row": 29
+          },
+          "location": {
+            "column": 1,
+            "row": 29
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 54,
+      "row": 29
+    },
+    "message": "`chzzktube.infra.paths.is_portable` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 29,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 78,
+      "row": 29
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.paths import get_writable_base",
+          "end_location": {
+            "column": 78,
+            "row": 29
+          },
+          "location": {
+            "column": 1,
+            "row": 29
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 67,
+      "row": 29
+    },
+    "message": "`chzzktube.infra.paths.bundle_root` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 29,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 17,
+      "row": 876
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.node_provider import (\r\n        node_ok, ensure_node_runtime,\r\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 878
+          },
+          "location": {
+            "column": 5,
+            "row": 875
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 9,
+      "row": 876
+    },
+    "message": "`chzzktube.infra.node_provider.node_exe` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 876,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 46,
+      "row": 876
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.node_provider import (\r\n        node_ok, ensure_node_runtime,\r\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 878
+          },
+          "location": {
+            "column": 5,
+            "row": 875
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 28,
+      "row": 876
+    },
+    "message": "`chzzktube.infra.node_provider.node_major_version` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 876,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 44,
+      "row": 877
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\pot_server.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.node_provider import (\r\n        node_ok, ensure_node_runtime,\r\n    )",
+          "end_location": {
+            "column": 6,
+            "row": 878
+          },
+          "location": {
+            "column": 5,
+            "row": 875
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 30,
+      "row": 877
+    },
+    "message": "`chzzktube.infra.node_provider.bundled_npm_ok` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 877,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 28,
+      "row": 6
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\provisioning\\committer.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 7
+          },
+          "location": {
+            "column": 1,
+            "row": 6
+          }
+        }
+      ],
+      "message": "Remove unused import: `typing.Optional`"
+    },
+    "location": {
+      "column": 20,
+      "row": 6
+    },
+    "message": "`typing.Optional` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 6,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 12,
+      "row": 7
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\provisioning\\manifest.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 8
+          },
+          "location": {
+            "column": 1,
+            "row": 7
+          }
+        }
+      ],
+      "message": "Remove unused import: `time`"
+    },
+    "location": {
+      "column": 8,
+      "row": 7
+    },
+    "message": "`time` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 7,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 16,
+      "row": 17
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\updater.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 18
+          },
+          "location": {
+            "column": 1,
+            "row": 17
+          }
+        }
+      ],
+      "message": "Remove unused import: `tempfile`"
+    },
+    "location": {
+      "column": 8,
+      "row": 17
+    },
+    "message": "`tempfile` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 17,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 14,
+      "row": 18
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\updater.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 19
+          },
+          "location": {
+            "column": 1,
+            "row": 18
+          }
+        }
+      ],
+      "message": "Remove unused import: `socket`"
+    },
+    "location": {
+      "column": 8,
+      "row": 18
+    },
+    "message": "`socket` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 18,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 14,
+      "row": 150
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\updater.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 151
+          },
+          "location": {
+            "column": 1,
+            "row": 150
+          }
+        }
+      ],
+      "message": "Remove unused import: `os`"
+    },
+    "location": {
+      "column": 12,
+      "row": 150
+    },
+    "message": "`os` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 150,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 38,
+      "row": 257
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\updater.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 258
+          },
+          "location": {
+            "column": 1,
+            "row": 257
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.config`"
+    },
+    "location": {
+      "column": 32,
+      "row": 257
+    },
+    "message": "`chzzktube.core.config` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 257,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 74,
+      "row": 266
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\updater.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.yt_dlp_binary import yt_dlp_path",
+          "end_location": {
+            "column": 74,
+            "row": 266
+          },
+          "location": {
+            "column": 5,
+            "row": 266
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.infra.yt_dlp_binary.yt_dlp_version`"
+    },
+    "location": {
+      "column": 60,
+      "row": 266
+    },
+    "message": "`chzzktube.infra.yt_dlp_binary.yt_dlp_version` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 266,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 14,
+      "row": 11
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\yt_dlp_binary.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 12
+          },
+          "location": {
+            "column": 1,
+            "row": 11
+          }
+        }
+      ],
+      "message": "Remove unused import: `shutil`"
+    },
+    "location": {
+      "column": 8,
+      "row": 11
+    },
+    "message": "`shutil` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 11,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 16,
+      "row": 13
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\infra\\yt_dlp_binary.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 14
+          },
+          "location": {
+            "column": 1,
+            "row": 13
+          }
+        }
+      ],
+      "message": "Remove unused import: `tempfile`"
+    },
+    "location": {
+      "column": 8,
+      "row": 13
+    },
+    "message": "`tempfile` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 13,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 53,
+      "row": 33
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\progress_emitter.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 34
+          },
+          "location": {
+            "column": 1,
+            "row": 33
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.watchdog.LivenessWatchdog`"
+    },
+    "location": {
+      "column": 37,
+      "row": 33
+    },
+    "message": "`chzzktube.core.watchdog.LivenessWatchdog` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 33,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 54,
+      "row": 10
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\chzzk.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 11
+          },
+          "location": {
+            "column": 1,
+            "row": 10
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.pipeline.classifier.ContentKind`"
+    },
+    "location": {
+      "column": 43,
+      "row": 10
+    },
+    "message": "`chzzktube.pipeline.classifier.ContentKind` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 10,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 52,
+      "row": 13
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\chzzk.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 14
+          },
+          "location": {
+            "column": 1,
+            "row": 13
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.dl_platform._dl_platform`"
+    },
+    "location": {
+      "column": 40,
+      "row": 13
+    },
+    "message": "`chzzktube.core.dl_platform._dl_platform` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 13,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 72,
+      "row": 3
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\dispatch.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.pipeline.classifier import ContentKind",
+          "end_location": {
+            "column": 72,
+            "row": 3
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.pipeline.classifier.ClassifiedTarget`"
+    },
+    "location": {
+      "column": 56,
+      "row": 3
+    },
+    "message": "`chzzktube.pipeline.classifier.ClassifiedTarget` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 41,
+      "row": 8
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\dispatch.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 9
+          },
+          "location": {
+            "column": 1,
+            "row": 8
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.raw_log`"
+    },
+    "location": {
+      "column": 34,
+      "row": 8
+    },
+    "message": "`chzzktube.core.raw_log` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 8,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 50,
+      "row": 9
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\dispatch.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 10
+          },
+          "location": {
+            "column": 1,
+            "row": 9
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.log_emitter.emit_event`"
+    },
+    "location": {
+      "column": 40,
+      "row": 9
+    },
+    "message": "`chzzktube.core.log_emitter.emit_event` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 9,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 52,
+      "row": 10
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\dispatch.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 11
+          },
+          "location": {
+            "column": 1,
+            "row": 10
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.dl_platform._dl_platform`"
+    },
+    "location": {
+      "column": 40,
+      "row": 10
+    },
+    "message": "`chzzktube.core.dl_platform._dl_platform` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 10,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 72,
+      "row": 6
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\flatten.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.pipeline.classifier import ClassifiedTarget, ItemClassifier",
+          "end_location": {
+            "column": 88,
+            "row": 6
+          },
+          "location": {
+            "column": 1,
+            "row": 6
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.pipeline.classifier.ContentKind`"
+    },
+    "location": {
+      "column": 61,
+      "row": 6
+    },
+    "message": "`chzzktube.pipeline.classifier.ContentKind` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 6,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 31,
+      "row": 12
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\options.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.client_opts import (\n    _apply_client_opts,\n    _apply_cookie_opts,\n    _apply_ejs_opts,\n    _apply_ffmpeg_opts,\n    _apply_post_opts,\n    _apply_pot_opts,\n    _concurrent_fragments,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 16
+          },
+          "location": {
+            "column": 1,
+            "row": 7
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.client_opts._apply_light_analysis_opts`"
+    },
+    "location": {
+      "column": 5,
+      "row": 12
+    },
+    "message": "`chzzktube.core.client_opts._apply_light_analysis_opts` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 12,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 52,
+      "row": 17
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\options.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 18
+          },
+          "location": {
+            "column": 1,
+            "row": 17
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.dl_platform._dl_platform`"
+    },
+    "location": {
+      "column": 40,
+      "row": 17
+    },
+    "message": "`chzzktube.core.dl_platform._dl_platform` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 17,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 55,
+      "row": 19
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\options.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 20
+          },
+          "location": {
+            "column": 1,
+            "row": 19
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.infra.po_client.extract_video_id`"
+    },
+    "location": {
+      "column": 39,
+      "row": 19
+    },
+    "message": "`chzzktube.infra.po_client.extract_video_id` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 19,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 95,
+      "row": 20
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\options.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.pipeline.target_downloader.utils import _extract_yt_id",
+          "end_location": {
+            "column": 95,
+            "row": 20
+          },
+          "location": {
+            "column": 1,
+            "row": 20
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.pipeline.target_downloader.utils._has_configured_cookies`"
+    },
+    "location": {
+      "column": 72,
+      "row": 20
+    },
+    "message": "`chzzktube.pipeline.target_downloader.utils._has_configured_cookies` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 20,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 10
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\utils.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 11
+          },
+          "location": {
+            "column": 1,
+            "row": 10
+          }
+        }
+      ],
+      "message": "Remove unused import: `os`"
+    },
+    "location": {
+      "column": 8,
+      "row": 10
+    },
+    "message": "`os` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 10,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 55,
+      "row": 16
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\utils.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 17
+          },
+          "location": {
+            "column": 1,
+            "row": 16
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.utils.get_filename_template`"
+    },
+    "location": {
+      "column": 34,
+      "row": 16
+    },
+    "message": "`chzzktube.core.utils.get_filename_template` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 16,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 3
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\youtube_vod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 4
+          },
+          "location": {
+            "column": 1,
+            "row": 3
+          }
+        }
+      ],
+      "message": "Remove unused import: `os`"
+    },
+    "location": {
+      "column": 8,
+      "row": 3
+    },
+    "message": "`os` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 3,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 33,
+      "row": 20
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\youtube_vod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.pipeline.target_downloader.utils import (\n    _FormatQualityLoss,\n    _emit_error_log,\n    _emit_skip_log,\n    _is_retryable_bot_error,\n    _has_configured_cookies,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 27
+          },
+          "location": {
+            "column": 1,
+            "row": 19
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 20
+    },
+    "message": "`chzzktube.pipeline.target_downloader.utils._WATCHDOG_HEARTBEAT_INTERVAL` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 20,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 19,
+      "row": 24
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\youtube_vod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.pipeline.target_downloader.utils import (\n    _FormatQualityLoss,\n    _emit_error_log,\n    _emit_skip_log,\n    _is_retryable_bot_error,\n    _has_configured_cookies,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 27
+          },
+          "location": {
+            "column": 1,
+            "row": 19
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 24
+    },
+    "message": "`chzzktube.pipeline.target_downloader.utils._extract_yt_id` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 24,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 52,
+      "row": 31
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\youtube_vod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 32
+          },
+          "location": {
+            "column": 1,
+            "row": 31
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.dl_platform._dl_platform`"
+    },
+    "location": {
+      "column": 40,
+      "row": 31
+    },
+    "message": "`chzzktube.core.dl_platform._dl_platform` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 31,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 66,
+      "row": 86
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\youtube_vod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import (\n            _spawn_existing, acquire_prewarm_lock, built_server_js,\n            ensure_node_server, release_prewarm_lock,\n        )",
+          "end_location": {
+            "column": 10,
+            "row": 88
+          },
+          "location": {
+            "column": 9,
+            "row": 84
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 55,
+      "row": 86
+    },
+    "message": "`chzzktube.infra.pot_server.server_home` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 86,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 33,
+      "row": 87
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\pipeline\\target_downloader\\youtube_vod.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.infra.pot_server import (\n            _spawn_existing, acquire_prewarm_lock, built_server_js,\n            ensure_node_server, release_prewarm_lock,\n        )",
+          "end_location": {
+            "column": 10,
+            "row": 88
+          },
+          "location": {
+            "column": 9,
+            "row": 84
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 13,
+      "row": 87
+    },
+    "message": "`chzzktube.infra.pot_server._SERVER_FALLBACK_VER` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 87,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 10,
+      "row": 9
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 10
+          },
+          "location": {
+            "column": 1,
+            "row": 9
+          }
+        }
+      ],
+      "message": "Remove unused import: `os`"
+    },
+    "location": {
+      "column": 8,
+      "row": 9
+    },
+    "message": "`os` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 9,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 18,
+      "row": 11
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 12
+          },
+          "location": {
+            "column": 1,
+            "row": 11
+          }
+        }
+      ],
+      "message": "Remove unused import: `subprocess`"
+    },
+    "location": {
+      "column": 8,
+      "row": 11
+    },
+    "message": "`subprocess` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 11,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 11,
+      "row": 12
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 13
+          },
+          "location": {
+            "column": 1,
+            "row": 12
+          }
+        }
+      ],
+      "message": "Remove unused import: `sys`"
+    },
+    "location": {
+      "column": 8,
+      "row": 12
+    },
+    "message": "`sys` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 12,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 12,
+      "row": 13
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 14
+          },
+          "location": {
+            "column": 1,
+            "row": 13
+          }
+        }
+      ],
+      "message": "Remove unused import: `time`"
+    },
+    "location": {
+      "column": 8,
+      "row": 13
+    },
+    "message": "`time` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 13,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 22,
+      "row": 14
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 15
+          },
+          "location": {
+            "column": 1,
+            "row": 14
+          }
+        }
+      ],
+      "message": "Remove unused import: `urllib.request`"
+    },
+    "location": {
+      "column": 8,
+      "row": 14
+    },
+    "message": "`urllib.request` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 14,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 57,
+      "row": 43
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 44
+          },
+          "location": {
+            "column": 1,
+            "row": 43
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.watchdog.ANALYSIS_TIMEOUT_SEC`"
+    },
+    "location": {
+      "column": 37,
+      "row": 43
+    },
+    "message": "`chzzktube.core.watchdog.ANALYSIS_TIMEOUT_SEC` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 43,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 54,
+      "row": 45
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 46
+          },
+          "location": {
+            "column": 1,
+            "row": 45
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 40,
+      "row": 45
+    },
+    "message": "`chzzktube.core.log_emitter.format_kv_line` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 45,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 72,
+      "row": 45
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "",
+          "end_location": {
+            "column": 1,
+            "row": 46
+          },
+          "location": {
+            "column": 1,
+            "row": 45
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 56,
+      "row": 45
+    },
+    "message": "`chzzktube.core.log_emitter.format_tree_item` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 45,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 15,
+      "row": 47
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.media import (\n    format_dropdown_label,\n    get_audio_codec_rank,\n    get_video_codec_rank,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 55
+          },
+          "location": {
+            "column": 1,
+            "row": 46
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 47
+    },
+    "message": "`chzzktube.core.media.audio_spec` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 47,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 20,
+      "row": 48
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.media import (\n    format_dropdown_label,\n    get_audio_codec_rank,\n    get_video_codec_rank,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 55
+          },
+          "location": {
+            "column": 1,
+            "row": 46
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 48
+    },
+    "message": "`chzzktube.core.media.cli_format_desc` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 48,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 17,
+      "row": 49
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.media import (\n    format_dropdown_label,\n    get_audio_codec_rank,\n    get_video_codec_rank,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 55
+          },
+          "location": {
+            "column": 1,
+            "row": 46
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 49
+    },
+    "message": "`chzzktube.core.media.format_bytes` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 49,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 16,
+      "row": 53
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.media import (\n    format_dropdown_label,\n    get_audio_codec_rank,\n    get_video_codec_rank,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 55
+          },
+          "location": {
+            "column": 1,
+            "row": 46
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 53
+    },
+    "message": "`chzzktube.core.media.short_codec` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 53,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 17,
+      "row": 54
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.media import (\n    format_dropdown_label,\n    get_audio_codec_rank,\n    get_video_codec_rank,\n)",
+          "end_location": {
+            "column": 2,
+            "row": 55
+          },
+          "location": {
+            "column": 1,
+            "row": 46
+          }
+        }
+      ],
+      "message": "Remove unused import"
+    },
+    "location": {
+      "column": 5,
+      "row": 54
+    },
+    "message": "`chzzktube.core.media.codec_detail` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 54,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 67,
+      "row": 56
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\analyze_worker.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.utils import clean_ansi",
+          "end_location": {
+            "column": 67,
+            "row": 56
+          },
+          "location": {
+            "column": 1,
+            "row": 56
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.utils.get_filename_template`"
+    },
+    "location": {
+      "column": 46,
+      "row": 56
+    },
+    "message": "`chzzktube.core.utils.get_filename_template` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 56,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  },
+  {
+    "cell": null,
+    "code": "F401",
+    "end_location": {
+      "column": 59,
+      "row": 20
+    },
+    "filename": "C:\\dev\\ChzzkTube\\chzzktube\\workers\\downloader.py",
+    "fix": {
+      "applicability": "safe",
+      "edits": [
+        {
+          "content": "from chzzktube.core.log_emitter import emit_error_warn",
+          "end_location": {
+            "column": 76,
+            "row": 20
+          },
+          "location": {
+            "column": 1,
+            "row": 20
+          }
+        }
+      ],
+      "message": "Remove unused import: `chzzktube.core.log_emitter.emit_error_standard`"
+    },
+    "location": {
+      "column": 40,
+      "row": 20
+    },
+    "message": "`chzzktube.core.log_emitter.emit_error_standard` imported but unused",
+    "name": "unused-import",
+    "noqa_row": 20,
+    "severity": "error",
+    "url": "https://docs.astral.sh/ruff/rules/unused-import"
+  }
+]

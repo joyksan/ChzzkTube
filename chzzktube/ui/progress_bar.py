@@ -4,7 +4,8 @@ raw_log 버스에 진행률 이벤트(pct, bar_frac, speed)를 발행한다.
 is_status=False로 히스토리에만 쌓이게 하여 TUI 상태 줄 덮어쓰기 방지.
 """
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
+
 
 class ProgressBar:
     """다운로드 진행률을 추적하고 raw_log에 시각적 진행 바를 발행한다.
@@ -24,16 +25,16 @@ class ProgressBar:
     def __init__(
         self,
         component: str,
-        log_func: Optional[Callable] = None,
+        log_func: Callable | None = None,
         *,
-        total: Optional[int] = None,
+        total: int | None = None,
         label: str = "",
     ):
         self.component = component
         self.log_func = log_func
         self.total = total
         self.label = label or component
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
         self._last_update: float = 0
         self._last_downloaded: int = 0
         self._finished = False
@@ -59,9 +60,7 @@ class ProgressBar:
             return
 
         now = time.monotonic()
-        if self.total is None:
-            self.total = total
-        elif total != self.total:
+        if self.total is None or total != self.total:
             self.total = total
 
         # Rate limit: minimum time interval OR minimum percentage delta
@@ -147,24 +146,26 @@ class ProgressBar:
             return f"{int(seconds // 60)}m {int(seconds % 60)}s"
         else:
             return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import raw_log
 from chzzktube.core.log_emitter import emit_progress
+
+
 class ProgressManager:
     """다중 ProgressBar를 관리하는 컨텍스트 매니저.
 
     여러 동시 다운로드의 진행 바를 각각 독립적으로 관리한다.
     """
 
-    def __init__(self, log_func: Optional[Callable] = None):
+    def __init__(self, log_func: Callable | None = None):
         self.log_func = log_func
         self._bars: dict[str, ProgressBar] = {}
 
-    def create(self, component: str, *, total: Optional[int] = None, label: str = "") -> ProgressBar:
+    def create(self, component: str, *, total: int | None = None, label: str = "") -> ProgressBar:
         bar = ProgressBar(component, log_func=self.log_func, total=total, label=label)
         self._bars[component] = bar
         return bar
 
-    def get(self, component: str) -> Optional[ProgressBar]:
+    def get(self, component: str) -> ProgressBar | None:
         return self._bars.get(component)
 
     def remove(self, component: str):

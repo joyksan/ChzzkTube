@@ -13,12 +13,11 @@
 """
 from pathlib import Path
 
-from chzzktube.core import config
-import chzzktube.core.raw_log as raw_log
+from chzzktube.core import config, raw_log
 from chzzktube.core.log_emitter import emit_component
-from chzzktube.infra.provisioning.planner import Planner, ProvisionPlan
-from chzzktube.infra.provisioning.executor import Executor, ProvisionResult
 from chzzktube.infra.provisioning.committer import Committer
+from chzzktube.infra.provisioning.executor import Executor, ProvisionResult
+from chzzktube.infra.provisioning.planner import Planner, ProvisionPlan
 
 
 class ProvisioningManager:

@@ -26,7 +26,6 @@ production bootstrap in main.py and eliminates namespace-package mocks.
 import importlib
 import os
 import sys
-from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -41,12 +40,11 @@ if _BOOTSTRAPPED:
     if "yt_dlp" in sys.modules:
         yt_dlp_mod = sys.modules["yt_dlp"]
         overlay_pkg = os.path.join(_BOOTSTRAPPED, "yt_dlp")
-        if os.path.isdir(overlay_pkg) and hasattr(yt_dlp_mod, "__path__"):
-            if overlay_pkg not in yt_dlp_mod.__path__:
-                yt_dlp_mod.__path__.insert(0, overlay_pkg)
+        if os.path.isdir(overlay_pkg) and hasattr(yt_dlp_mod, "__path__") and overlay_pkg not in yt_dlp_mod.__path__:
+            yt_dlp_mod.__path__.insert(0, overlay_pkg)
     importlib.invalidate_caches()
 
-import pytest  # noqa: E402  (env must be set before Qt import)
+import pytest
 
 
 def pytest_configure(config):
@@ -57,9 +55,8 @@ def pytest_configure(config):
     if "yt_dlp" in sys.modules:
         yt_dlp_mod = sys.modules["yt_dlp"]
         overlay_pkg = os.path.join(_BOOTSTRAPPED, "yt_dlp")
-        if os.path.isdir(overlay_pkg) and hasattr(yt_dlp_mod, "__path__"):
-            if overlay_pkg not in yt_dlp_mod.__path__:
-                yt_dlp_mod.__path__.insert(0, overlay_pkg)
+        if os.path.isdir(overlay_pkg) and hasattr(yt_dlp_mod, "__path__") and overlay_pkg not in yt_dlp_mod.__path__:
+            yt_dlp_mod.__path__.insert(0, overlay_pkg)
         importlib.invalidate_caches()
 
 
@@ -78,7 +75,7 @@ def qt_application():
 @pytest.fixture(autouse=True)
 def isolate_raw_log() -> None:
     """각 단위 테스트 간 raw_log 버스 잔여 큐 플러시 및 오염 방지."""
-    import chzzktube.core.raw_log as raw_log
+    from chzzktube.core import raw_log
 
     yield
     raw_log.flush(timeout=0.2)
@@ -88,6 +85,7 @@ def isolate_raw_log() -> None:
 def live(monkeypatch, tmp_path):
     """치지직 라이브 테스트용 전체 모킹 픽스처."""
     from unittest.mock import Mock, create_autospec
+
     import chzzktube.core.chzzk_api as api
     import chzzktube.pipeline.target_downloader as td
     from chzzktube.pipeline.dl_context import DownloadContext

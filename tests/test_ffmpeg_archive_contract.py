@@ -16,7 +16,7 @@ import zipfile
 
 import pytest
 
-import chzzktube.infra.components as components
+from chzzktube.infra import components
 
 
 @pytest.fixture(autouse=True)

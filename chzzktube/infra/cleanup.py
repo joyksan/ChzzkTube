@@ -2,9 +2,10 @@
 
 앱 기동 시 또는 종료 시 호출하여 .part 파일, 아카이브, 락 파일 등을 정리한다.
 """
-import os
 import glob
+import os
 import shutil
+
 from chzzktube.core import config
 
 
@@ -20,7 +21,7 @@ def cleanup_provisioning_artifacts():
         for part_file in glob.glob(os.path.join(ffmpeg_dir, "*.part")):
             try:
                 os.remove(part_file)
-            except Exception:
+            except OSError:
                 pass
 
     # 2. node 아카이브 정리 (node_portable.zip/tar.gz)
@@ -30,7 +31,7 @@ def cleanup_provisioning_artifacts():
                 os.remove(archive)
             elif os.path.isdir(archive):
                 shutil.rmtree(archive, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
 
     # 3. pot prewarm 락 파일 정리
@@ -40,7 +41,7 @@ def cleanup_provisioning_artifacts():
         if os.path.isfile(lock_file):
             try:
                 os.remove(lock_file)
-            except Exception:
+            except OSError:
                 pass
 
     # 4. components 루트의 .part 파일 정리 (Homebrew bottle 다운로드 등)
@@ -50,25 +51,25 @@ def cleanup_provisioning_artifacts():
         for part_file in glob.glob(os.path.join(comp_root, "*.part")):
             try:
                 os.remove(part_file)
-            except Exception:
+            except OSError:
                 pass
         # ffmpeg 아카이브 정리
         for archive in glob.glob(os.path.join(comp_root, "ffmpeg*.tar.xz")):
             try:
                 os.remove(archive)
-            except Exception:
+            except OSError:
                 pass
         for archive in glob.glob(os.path.join(comp_root, "ffmpeg*.zip")):
             try:
                 os.remove(archive)
-            except Exception:
+            except OSError:
                 pass
 
     # 5. 임의의 .part 파일 정리 (전역)
     for part_file in glob.glob(os.path.join(base, "*.part")):
         try:
             os.remove(part_file)
-        except Exception:
+        except OSError:
             pass
 
     # 6. cz_* 임시 디렉터리 정리 (base 및 base 하위 디렉터리)
@@ -76,13 +77,13 @@ def cleanup_provisioning_artifacts():
         try:
             if os.path.isdir(cz_dir):
                 shutil.rmtree(cz_dir, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
     for cz_dir in glob.glob(os.path.join(base, "*", "cz_*")):
         try:
             if os.path.isdir(cz_dir):
                 shutil.rmtree(cz_dir, ignore_errors=True)
-        except Exception:
+        except OSError:
             pass
 
 

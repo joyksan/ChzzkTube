@@ -126,7 +126,7 @@ def load_config():
                     loaded["download_path"]
                 ):
                     cfg.update(loaded)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 설정 파일 손상 시 기본 설정 유지
             pass
     return cfg
 

@@ -1,5 +1,4 @@
 """chzzktube.control.startup_coordinator 단위 테스트 — 기동 시퀀스 게이트 로직."""
-import chzzktube
 from unittest.mock import Mock
 
 import pytest
@@ -81,7 +80,7 @@ class TestPotStatusBusWiring:
     def test_pot_status_wired_to_raw_bus(self):
         import time
 
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
 
         events = []
         raw_log.subscribe_concise(
@@ -105,7 +104,7 @@ class TestPotStatusBusWiring:
     def test_pot_failed_maps_to_fail_status(self):
         import time
 
-        import chzzktube.core.raw_log as raw_log
+        from chzzktube.core import raw_log
 
         events = []
         raw_log.subscribe_concise(

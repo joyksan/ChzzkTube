@@ -1,14 +1,12 @@
 """치지직 라이브 라우팅·화질 선택·HLS URL 계약 (네트워크 차단)."""
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import Mock, create_autospec
 
 import pytest
 
 import chzzktube.core.chzzk_api as api
 import chzzktube.pipeline.target_downloader as td
 from chzzktube.pipeline.classifier import ClassifiedTarget, ContentKind, ItemClassifier
-from chzzktube.pipeline.dl_context import DownloadContext
 
 
 @pytest.fixture
@@ -30,7 +28,7 @@ def live_item(ctx):
     ("1080", "720", "1080"),
 ])
 def test_live_uses_api_and_pipe(live, selection, limit, expected):
-    ctx, info, analysis, youtube, record = live
+    ctx, _info, analysis, youtube, record = live
     ctx.v_sel = selection
     ctx.cfg["max_video_res"] = limit
     failures = []
@@ -54,7 +52,7 @@ def test_live_uses_api_and_pipe(live, selection, limit, expected):
 
 @pytest.mark.parametrize("problem", ["offline", "empty", "missing_url", "missing_selection", "resolution"])
 def test_live_unavailable_does_not_start_recording(live, problem):
-    ctx, info, analysis, youtube, record = live
+    ctx, info, _analysis, youtube, record = live
     if problem == "offline":
         info["live_status"] = "CLOSE"
     elif problem == "empty":
@@ -76,7 +74,7 @@ def test_live_unavailable_does_not_start_recording(live, problem):
 
 
 def test_live_recording_failure_is_counted(live):
-    ctx, info, analysis, youtube, record = live
+    ctx, _info, _analysis, _youtube, record = live
     record.return_value = False
     failures = []
     item = {"url": ctx.current_url, "title": "", "age_limit": 0, "availability": "public", "is_live": True, "has_video": True, "has_audio": True, "downloadable": True, "needs_pot": False}
@@ -85,7 +83,7 @@ def test_live_recording_failure_is_counted(live):
 
 
 def test_live_cancel_not_counted_as_failure(live):
-    ctx, info, analysis, youtube, record = live
+    ctx, _info, _analysis, _youtube, record = live
     record.return_value = False
     def cancel(*args, **kwargs):
         ctx.state["canceled"] = True

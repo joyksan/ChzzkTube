@@ -18,11 +18,11 @@ def bootstrap(clear_caches=True):
     """sys.path 선두에 .pylib/ 삽입. 중복 호출 안전. 반환: 실제 삽입된 경로."""
     try:
         path = os.path.abspath(pylib_overlay_path())
-    except Exception:
+    except Exception:  # noqa: BLE001 — 경로 계산 실패 시 부트스트랩 중단
         return ""
     try:
         os.makedirs(path, exist_ok=True)
-    except Exception:
+    except OSError:  # 디렉터리 생성 실패는 OSError로 좁힘
         return ""
     if path not in sys.path:
         sys.path.insert(0, path)
@@ -35,6 +35,6 @@ def bootstrap(clear_caches=True):
             for mod_name in list(sys.modules.keys()):
                 if mod_name.startswith("yt_dlp"):
                     del sys.modules[mod_name]
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 — 캐시 무효화 실패는 부트스트랩 반환에 영향 없음
             pass
     return path
