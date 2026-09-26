@@ -1,58 +1,72 @@
 # HANDOVER.md — ChzzkTube 인수인계서
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
-> 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
+> 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.1 설계 철학 및 아키텍처 방향성**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
 > 마지막 갱신: 2026-09-26 - v3.12.5 — 테스트 스위트 전수조사 정비(P0~P5)·스모크 하네스 비동기 생존 검증·눈속임 테스트 퇴출 및 런타임 전환·오류 로그 새니타이징
 ---
 ## 목차
 
-- [1. 프로젝트 개요](#1-프로젝트-개요)
-- [2. 버전 관리 절차](#2-버전-관리-절차)
-  - [2.1 버전 진실 공급원과 정책](#21-버전-진실-공급원과-정책)
-  - [2.2 버전 증가 절차](#22-버전-증가-절차)
-  - [2.3 `bump_version.py` 제한](#23-bump_versionpy-제한)
-- [3. 기술 스택 및 디펜던시](#3-기술-스택-및-디펜던시)
-- [4. 폴더 구조 및 경로 계약](#4-폴더-구조-및-경로-계약)
-  - [4.1 기본 디렉터리](#41-기본-디렉터리)
-  - [4.2 런타임 캐시·외부 구성요소](#42-런타임-캐시·외부-구성요소)
-  - [4.3 경로 관련 불변식](#43-경로-관련-불변식)
-- [5. 아키텍처 상세 및 모듈 명세](#5-아키텍처-상세-및-모듈-명세)
-  - [5.1 레이어별 구조 (4계층 + L0 Leaf) — v3.4.0 레이아웃 리팩터링(`chzzktube/` 단일 패키지)](#51-레이어별-구조-4계층--l0-leaf-—-v340-레이아웃-리팩터링chzzktube/-단일-패키지)
-  - [5.2 모듈 목록 (95개 루트 .py — 2026-09-25 `find *.py` 실측. `tool_log.py` 포함. [상세 트리](‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거) 참조)](#52-모듈-목록-95개-루트-py-—-2026-09-25-find-*py-실측-tool_logpy-포함-[상세-트리]‍#2026-09-12--로그-버스-단일화-v330-raw_log-단일-경로플래그-라우팅레거시-제거-참조)
-- [6. 개발 방향성 및 TUI 표준](#6-개발-방향성-및-tui-표준)
-  - [6.1 핵심 철학 (Core Philosophy)](#61-핵심-철학-core-philosophy)
-  - [6.2 UI 레이아웃 & 폰트 표준](#62-ui-레이아웃-&-폰트-표준)
-  - [6.3 팝업/다이얼로그 규격 및 설정창 아키텍처 (v3.5.1+)](#63-팝업/다이얼로그-규격-및-설정창-아키텍처-v351)
-  - [6.4 시각적 디테일 및 영문 미니멀화](#64-시각적-디테일-및-영문-미니멀화)
-- [7. 로깅 규격 및 작성 가이드](#7-로깅-규격-및-작성-가이드)
-  - [7.1 고정 칼럼 로그 규격 (v3.4.0+)](#71-고정-칼럼-로그-규격-v340)
-  - [7.2 신규 기능 개발 시 로그 작성 및 추가 규약 (Logging Guidelines)](#72-신규-기능-개발-시-로그-작성-및-추가-규약-logging-guidelines)
-- [8. 파이프라인 및 우회 전략](#8-파이프라인-및-우회-전략)
-  - [8.1 3계층 우회 파이프라인 (Three-Layer Bypass Pipeline)](#81-3계층-우회-파이프라인-three-layer-bypass-pipeline)
-  - [8.2 분석/다운로드 단계별 동작 상세](#82-분석/다운로드-단계별-동작-상세)
-  - [8.3 렌더링 엔진 정책 (Rendering Engine Policy)](#83-렌더링-엔진-정책-rendering-engine-policy)
-- [9. 주요 컴포넌트 및 시그널 계약](#9-주요-컴포넌트-및-시그널-계약)
-  - [9.1 log_console.py (ConciseLogConsole)](#91-log_consolepy-conciselogconsole)
-  - [9.2 dialogs.py](#92-dialogspy)
-  - [9.3 ui/components/ (v3.12.0 신설)](#93-ui/components/-v3120-신설)
-  - [9.4 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.12.0 실측)](#94-기동-시퀀스·pot-구동-로직·시그널-계약-트리-v3120-실측)
-  - [9.5 Worker ↔ UI 시그널 계약 (v3.12.0 — 로그 시그널 0, 결과/게이트만 잔존. 2026-09-25 실측)](#95-worker-↔-ui-시그널-계약-v3120-—-로그-시그널-0-결과/게이트만-잔존-2026-09-25-실측)
-- [10. 핵심 데이터 구조](#10-핵심-데이터-구조)
-  - [10.1 cfg (config.default_config() 23키 — 로드 시 dl_config.json 병합)](#101-cfg-configdefault_config-23키-—-로드-시-dl_configjson-병합)
-- [11. 빌드 및 배포(CI/CD) 절차](#11-빌드-및-배포ci/cd-절차)
-  - [11.1 체리피킹 원칙](#111-체리피킹-원칙)
-  - [11.2 자동 업데이트 정책 (Nightly Channel)](#112-자동-업데이트-정책-nightly-channel)
-  - [11.3 선택 과제 (향후)](#113-선택-과제-향후)
-  - [11.4 빌드 시 해야 할 일 (OS별 체크리스트) — v3.1.1 신설](#114-빌드-시-해야-할-일-os별-체크리스트-—-v311-신설)
-- [12. 주요 이슈 및 유지보수 포인트](#12-주요-이슈-및-유지보수-포인트)
-- [13. 불변식 (코드 수정 시 절대 위반 금지)](#13-불변식-코드-수정-시-절대-위반-금지)
-- [14. 하지 말 것 (회귀 방지)](#14-하지-말-것-회귀-방지)
-- [15. 검증 워크플로우](#15-검증-워크플로우)
-  - [15.1 마무리 — 링크 깨짐 확인 완료·체리피킹 요약 (v3.5.0)](#151-마무리-—-링크-깨짐-확인-완료·체리피킹-요약-v350)
-- [16. 파일 규칙](#16-파일-규칙)
-- [17. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)](#17-테스트-자산-명세-및-유지보수-가이드-v3125-신설)
-  - [17.1 테스트 자산 모듈 전수 목록 (45개 진입점 / 395개 케이스)](#171-테스트-자산-모듈-전수-목록-45개-진입점--395개-케이스)
-  - [17.2 테스트 자산 유지보수 5대 원칙](#172-테스트-자산-유지보수-5대-원칙)
+- [HANDOVER.md — ChzzkTube 인수인계서](#handovermd--chzzktube-인수인계서)
+  - [목차](#목차)
+  - [1. 프로젝트 개요](#1-프로젝트-개요)
+    - [1.1 설계 철학 및 아키텍처 방향성 (Architecture \& Readability)](#11-설계-철학-및-아키텍처-방향성-architecture--readability)
+    - [1.2 제약 조건 및 보안/성능 방어선 (Security \& Performance Guardrails)](#12-제약-조건-및-보안성능-방어선-security--performance-guardrails)
+    - [1.3 UI 레이아웃 \& TUI 표준](#13-ui-레이아웃--tui-표준)
+  - [2. 버전 관리 절차](#2-버전-관리-절차)
+    - [2.1 버전 진실 공급원과 정책](#21-버전-진실-공급원과-정책)
+    - [2.2 버전 증가 절차](#22-버전-증가-절차)
+    - [2.3 `bump_version.py` 동작 계약](#23-bump_versionpy-동작-계약)
+  - [3. 기술 스택 및 디펜던시](#3-기술-스택-및-디펜던시)
+  - [4. 폴더 구조 및 경로 계약](#4-폴더-구조-및-경로-계약)
+    - [4.1 기본 디렉터리](#41-기본-디렉터리)
+    - [4.2 런타임 캐시·외부 구성요소](#42-런타임-캐시외부-구성요소)
+    - [4.3 경로 관련 불변식](#43-경로-관련-불변식)
+  - [5. 아키텍처 상세 및 모듈 명세](#5-아키텍처-상세-및-모듈-명세)
+    - [5.1 레이어별 구조 (4계층 + L0 Leaf) — v3.4.0 레이아웃 리팩터링(`chzzktube/` 단일 패키지)](#51-레이어별-구조-4계층--l0-leaf--v340-레이아웃-리팩터링chzzktube-단일-패키지)
+    - [5.2 모듈 목록 (95개 루트 .py — 2026-09-25 `find *.py` 실측. `tool_log.py` 포함. 상세 트리 참조)](#52-모듈-목록-95개-루트-py--2026-09-25-find-py-실측-tool_logpy-포함-상세-트리-참조)
+  - [6. 로깅 규격 및 작성 가이드](#6-로깅-규격-및-작성-가이드)
+    - [6.1 고정 칼럼 로그 규격 (v3.4.0+)](#61-고정-칼럼-로그-규격-v340)
+      - [3.1 기본 포맷](#31-기본-포맷)
+      - [3.2 STAGE 값 (5자 규격)](#32-stage-값-5자-규격)
+      - [3.3 STATUS 값 (5자 규격)](#33-status-값-5자-규격)
+      - [3.4 SCOPE 값 (발생지/대상, 5자 규격)](#34-scope-값-발생지대상-5자-규격)
+      - [3.5 진행률 바 지터링 방지 규격](#35-진행률-바-지터링-방지-규격)
+      - [3.6 예시 로그](#36-예시-로그)
+    - [6.2 신규 기능 개발 시 로그 작성 및 추가 규약 (Logging Guidelines)](#62-신규-기능-개발-시-로그-작성-및-추가-규약-logging-guidelines)
+      - [1. 로그 발행 단일 진입점 (Single Entry Point)](#1-로그-발행-단일-진입점-single-entry-point)
+      - [2. 4컬럼 규격 및 상수 엄격 준수 (`LogEvent` SSOT)](#2-4컬럼-규격-및-상수-엄격-준수-logevent-ssot)
+      - [3. TUI vs F12 채널 격리 및 전량 보존 계약 (Storage vs View)](#3-tui-vs-f12-채널-격리-및-전량-보존-계약-storage-vs-view)
+      - [4. 1타임스탬프 1정보 (Single Information per Line)](#4-1타임스탬프-1정보-single-information-per-line)
+      - [5. 제자리 갱신형 및 다중 컴포넌트 로그 (`is_status`, `component_id`, `is_progress`)](#5-제자리-갱신형-및-다중-컴포넌트-로그-is_status-component_id-is_progress)
+      - [6. 에러 로그 표준 규격 (`emit_error_standard` / `emit_error_warn`)](#6-에러-로그-표준-규격-emit_error_standard--emit_error_warn)
+      - [7. 워커 스레드 타입 가드 (`safe_log_msg`)](#7-워커-스레드-타입-가드-safe_log_msg)
+      - [8. 실패 및 마감 로그 단일 발행 원칙](#8-실패-및-마감-로그-단일-발행-원칙)
+  - [7. 파이프라인 및 우회 전략](#7-파이프라인-및-우회-전략)
+    - [7.1 3계층 우회 파이프라인 (Three-Layer Bypass Pipeline)](#71-3계층-우회-파이프라인-three-layer-bypass-pipeline)
+    - [7.2 분석/다운로드 단계별 동작 상세](#72-분석다운로드-단계별-동작-상세)
+    - [7.3 렌더링 엔진 정책 (Rendering Engine Policy)](#73-렌더링-엔진-정책-rendering-engine-policy)
+  - [8. 주요 컴포넌트 및 시그널 계약](#8-주요-컴포넌트-및-시그널-계약)
+    - [8.1 log\_console.py (ConciseLogConsole)](#81-log_consolepy-conciselogconsole)
+    - [8.2 dialogs.py](#82-dialogspy)
+    - [8.3 ui/components/ (v3.12.0 신설)](#83-uicomponents-v3120-신설)
+    - [8.4 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.12.0 실측)](#84-기동-시퀀스pot-구동-로직시그널-계약-트리-v3120-실측)
+    - [8.5 Worker ↔ UI 시그널 계약 (v3.12.0 — 로그 시그널 0, 결과/게이트만 잔존. 2026-09-25 실측)](#85-worker--ui-시그널-계약-v3120--로그-시그널-0-결과게이트만-잔존-2026-09-25-실측)
+  - [9. 핵심 데이터 구조](#9-핵심-데이터-구조)
+    - [9.1 cfg (config.default\_config() 23키 — 로드 시 dl\_config.json 병합)](#91-cfg-configdefault_config-23키--로드-시-dl_configjson-병합)
+  - [10. 빌드 및 배포(CI/CD) 절차](#10-빌드-및-배포cicd-절차)
+    - [10.1 체리피킹 원칙](#101-체리피킹-원칙)
+    - [10.2 자동 업데이트 정책 (Nightly Channel)](#102-자동-업데이트-정책-nightly-channel)
+    - [10.3 선택 과제 (향후)](#103-선택-과제-향후)
+    - [10.4 빌드 시 해야 할 일 (OS별 체크리스트) — v3.1.1 신설](#104-빌드-시-해야-할-일-os별-체크리스트--v311-신설)
+  - [11. 주요 이슈 및 유지보수 포인트](#11-주요-이슈-및-유지보수-포인트)
+  - [12. 불변식 (코드 수정 시 절대 위반 금지)](#12-불변식-코드-수정-시-절대-위반-금지)
+  - [13. 하지 말 것 (회귀 방지)](#13-하지-말-것-회귀-방지)
+  - [14. 검증 워크플로우](#14-검증-워크플로우)
+    - [14.1 마무리 — 링크 깨짐 확인 완료·체리피킹 요약 (v3.5.0)](#141-마무리--링크-깨짐-확인-완료체리피킹-요약-v350)
+  - [15. 파일 규칙](#15-파일-규칙)
+  - [16. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)](#16-테스트-자산-명세-및-유지보수-가이드-v3125-신설)
+    - [16.1 테스트 자산 모듈 전수 목록 (45개 진입점 / 395개 케이스)](#161-테스트-자산-모듈-전수-목록-45개-진입점--395개-케이스)
+    - [16.2 테스트 자산 유지보수 5대 원칙](#162-테스트-자산-유지보수-5대-원칙)
 
 
 ## 1. 프로젝트 개요
@@ -63,13 +77,34 @@
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
   - `z` patch: 버그 수정·로그/색상/판정 문구·성능 다듬기 등 기능 지평 변화 없는 안정 작업
-  - 비공개 개발이므로 `y` 단위로 릴리즈하고, `z`는 중간 커밋 구분용. 공개/배포 마일스톤에서만 `x`·`1.0.0` 레이블을 의미에 맞게 사용. 버전 변경 사유는 HANDOVER §9 변경 테이블 + CHANGELOG에 동기화.
+  - 비공개 개발이므로 `y` 단위로 릴리즈하고, `z`는 중간 커밋 구분용. 공개/배포 마일스톤에서만 `x`·`1.0.0` 레이블을 의미에 맞게 사용. 버전 변경 사유는 HANDOVER §8 변경 테이블 + CHANGELOG에 동기화.
 - **스택**: Python 3.12.14 (pyenv, `.python-version` 고정) + PySide6 + yt-dlp + streamlink + FFmpeg(리먹싱) + Node.js 22+(PO Token 서버)
 - **진입점**: `main.py` (`python main.py`)
 - **빌드**: PyInstaller — `ChzzkTube.spec`
 - **설정 파일**: `dl_config.json` (CONFIG_DIR에 생성, UTF-8 / indent=4)
 
 ---
+
+### 1.1 설계 철학 및 아키텍처 방향성 (Architecture & Readability)
+- **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 요소를 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃을 유지함.
+- **도구의 순수성**: 미디어 추출 본연의 안정성과 속도에 집중함. 우회 로직은 단계적 폴백 원칙을 따른다.
+- **Zero Redundancy & Clean Termination**: 단일 라인 내 같은 의미의 단어/상태 중복, 빈 컬럼 방지. 타임스탬프와 컬럼 조판은 말단 렌더러에서 1회만 수행함.
+- **파일 및 모듈 크기 제한**: 단일 파일이 1000라인을 초과하거나 인프라 모듈(`infra/`) 내부에 비즈니스 개념이 섞일 경우 반드시 순수 유틸리티와 도메인 모델로 분리하는 정책을 고수함.
+- **명시적 디스패처/상태 모델 적용**: `control` 계층의 상태 관리 패턴을 다운로드 파이프라인과 오류 처리 등 시스템 전반으로 확대하여, 단순 if/else 분기문 대신 명시적 상태 머신(State Machine) 구조를 유지함.
+
+### 1.2 제약 조건 및 보안/성능 방어선 (Security & Performance Guardrails)
+- **Zero-Trust 원칙 (입출력 검증)**: 외부 사용자 입력(URL)이나 의존성 바이너리의 런타임 결과값은 항상 악의적일 수 있다고 간주함. 시스템 바운더리에서의 다운로드 파일명(Sanitization) 검증 및 OS 셸 인젝션 방어 필터링을 필수적으로 적용함.
+- **측정 기반 성능 통제 (Throttling)**: 동시 다운로드 처리나 대용량 버퍼 캐싱 시 발생하는 메모리 스파이크와 I/O 병목을 추측으로 최적화하지 않음. 커넥션 풀(Connection Pool)과 청크 대역폭 제한 등을 통한 사전 방어(Throttling) 및 프로파일링 정책을 유지함.
+
+### 1.3 UI 레이아웃 & TUI 표준
+- **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인과 높낮이 튐을 차단함.
+- **Flat TUI 3-Layer 구조**:
+  - **Configuration Bar (상단)**: 저장 경로와 단축키 배지 (`[ F1: Change ]`, `[ F2: Open ]`, `[ F3: Settings ]`, `[ F12: Full Log ]`).
+  - **Input & Action Bar (중간)**: 프롬프트(`>`) 기반 URL 입력창. `[ ESC: Clear │ ENTER: Start ]` 단축키 사용.
+  - **Live Console Monitor (하단, `stretch=1`)**: 메인 로그를 표시함. Raw 디버그 로그는 `F12` 독립 서브 윈도우로 격리함.
+- **SSOT 기반 팝업/다이얼로그 규격**: 모든 안내창은 `TuiNoticeDialog` 규격(다크 팔레트, 모던 TUI)을 준수하며, `SettingsDialog` 등은 프레임리스 섹션과 하단 고정 풋터 분리형 뷰를 유지함.
+- **시각적 디테일 및 영문 미니멀화**: 파스텔 팔레트(`SUCCESS #6a9955`, `ERROR #e06c75`, `WARN #e5c07b`) 유지. MSG 및 팝업/다이얼로그 문구는 영문 소문자 CLI 태그 원칙.
+
 
 ## 2. 버전 관리 절차
 
@@ -84,7 +119,7 @@
   - `minor`: 기능 추가, 대형 리팩토링, 아키텍처 재편 등 사용자/호출부 관점의 기능 지평이 바뀔 때
   - `patch`: 버그 수정, 로그·색상·판정 문구, 성능 다듬기 등 기능 지평 변화 없는 안정 작업
 - 비공개 개발은 patch 단위로 커밋/중간 상태를 구분하고, 외부 공개 또는 배포 마일스톤에서 major/minor 레이블을 의미에 맞게 붙인다.
-- 버전 변경 사유는 `HANDOVER.md` §9 변경 테이블과 `CHANGELOG.md` 최신 엔트리에 함께 기록함.
+- 버전 변경 사유는 `HANDOVER.md` §8None 변경 테이블과 `CHANGELOG.md` 최신 엔트리에 함께 기록함.
 
 ### 2.2 버전 증가 절차
 
@@ -223,51 +258,9 @@ LAYER 0: Domain / Helpers / Infra (Leaf)
 
 > 구 분류표의 `cookie.py`(단수)·`pot_manager alivede progress`·`startup_coordinator 시퀀스 스텝 실행기` 서술은 2026-09-12 실측으로 정정 — 실제 파일은 `cookies.py`, POTManager=수명주기 관리자, Coordinator=게이트+보고 중계. 구 34행 분류표는 아래 v3.3.0 실측 시그널 계약으로 대체.
 
-## 6. 개발 방향성 및 TUI 표준
-### 6.1 핵심 철학 (Core Philosophy)
-- **Hyper-Minimalist Modern TUI Media Extractor**: OS 순정 GUI 요소를 배제하고, `fzf`·`lazygit` 감성의 모노스페이스 Flat TUI 레이아웃을 유지함.
-- **도구의 순수성**: 미디어 추출 본연의 안정성과 속도에 집중함. 우회 로직은 단계적 폴백 원칙을 따른다.
-- **Zero Redundancy & Clean Termination**:
-  - 단일 라인 내 같은 의미의 단어/상태를 중복 출력하지 않음.
-  - 내용 없는 빈 컬럼(`-`)과 행 말단의 방치된 구분자(`│`)를 배제함.
-  - 타임스탬프와 컬럼 조판은 말단 렌더러(TUI/F12)에서 1회만 수행함.
 
-### 6.2 UI 레이아웃 & 폰트 표준
-- **Cascadia Mono 11px 통일**: 박스 드로잉 기호(`█`, `░`)의 베이스라인과 높낮이 튐을 차단함.
-- **Flat TUI 3-Layer 구조**:
-  - **Configuration Bar (상단)**: 저장 경로와 단축키 배지 (`[ F1: Change ]`, `[ F2: Open ]`, `[ F3: Settings ]`, `[ F12: Full Log ]`).
-  - **Input & Action Bar (중간)**: 프롬프트(`>`) 기반 URL 입력창. `[ ESC: Clear │ ENTER: Start ]` 단축키를 사용함.
-  - **Live Console Monitor (하단, `stretch=1`)**: 메인 로그를 표시함. Raw 디버그 로그는 `F12` 독립 서브 윈도우로 격리함.
-
-### 6.3 팝업/다이얼로그 규격 및 설정창 아키텍처 (v3.5.1+)
-
-#### 4.1 다이얼로그 규격 단일 진실 (SSOT)
-모든 다이얼로그는 `Cascadia Mono, 11px` 및 다크 팔레트(`#0d0d0d`)를 준수하며 모던 TUI 규칙에 따라 렌더링됨.
-
-| 클래스명 | 크기 (px) | 레이아웃 특징 | 비고 |
-|---|---|---|---|
-| `ExitConfirmDialog` | `Fixed: 280×125` | 텍스트 중앙 정렬, 위험(빨강)/중립(회색) 2열 버튼 | 앱 종료 경고창 |
-| `SettingsDialog` | `Fixed: 660×680` | 스크롤 바디 + 하단 고정 풋터 분리형 TUI | 설정 패널 (F3) |
-| `CookieSelectDialog` | `Fixed: 320×220` | 브라우저별 선택 버튼 수직 스택 | 쿠키 소스 지정 |
-| `CookieViewerDialog` | `Fixed: 650×480` | 읽기 전용 텍스트 에디트 + 우하단 Close 태그 | 쿠키 덤프 뷰어 |
-| `VerboseLogWindow` | `Resize: 760×480`| 미러링 라인 카운터 상태 바 + Close | F12 상세 로그 |
-| `ActionCountdownDialog`| `Fixed: 300×125` | 60초 카운트다운 타이머 + 즉시실행/취소 | 사후 동작 확인 |
-| `TuiNoticeDialog` | `Fixed: 280×125` | 텍스트 중앙 정렬, OK/보조(View) 2버튼(alt) | `show_info_message` 기본 안내창·쿠키 설정 완료 확인 |
-
-#### 4.2 SettingsDialog 모던 TUI 조립 규칙
-- **프레임리스 섹션**: 무거운 `QGroupBox` 대신 `_sec_header("// TITLE")` 라벨과 `_tui_sep()`(1px HLine, `#1a1a1a`) 조합 사용.
-- **고정 풋터(Footer) 분리**: `QScrollArea` 바닥에 닫기 버튼을 두지 않고, 메인 `outer` 레이아웃 하단에 독립 위젯(`footer`)으로 고정 배치하여 일정한 하단 여백 유지.
-- **방어적 위임 패턴**: `self.parent_win`의 유무와 관계없이 `save_cfg()` 호출 시 부모 윈도우 또는 `config.save_config()`로 자동 폴백되도록 캡슐화되어 단독 단위 테스트 가능.
-
-### 6.4 시각적 디테일 및 영문 미니멀화
-- **파스텔 팔레트는 현행 유지**: `SUCCESS #6a9955`, `ERROR #e06c75`, `WARN #e5c07b`.
-- `MSG`는 영문 소문자 CLI 태그를 원칙으로 함.
-- **팝업·다이얼로그 문구도 영문 소문자**로 통일한다(설정값 키·사용자 데이터 제외). §4.1 `TuiNoticeDialog`가 SSOT이며 `show_info_message`는 이를 위임한다(한국어 사용자 문자열 배제).
-- 채널명/영상 제목 같은 사용자 데이터는 번역하지 않음.
-- TUI와 F12 모두 발행된 원문을 동일하게 보존함.
-
-## 7. 로깅 규격 및 작성 가이드
-### 7.1 고정 칼럼 로그 규격 (v3.4.0+)
+## 6. 로깅 규격 및 작성 가이드
+### 6.1 고정 칼럼 로그 규격 (v3.4.0+)
 
 #### 3.1 기본 포맷
 ```text
@@ -347,7 +340,7 @@ LAYER 0: Domain / Helpers / Infra (Leaf)
 [03:17:25] DL   │ OK   │ YT   │ saved · video.mp4 (11.56MB)
 ```
 
-### 7.2 신규 기능 개발 시 로그 작성 및 추가 규약 (Logging Guidelines)
+### 6.2 신규 기능 개발 시 로그 작성 및 추가 규약 (Logging Guidelines)
 
 신규 기능을 추가할 때 발생하는 모든 동작 로그는 반드시 아래 8가지 철칙을 준수해야 함.
 
@@ -405,8 +398,8 @@ LAYER 0: Domain / Helpers / Infra (Leaf)
 * 배치 작업 실행 중 개별 실패 내역은 워커 내부 루프에서 즉시 `to_tui=True`로 다중 발행하지 않음.
 * `failed_targets` 목록에 수집해 두었다가 **`finalizer.finalize()` 단 한 곳에서 마감 요약과 함께 단일 발행**하여 콘솔에 중복 FAIL 라인이 연속으로 찍히는 촌극을 방지함.
 
-## 8. 파이프라인 및 우회 전략
-### 8.1 3계층 우회 파이프라인 (Three-Layer Bypass Pipeline)
+## 7. 파이프라인 및 우회 전략
+### 7.1 3계층 우회 파이프라인 (Three-Layer Bypass Pipeline)
 YouTube 차단 회피는 yt-dlp 순정 로직을 최우선 존중하고, 앱 레벨 수동 로테이션을 완전히 제거함. 3계층으로 구성되며 상위 계층은 하위가 **실제로 차단되었을 때만** 가동됨.
 
 - **Layer 1: 순정 네이티브 모드 (기본, 항상 가동)**
@@ -430,7 +423,7 @@ YouTube 차단 회피는 yt-dlp 순정 로직을 최우선 존중하고, 앱 레
 > - **멤버십은 Layer 1에서 해결** — `subscriber_only` POT 게이트에서 제거
 > - **tv 클라이언트(720p) 시도 없음** — 순정이 `tv_downgraded`까지만 사용, 1080p+ 보장
 
-### 8.2 분석/다운로드 단계별 동작 상세
+### 7.2 분석/다운로드 단계별 동작 상세
 
 | 단계 | Layer 1 (순정) | Layer 2 (POT) | Layer 3 (재시도) |
 |------|----------------|---------------|------------------|
@@ -440,7 +433,7 @@ YouTube 차단 회피는 yt-dlp 순정 로직을 최우선 존중하고, 앱 레
 
 > **수동 클라이언트 지정 시**: `cfg["yt_player_client"] != "auto"`면 해당 클라 1회만 시도 (폴백 없음) — 기존 동작 유지
 
-### 8.3 렌더링 엔진 정책 (Rendering Engine Policy)
+### 7.3 렌더링 엔진 정책 (Rendering Engine Policy)
 **PySide6 (Qt 엔진) 유지.** 렌더링 주권(폰트 강제, 픽셀 단위 정렬)과 크로스플랫폼 마우스/클립보드를 동시에 확보하기 위해 TTY 계열(curses/Textual)은 배제함.
 
 - **Qt 엔진 유지 이유**: 폰트 종류/크기/행간 강제 제어, 박스 드로잉 픽셀 정렬, OS 레벨 마우스/클립보드/포커스 지원을 모두 충족하는 유일한 선택.
@@ -453,26 +446,26 @@ YouTube 차단 회피는 yt-dlp 순정 로직을 최우선 존중하고, 앱 레
 
 ---
 
-## 9. 주요 컴포넌트 및 시그널 계약
-### 9.1 log_console.py (ConciseLogConsole)
+## 8. 주요 컴포넌트 및 시그널 계약
+### 8.1 log_console.py (ConciseLogConsole)
 - **책임**: TUI 규격에 맞춘 메인 콘솔의 **순수 렌더링 엔진**.
 - **로직 특성 (v3.12.0+)**:
   - **Single-Line In-Place Status**: `findBlockByNumber()`와 `QTextCursor` 기반으로 $O(1)$ 타깃형 제자리 블록 치환 수행 (기존 `reflow()` O(N) 전면 폐기). 20Hz(50ms) 페인팅 쓰로틀링으로 GUI 프레임 드랍 차단.
   - **NoWrap과 Pixel-perfect Clamp**: `QTextEdit`의 자체 자동 줄바꿈을 끄고(`NoWrap`), `fontMetrics().horizontalAdvance()`를 사용해 실제 픽셀 폭 단위로 예산 측정 후 초과 시 `…`으로 정밀 절단함.
 
-### 9.2 dialogs.py
+### 8.2 dialogs.py
 - **책임**: 앱 내에서 발생하는 모든 독립된 팝업 대화상자(Dialog)들의 컬렉션.
 - **로직 특성 (v3.12.0+)**:
   - 7개 모달 창의 `setFixedSize` 철폐 후 `setMinimumSize()` 기반 반응형 스케일링 허용.
   - `SettingsDialog`는 5대 기능 영역 모듈 빌더로 분할하여 단일 함수 비대화 방지.
   - **SSOT 규격**: 안내창은 `TuiNoticeDialog` 규격 준수.
 
-### 9.3 ui/components/ (v3.12.0 신설)
+### 8.3 ui/components/ (v3.12.0 신설)
 - **책임**: `MainWindow`의 복잡도를 낮추기 위해 역할별로 분리된 컴포넌트 뷰.
 - **HeaderBarWidget**: 경로 제어, 설정, 로그 토글 등 1계층 UI 담당.
 - **ActionBarWidget**: URL 입력창, 실시간 정규식 사전 검증(Soft Warning), 디바운스, 다운로드/분석 액션 트리거 담당.
 
-### 9.4 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.12.0 실측)
+### 8.4 기동 시퀀스·POT 구동 로직·시그널 계약 트리 (v3.12.0 실측)
 
 ```
 [기동 시퀀스 — DEPS → upgrade → prewarm → READY]
@@ -530,7 +523,7 @@ DownloadWorker: finished_all(int,int) — 유일 잔존 Signal
 raw_log는 표준 라이브러리만 — Qt 링크 없음. 스레드 경계 책임은 GUI를 점유한 수신층(main.py).
 ```
 
-### 9.5 Worker ↔ UI 시그널 계약 (v3.12.0 — 로그 시그널 0, 결과/게이트만 잔존. 2026-09-25 실측)
+### 8.5 Worker ↔ UI 시그널 계약 (v3.12.0 — 로그 시그널 0, 결과/게이트만 잔존. 2026-09-25 실측)
 
 ```
 AnalyzeWorker(target_url, cfg):                        # 결과 전달 전용 — 로그 시그널 없음
@@ -577,12 +570,12 @@ raw 버스(raw_log.py — 순수 파이썬 bounded-queue dispatcher, Qt 링크 �
 
 > 구 계약표의 `POTProviderWorker(mode)` 행은 v3.3.1에서 삭제 — POTManager._POTWorker와 중복된 좀비 인터페이스였다(런타임 사용 0건 실측). pot_provider.py는 3개 모듈 재수출 facade만 남음. `pot_finished` msg는 상태 토큰("staged"/"ready"/"failed")만 사용 — 사람용 상세는 버스 로그로.
 
-## 10. 핵심 데이터 구조
+## 9. 핵심 데이터 구조
 ```python
 {"running": bool, "canceled": bool, "skip": bool, "analyzing": bool}
 ```
 
-### 10.1 cfg (config.default_config() 23키 — 로드 시 dl_config.json 병합)
+### 9.1 cfg (config.default_config() 23키 — 로드 시 dl_config.json 병합)
 ```python
 download_path, container("mp4"), embed_subtitles, audio_only,
 fast_download(True), remove_duplicates(True), auto_open_folder(True),
@@ -592,9 +585,9 @@ browser_cookie("auto"), cookie_file_path(""), yt_player_client("auto")
 ```
 > 런타임 cfg = `default_config()` + `dl_config.json` 통째 병합(`load_config`의 `cfg.update`).
 
-## 11. 빌드 및 배포(CI/CD) 절차
+## 10. 빌드 및 배포(CI/CD) 절차
 
-### 11.1 체리피킹 원칙
+### 10.1 체리피킹 원칙
 PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는 Qt 모듈만 포함하고 나머지는 반드시 제거**함. 개발 중 전체 설치는 어쩔 수 없으나, 배포 바이너리는 `--exclude-module`로 최소화함.
 
 - **제거 대상 모듈** (런타임 사용 0, PyInstaller 빌드 시 `--exclude-module` 적용):
@@ -603,7 +596,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - **효과**: 전체 포함 시 ~80-100MB → 체리피킹 시 ~50-60MB (30-40% 감소).
 - **원칙**: "안 쓰는 모듈은 빌드에 넣지 않는다" — 구체 목록보다 **원칙을 우선**하며, 새 Qt 모듈 추가 시 이 섹션의 사용 모듈 목록도 함께 갱신할 것.
 
-### 11.2 자동 업데이트 정책 (Nightly Channel)
+### 10.2 자동 업데이트 정책 (Nightly Channel)
 모든 빌드 환경에서 동일하게 yt-dlp 자동 업데이트를 지원함. 네트워크 의존은 이 앱에서 본질적이다 (웹 미디어 추출기).
 
 - **Stable 채널** (기본): GitHub 릴리스 기준 안정 버전 수급
@@ -616,7 +609,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - **업데이트 실패 시**: 기존 버전 유지, 다음 실행 시 재시도.
 - **bgutil (PO 토큰 서버)**: GitHub 태그 릴리즈에서 자동 수급, pot_provider가 별도 관리.
 
-### 11.3 선택 과제 (향후)
+### 10.3 선택 과제 (향후)
 - ✅ **PO 서버 실패 시 재시도** (v3.6.0 #6 완료): 봇 체크 마커 감지 시 `ensure_ready("gate")` 후 URL당 1회 재분석 큐잉 — `_pot_retry_done`으로 루프 차단
 - ✅ **POT 서브프로세스 트리 종료** (v3.6.0 #2 완료): `kill_tree()` — Windows Job Object(`TerminateJobObject`) / POSIX 프로세스 그룹(`start_new_session`)
 - ✅ **POT gate hang 2차 워치독** (v3.6.0 #3 완료): `_gate_watchdog`(120s) — 만료 시 `cancel()`(트리 킬) + 대기 큐 해제
@@ -626,7 +619,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - ✅ **설정 UI**: 업데이트 채널 (Stable/Night) 선택 다이얼로그 — 완료
 - ✅ **streamlink 직접 다운로드**: 포터블 빌드에서 streamlink whl 직접 수급 — 완료
 
-### 11.4 빌드 시 해야 할 일 (OS별 체크리스트) — v3.1.1 신설
+### 10.4 빌드 시 해야 할 일 (OS별 체크리스트) — v3.1.1 신설
 
 포터블 빌드는 OS별로 각각 수행한다 (spec 의 _bundle_node_exe 가 빌드 OS 의 node 를
 번들하므로 교차 빌드 불가 — macOS 빌드는 macOS 에서, Windows 빌드는 Windows 에서).
@@ -643,9 +636,9 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 단일화되어 있으며, dev(.venv/bin/yt-dlp 등) 와 frozen(importlib 폴백) 의 차이는
 이 계층에만 존재한다 — 검사·갱신·설치·로그 파이프라인은 동일 코드를 탄다.
 
-## 12. 주요 이슈 및 유지보수 포인트
+## 11. 주요 이슈 및 유지보수 포인트
 
-## 13. 불변식 (코드 수정 시 절대 위반 금지)
+## 12. 불변식 (코드 수정 시 절대 위반 금지)
 
 - [ ] 0. **표준 status**: `format_log_line`의 status로 허용되는 값: `OK / READY / RUN / DONE / ABORT / FAIL / END / SKIP / WARN`. **비표준 사용 금지**: `MISSING` / `?` / 그 외 표준 외 값 사용 금지. DEPS 체크 실패 → `FAIL` + msg에 사유("not found" 등). **msg 비어있으면 세로줄 누락됨**: `format_log_line`이 falsy msg를 무시하므로 `None`/`""` 대신 명시적 문자열 사용.
 - [ ] 1. **state 딕셔너리 공유**: `MediaController.state`는 `DownloadWorker`에 참조 그대로 전달됨. 복사 금지.
@@ -744,7 +737,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - [ ] 38. **스모크 테스트의 비동기 워커 생존 및 논블로킹 해제 계약 (v3.12.5)**: `smoke_test.py`는 `_startup_coord._state`, `_pot_manager` 바인딩 및 이벤트 펌핑을 통해 백그라운드 크래시를 감지해야 하며, `win.close()`(모달 블로킹) 호출 절대 금지, `cancel()` + `deleteLater()` + `processEvents()`로 1초 내 안전 회수 보장.
 - [ ] 39. **오류 로그 새니타이징 및 TUI 컬럼 파괴 방어 (v3.12.5)**: `emit_error_standard` 등 오류 발행 계층은 메시지 내 구분자(`│`) 및 개행(`\r`, `\n`)을 공백(`" "`)으로 치환하여 TUI 4컬럼 조판 규격과 단일 라인 불변식을 절대 훼손하지 않아야 함.
 
-## 14. 하지 말 것 (회귀 방지)
+## 13. 하지 말 것 (회귀 방지)
 
 - [ ] ❌ `state/cfg` 딕셔너리를 복사해서 워커에 넘기는 것
 - [ ] ❌ `smoke_test` 통과 없이 리팩토링 커밋하는 것
@@ -779,7 +772,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - [ ] ❌ **플랫폼 분기 가드(`@pytest.mark.skipif`) 없이 타깃 OS 전용 코드를 무단 단언하는 것**: macOS 전용 Bottle, Windows 전용 레지스트리/소리 등을 교차 환경에서 가드 없이 돌려 빌드를 깨뜨리는 행위 금지.
 - [ ] ❌ **로그 메시지에 구분자(`│`)나 개행(`\n`, `\r`)을 방치하여 TUI 컬럼을 폭파하는 것**: 에러 메시지 원문을 그대로 밀어넣어 4컬럼 조판 구조를 깨뜨리는 부주의한 로깅 금지.
 
-## 15. 검증 워크플로우
+## 14. 검증 워크플로우
 
 - [ ] 1. **py_compile**: 변경된 모듈 전부 `python -m py_compile` 통과
 - [ ] 2. **smoke_test**: `python smoke_test.py` 통과 (offscreen 플래그로 CI 가능)
@@ -798,13 +791,13 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 ---
 
-### 15.1 마무리 — 링크 깨짐 확인 완료·체리피킹 요약 (v3.5.0)
+### 14.1 마무리 — 링크 깨짐 확인 완료·체리피킹 요약 (v3.5.0)
 
 - **링크 깨짐 점검**: 모든 내부 링크(`§`, `§§`, `[링크](#anchor)`) 정상 동작. 앵커(`###`, `####`)와 문서 내 참조(`HANDOVER §x.y`, `CHANGELOG 2026-09-15`) 정합. `mirrors/` 미러는 `sync_mirrors.py`로 동기화.
-- **체리피킹(§8.1) 요약**: PySide6 사용 모듈(`QtCore/Widgets/Gui/Core/DBus` 등)만 포함, 미사용 모듈(WebEngine/Multimedia/3D/Charts 등) `--exclude-module`로 제거. 빌드 크기 ~80-100MB → ~50-60MB (30-40%↓). 사용 모듈은 `grep -rn 'PySide6.Qt'`로 확인 후 이 섹션 목록 갱신.
+- **체리피킹(§7.1) 요약**: PySide6 사용 모듈(`QtCore/Widgets/Gui/Core/DBus` 등)만 포함, 미사용 모듈(WebEngine/Multimedia/3D/Charts 등) `--exclude-module`로 제거. 빌드 크기 ~80-100MB → ~50-60MB (30-40%↓). 사용 모듈은 `grep -rn 'PySide6.Qt'`로 확인 후 이 섹션 목록 갱신.
 - **문서 동기화 완료**: `HANDOVER`·`CHANGELOG`·`README`·`mirrors/` 전체 동기화 완료. `sync_mirrors.py --check` 0건.
 
-## 16. 파일 규칙
+## 15. 파일 규칙
 
 | 카테고리 | 규칙 |
 |----------|------|
@@ -814,9 +807,9 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **바이너리** | 이미지/폰트/실행 파일은 `.gitattributes`에서 binary 지정 |
 | **문서 미러** | `.py`가 원본, `mirrors/*.md` + `mirrors/chzzktube_codebase.md` 합본은 `python sync_mirrors.py` 자동 생성. 손수정 금지 |
 
-## 17. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)
+## 16. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)
 
-### 17.1 테스트 자산 모듈 전수 목록 (45개 진입점 / 395개 케이스)
+### 16.1 테스트 자산 모듈 전수 목록 (45개 진입점 / 395개 케이스)
 
 > 2026-09-27 v3.12.5 기준 실측: `pytest tests/` 44개 모듈 (392 passed, 3 skipped, 0 failed) + 루트 `smoke_test.py` (ALL PASS, 1초 무결점 하네스).
 
@@ -870,7 +863,7 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 ---
 
-### 17.2 테스트 자산 유지보수 5대 원칙
+### 16.2 테스트 자산 유지보수 5대 원칙
 
 1. **100% Green (무결점) 유지 원칙**:
    - 모든 커밋과 PR은 `uv run pytest tests/` (386 passed, 3 skipped, 0 failed) 및 `uv run python smoke_test.py` (Exit Code 0) 100% 통과를 유지해야 함.
