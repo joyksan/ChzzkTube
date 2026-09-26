@@ -1,12 +1,12 @@
 {
   "mcpServers": {
     "qt-pilot": {
-      "command": "/Users/jskim/Documents/ChzzkTube/.venv/bin/python",
+      "command": "C:/dev/ChzzkTube/.venv/Scripts/python.exe",
       "args": [
-        "/Users/jskim/Documents/ChzzkTube/qt_pilot_server.py"
+        "C:/dev/ChzzkTube/qt_pilot_server.py"
       ],
       "env": {
-        "PYTHONPATH": "."
+        "PYTHONPATH": "C:/dev/ChzzkTube"
       }
     }
   }

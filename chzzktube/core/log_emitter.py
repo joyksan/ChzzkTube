@@ -214,16 +214,31 @@ def _log_speed(speed):
     return s[-8:].rjust(8)
 
 
-def _log_bar(bar_frac, width=10):
-    """텍스트 진행 바 — None이면 빈 문자열, 아니면 고정 10블록 '[████░░░░░░]'."""
+def _log_bar(bar_frac, width=16):
+    """텍스트 진행 바 (Sleek Dash & Head 프레임리스 v3.12.5).
+
+    글리프 사양:
+    - Filled Track: '━' (U+2501)
+    - Indicator Head: '╸' (U+2578)
+    - Empty Track: '┈' (U+2508)
+    - 고정폭: 16칸
+    """
     if bar_frac is None:
         return ""
     try:
         frac = min(max(float(bar_frac), 0.0), 1.0)
     except (TypeError, ValueError):
         return ""
-    filled = round(frac * width)
-    return f"[{'█' * filled}{'░' * (width - filled)}]"
+    fill_count = int(round(frac * width))
+    empty_count = width - fill_count
+
+    if fill_count <= 0:
+        return "┈" * width
+    elif fill_count >= width:
+        return "━" * width
+    else:
+        body = "━" * (fill_count - 1)
+        return f"{body}╸{'┈' * empty_count}"
 
 def format_log_line(stage, status, scope="", msg="", spec="", speed="", pct=None,
                     bar_frac=None):

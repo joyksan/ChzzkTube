@@ -203,11 +203,11 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
 
-        # [v3.12.6] 기동 헤더 로그: 앱 식별자 및 단일 진실 버전 1줄 TUI 발행
+        # [v3.12.6] 기동 헤더 로그: F12 상세 로그용으로 기록 (메인 콘솔은 1줄 요약 뱃지만 표출)
         raw_log.raw(
             "SYS",
             LogEvent(stage="SYS", status="OK", scope="MAIN", msg=f"{APP_NAME} {APP_VERSION}", is_status=False),
-            to_tui=True,
+            to_tui=False,
         )
 
         # 구성요소(yt-dlp/ffmpeg/node) 자동 업데이트 확인 — 기동 직후 비동기 1회
@@ -577,11 +577,11 @@ class MainWindow(QMainWindow):
             b.style().polish(b)
             return b
 
-        # ── 헬퍼: 힌트 버튼 사이 딤 '│' 구분자 ──
+        # ── 헬퍼: 힌트 버튼 사이 딤 '·' 구분자 ──
         def _tui_sep():
-            sep = QLabel("│")
+            sep = QLabel("·")
             sep.setStyleSheet(
-                f"color: {theme.FG_DIM}; border: none; background: transparent; padding: 0px;"
+                "color: #555555; border: none; background: transparent; padding: 0px 2px; font-weight: bold;"
             )
             return sep
 
@@ -613,23 +613,28 @@ class MainWindow(QMainWindow):
         self._update_path_label()
         hlay.addWidget(self.path_label, 1)
 
-        self.btn_change = _tui_tag("[ F1: Change ]", "Change download folder (F1)", self.change_folder)
+        self.btn_change = _tui_tag("F1 Change", "Change download folder (F1)", self.change_folder)
+        self.btn_change.setObjectName("btn_change")
         self.btn_open = _tui_tag(
-            "[ F2: Open ]",
+            "F2 Open",
             "Open download folder (F2)",
             lambda: _open_windows_explorer(self.cfg["download_path"]),
         )
+        self.btn_open.setObjectName("btn_open")
         hlay.addWidget(self.btn_change)
+        hlay.addWidget(_tui_sep())
         hlay.addWidget(self.btn_open)
 
-        # v_line: Change/Open과 Full Log/Settings 그룹 사이 시각 구분
-        self.v_line = QLabel("\u2502")
-        self.v_line.setProperty("class", "tui-sep")
+        # v_line: Change/Open과 Full Log/Settings 그룹 사이 미들 닷 시각 구분
+        self.v_line = _tui_sep()
         hlay.addWidget(self.v_line)
 
-        self.btn_full_log = _tui_tag("[ F12: Full Log ]", "Toggle full log window (F12)", self.toggle_verbose_log)
-        self.btn_settings = _tui_tag("[ F3: Settings ]", "Open settings (F3)", self.open_settings)
+        self.btn_full_log = _tui_tag("F12 Log", "Toggle full log window (F12)", self.toggle_verbose_log)
+        self.btn_full_log.setObjectName("btn_full_log")
+        self.btn_settings = _tui_tag("F3 Settings", "Open settings (F3)", self.open_settings)
+        self.btn_settings.setObjectName("btn_settings")
         hlay.addWidget(self.btn_full_log)
+        hlay.addWidget(_tui_sep())
         hlay.addWidget(self.btn_settings)
 
         main_layout.addWidget(self.header_group)
@@ -667,14 +672,17 @@ class MainWindow(QMainWindow):
         self.url_input.returnPressed.connect(self.toggle_download)
         ilay.addWidget(self.url_input, 1)
 
-        self.btn_txt = _tui_tag("[ F4: Load .txt ]", "Load URL list from TXT (F4)", self.pick_txt)
+        self.btn_txt = _tui_tag("F4 Load .txt", "Load URL list from TXT (F4)", self.pick_txt)
+        self.btn_txt.setObjectName("btn_txt")
         ilay.addWidget(self.btn_txt)
         ilay.addWidget(_tui_sep())
 
-        self.btn_enter = _tui_tag("[ ENTER: Start ]", "Start download (Enter)", self.toggle_download)
-        self.btn_esc = _tui_tag("[ ESC: Clear ]", "Clear input (Esc) — abort when running", self._esc_action)
+        self.btn_esc = _tui_tag("ESC Clear", "Clear input (Esc) — abort when running", self._esc_action)
+        self.btn_esc.setObjectName("btn_esc")
         ilay.addWidget(self.btn_esc)
         ilay.addWidget(_tui_sep())
+        self.btn_enter = _tui_tag("↵ Start", "Start download (Enter)", self.toggle_download)
+        self.btn_enter.setObjectName("btn_enter")
         ilay.addWidget(self.btn_enter)
 
         main_layout.addWidget(self.input_group)
@@ -1359,6 +1367,10 @@ class MainWindow(QMainWindow):
         state = self.get_current_app_state()
 
         self.url_input.setEnabled(state in ("IDLE", "PICKING"))
+        if state == "STARTUP":
+            self.url_input.setPlaceholderText("Initializing portable runtime environment... (ESC Cancel)")
+        else:
+            self.url_input.setPlaceholderText("URL, playlist, or channel URL...")
 
         self.btn_open.setEnabled(True)
         self.btn_change.setEnabled(state == "IDLE")
@@ -1367,30 +1379,30 @@ class MainWindow(QMainWindow):
 
         if state == "STARTUP":
             self.btn_esc.setEnabled(False)
-            self.btn_esc.setText("[ ESC: Clear ]")
+            self.btn_esc.setText("ESC Clear")
         elif state == "RUNNING":
             self.btn_esc.setEnabled(True)
-            self.btn_esc.setText("[ ESC: Abort ]")
+            self.btn_esc.setText("ESC Abort")
         elif state in ("ANALYZING", "PICKING"):
             self.btn_esc.setEnabled(True)
-            self.btn_esc.setText("[ ESC: Cancel ]")
+            self.btn_esc.setText("ESC Cancel")
         else:
             self.btn_esc.setEnabled(True)
-            self.btn_esc.setText("[ ESC: Clear ]")
+            self.btn_esc.setText("ESC Clear")
 
         if state == "IDLE":
             self.btn_enter.setEnabled(True)
-            self.btn_enter.setText("[ ENTER: Start ]")
+            self.btn_enter.setText("↵ Start")
         elif state == "PICKING":
             self.btn_enter.setEnabled(True)
-            self.btn_enter.setText("[ ENTER: Select ]")
+            self.btn_enter.setText("↵ Select")
         elif state == "STARTUP" and self._startup_coord._state.deps_error_msg:
             # [v3.8.1] deps 에러 시 재시도 버튼 표시
             self.btn_enter.setEnabled(True)
-            self.btn_enter.setText("[ ENTER: Retry Setup ]")
+            self.btn_enter.setText("↵ Retry Setup")
         else:
             self.btn_enter.setEnabled(False)
-            self.btn_enter.setText("[ ENTER: Start ]")
+            self.btn_enter.setText("↵ Start")
 
         self.console.reset_status_flag()
 
@@ -1754,6 +1766,9 @@ def main() -> int:
 
     set_app_user_model_id("chzzktube.subapp.v2")
 
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = QApplication(sys.argv)
     if os.path.exists(ICON_PATH):
         app.setWindowIcon(QIcon(ICON_PATH))
@@ -1791,7 +1806,7 @@ def main() -> int:
             raw_log.raw(
                 "deps",
                 emit_component("DEPS", "OK", "PYLIB", f"overlay: {_pylib}{_suffix}"),
-                to_tui=True,
+                to_tui=False,
             )
             sys.stderr.write(f"[DEPS] OK PYLIB overlay: {_pylib}{_suffix}\n")
     except OSError:

@@ -76,7 +76,7 @@ class StartupCoordinator(QObject):
                 # 업그레이드 성공 시 초기 미설치로 인한 deps 에러 리셋 및 정상화
                 self._state.set_deps(True)
                 self._state.deps_error_msg = ""
-                if summary:
+                if summary and "0 components" not in summary:
                     self._emit("SYS", "OK", f"update {summary}")
             else:
                 self._state.set_deps(False)
@@ -128,7 +128,7 @@ class StartupCoordinator(QObject):
         raw(
             "startup",
             emit_event("POT", st, "POT", msg, is_error=(st == "FAIL")),
-            to_tui=True,
+            to_tui=(st == "FAIL"),
         )
 
     def _on_pot_finished(self, ok: bool, msg: str):

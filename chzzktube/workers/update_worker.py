@@ -66,11 +66,40 @@ class UpdateWorker(QThread):
             log_func=lambda m: raw_log.raw(
                 "pot-readiness",
                 LogEvent(stage="POT", status="RUN", scope="POT", msg=str(m)),
+                to_tui=False,
             )
         ))
+        all_ok = all(status in ("OK", "SKIP") for _, status, _ in results)
+        scope_map = {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT", "bgutil": "BGUT"}
         for label, status, ver in results:
-            scope_map = {"ytdlp": "YTDL", "ffmpeg": "FFMP", "node": "NODE", "pot": "POT", "bgutil": "BGUT"}
-            raw_log.raw("deps", emit_component("DEPS", status, scope_map.get(label, label), ver), to_tui=True)
+            raw_log.raw("deps", emit_component("DEPS", status, scope_map.get(label, label), ver), to_tui=not all_ok)
+
+        if all_ok:
+            summary_parts = []
+            for label, _, ver in results:
+                v = str(ver).strip()
+                # 절대 경로(" at C:\...") 이전의 순수 버전 정보만 추출
+                clean_ver = v.split(" at ")[0].strip()
+                if label == "ytdlp":
+                    summary_parts.append(f"ytdlp {clean_ver}")
+                elif label == "ffmpeg":
+                    # git 빌드 번호 등 간결화 (예: N-126889 또는 7.1)
+                    if clean_ver.startswith("N-"):
+                        short_ff = "-".join(clean_ver.split("-")[:2])
+                    else:
+                        short_ff = clean_ver.split("-")[0]
+                    summary_parts.append(f"ffmpeg {short_ff or clean_ver}")
+                elif label == "node":
+                    summary_parts.append(f"node {clean_ver.split('.')[0] if '.' in clean_ver else clean_ver}")
+                elif label in ("pot", "bgutil"):
+                    summary_parts.append("pot active")
+            dedup_parts = list(dict.fromkeys(summary_parts))
+            summary_str = " · ".join(dedup_parts)
+            raw_log.raw(
+                "deps",
+                LogEvent(stage="SYS", status="OK", scope="MAIN", msg=f"✔ Environment ready  ({summary_str})", is_status=False),
+                to_tui=True,
+            )
         for label, args in _RAW_VERSION_CMDS:
             cmdline, out = updater.cli_raw(label, *args)
             if cmdline and out:

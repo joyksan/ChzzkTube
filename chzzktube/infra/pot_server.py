@@ -30,7 +30,7 @@ from chzzktube.infra.platform import (
     is_windows,
 )
 from chzzktube.infra.platform import kill_tree as kill_tree_platform
-from chzzktube.infra.po_client import DEFAULT_HOST, DEFAULT_PORT, probe_server
+from chzzktube.infra.po_client import DEFAULT_PORT, probe_server
 from chzzktube.ui import ProgressBar
 
 

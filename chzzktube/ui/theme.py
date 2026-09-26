@@ -11,9 +11,9 @@ FG_DIM = "#888888"           # 딤 텍스트
 BORDER = "#282828"           # 테두리
 ACCENT = "#4ec9b0"           # 액센트 (청록)
 ACCENT_ALT = "#ce9178"       # 보조 액센트 (주황)
-ERROR = "#e06c75"            # 에러 레드 (soft pastel — Atom One Dark)
+ERROR = "#FF5555"            # 에러 레드 (소프트 레드 — SPEC-2026-UI-002)
 WARN = "#e5c07b"             # 경고 옐로
-SUCCESS = "#6a9955"          # 성공 그린
+SUCCESS = "#00D8B4"          # 성공 민트 (SPEC-2026-UI-002)
 
 ### MainWindow 전역 스타일 (fzf border-line aesthetic)
 MAIN_WINDOW_QSS = f"""
@@ -221,15 +221,15 @@ QFrame.tui-separator {
 QPushButton[class="tui-tag"] {
     background-color: transparent;
     border: none;
-    color: #ce9178;
+    color: #d4d4d4;
     font-size: 11px;
     padding: 2px 6px;
 }
 
 QPushButton[class="tui-tag"]:hover {
-    color: #ffffff;
-    background-color: #252526;
-    border-radius: 3px;
+    color: #00D8B4;
+    background-color: #1a2522;
+    border-radius: 2px;
 }
 
 QPushButton[class="tui-tag"]:pressed {

@@ -4,7 +4,7 @@
 from collections import deque
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
+from PySide6.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QTextEdit
 
 from chzzktube.core.log_emitter import (
@@ -44,6 +44,17 @@ class ConciseLogConsole:
         self.te.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
         # [가로 스크롤 금지] 넘치는 내용은 '…' 절단이 처리 — 스크롤바가 생기지 않는다.
         self.te.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.te.viewport().setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+
+        # [폰트 엔진 보정] ClearType 서브픽셀 컬러 번짐 방지, 힌팅 해제, 1px 글리프 틈새 방지 자간 압축
+        cfont = QFont("Cascadia Mono", 10)
+        cfont.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        cfont.setStyleStrategy(
+            QFont.StyleStrategy.NoSubpixelAntialias | QFont.StyleStrategy.PreferAntialias
+        )
+        cfont.setWeight(QFont.Weight.Medium)
+        cfont.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.0)
+        self.te.setFont(cfont)
         # 예산 동기화 캐시 — (뷰포트 폭, 글자 폭)이 바뀐 때만 재계산
         self._budget_key = None
         # [리플로우 대비] 원본 로그 버퍼 — msg는 잘리지 않은 전체를 보관하고,
