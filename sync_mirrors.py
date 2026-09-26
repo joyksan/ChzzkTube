@@ -27,6 +27,7 @@ MIRROR_MODULES = [
     "chzzktube.ui.log_console",
     "chzzktube.ui.log_mirror",
     "chzzktube.ui.main_window",
+    "chzzktube.ui.progress_bar",
     "chzzktube.ui.theme",
     # chzzktube.ui.components
     "chzzktube.ui.components.action_bar",
