@@ -202,6 +202,8 @@ def log_f12_cli(cmd: str | None = None, output: str | None = None, is_error: boo
     - to_tui=False 강제: 메인 TUI 콘솔 오염을 완벽히 차단
     - truncate_for_full_log 적용: 최대 6줄, 160자 제한
     """
+    if cmd == "":
+        return
     if cmd:
         raw(
             tag,

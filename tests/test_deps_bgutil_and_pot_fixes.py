@@ -33,7 +33,7 @@ def test_daemon_spawn_kwargs_use_no_window_true():
 
 
 def test_startup_coordinator_no_duplicate_pot_failed(qt_application):
-    """_on_pot_status('failed') does not emit to TUI, report_pot emits standard error once."""
+    """_on_pot_status('failed') emits standard error once, report_pot does not duplicate."""
     mock_pot = MagicMock()
     coord = StartupCoordinator(pot_manager=mock_pot)
     tui_events = []
@@ -44,15 +44,15 @@ def test_startup_coordinator_no_duplicate_pot_failed(qt_application):
         return True
 
     with patch.object(raw_log._dispatcher, "publish", side_effect=mock_publish):
-        # 1. pot_status_changed("failed")
+        # 1. pot_status_changed("failed") should emit standard error
         coord._on_pot_status("failed")
-        assert len(tui_events) == 0, "pot_status_changed('failed') should not emit to TUI"
-
-        # 2. report_pot(False, ...)
-        coord.report_pot(False, "server failed")
-        assert len(tui_events) == 1
+        assert len(tui_events) == 1, "pot_status_changed('failed') should emit standard error once"
         assert "server failed" in tui_events[0].msg
         assert "F12" in tui_events[0].msg
+
+        # 2. report_pot(False, ...) should not emit duplicate error
+        coord.report_pot(False, "server failed")
+        assert len(tui_events) == 1, "report_pot should not duplicate the error"
 
 
 def test_executor_on_progress_handles_zero_or_negative_total():

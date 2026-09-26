@@ -1,3 +1,31 @@
+### 2026-09-26 — v3.12.4 : pot_server DEFAULT_HOST re-export 누락 회귀 복구·POT 워커 크래시 F12 추적 보강·에러 버스 배선 안정화 (patch)
+
+#### 배경 (v3.12.3 → v3.12.4)
+- **`a034557` 커밋 F401 정리 후 `pot_server` re-export 누락 회귀 복구**:
+  - `a034557` 커밋에서 미사용 import(F401) 자동 정리 중 `chzzktube/infra/pot_server.py`에서 `DEFAULT_HOST` import가 누락되어, `pot_manager.py` 실행 시 `ImportError: cannot import name 'DEFAULT_HOST' from 'chzzktube.infra.pot_server'`가 발생하며 POT 워커가 기동 0.001초 만에 즉시 사망하던 회귀 결함을 복구.
+- **`_POTWorker` 예외 은폐 방지 및 F12 크래시 트레이스백 발행**:
+  - `_POTWorker.run()`의 `except Exception` 블록에서 예외 발생 시 `self.outcome`에만 문자열을 담고 F12에는 아무런 로그도 남기지 않아 사용자가 원인을 파악할 수 없었던 문제를 해결. 예외 발생 시 전체 Traceback을 F12에 즉시 발행하도록 방어.
+- **`StartupCoordinator`와 `test_coordinator.py` 테스트 계약 일원화**:
+  - `_on_pot_status("failed")`에서 표준 에러 형식(`server failed → check logs (F12)`)을 발행하여 `test_pot_failed_maps_to_fail_status` 테스트를 통과시키고, `report_pot()`의 중복 발행을 차단하여 TUI에 단 1회만 단일 에러 라인이 노출되도록 보장.
+- **`raw_log.log_f12_cli` 빈 커맨드 계약 복원**:
+  - `cmd == ""` 입력 시 이벤트를 발행하지 않는 기존 계약을 준수하도록 가드를 복원하여 `test_v38_contracts.py` 회귀 방지.
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `infra/pot_server.py` | `DEFAULT_HOST` re-export 복원 (`po_client`로부터 import) |
+| `control/pot_manager.py` | `DEFAULT_HOST, DEFAULT_PORT` 직접 참조 및 `_POTWorker.run()` 크래시 시 F12 traceback 기록 |
+| `control/startup_coordinator.py` | `_on_pot_status("failed")` 표준 에러 단일 발행, `report_pot()` 중복 제거 |
+| `core/raw_log.py` | `log_f12_cli` 빈 문자열 `cmd == ""` 조기 반환 가드 추가 |
+| `core/config.py`, `pyproject.toml` | 버전 `v3.12.4` 패치 범프 |
+| `tests/test_deps_bgutil_and_pot_fixes.py` | `test_startup_coordinator_no_duplicate_pot_failed` 검증 동기화 |
+
+#### 검증
+- `pytest tests/test_deps_bgutil_and_pot_fixes.py tests/test_coordinator.py tests/test_pot_manager.py tests/test_po_client.py tests/test_provisioning_stdlib.py` → 전체 통과
+- `gate` 모드 실행 시 `pot server bound (127.0.0.1:4416)` 정상 기동 실측 검증 완료
+
+---
+
 ### 2026-09-26 — v3.12.3 : bgutil 의존성 다운로드 게이지 동시 노출·POT 컴파일러 creationflags KeyError 해결·TUI 중복 에러 로그 억제 (patch)
 
 #### 배경 (v3.12.2 → v3.12.3)

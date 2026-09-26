@@ -39,7 +39,14 @@ class _POTWorker(QThread):
         try:
             self._run()
         except Exception as e:  # noqa: BLE001 — 워커 스레드 크래시를 outcome으로 캡슐화
+            import traceback
+            tb = traceback.format_exc()
             self.outcome = (False, f"crash: {e}")
+            from chzzktube.core import raw_log
+            from chzzktube.core.log_event import LogEvent
+            from chzzktube.core.raw_log import log_f12_net
+            raw_log.raw("POT", LogEvent(stage="POT", status="FAIL", scope="POT", msg=f"POT worker crashed: {e}", is_error=True), to_tui=False)
+            log_f12_net(f"POT worker exception:\n{tb}", is_error=True, stage="POT", tag="pot-net")
         finally:
             self._cleanup()
             self.finished_signal.emit(self.outcome[0], self.outcome[1])
@@ -84,9 +91,11 @@ class _POTWorker(QThread):
         raw_log.raw("POT-DEBUG", event, to_tui=(self.mode != "prewarm"))
     
     def _run(self):
-        from chzzktube.infra.pot_server import (
+        from chzzktube.infra.po_client import (
             DEFAULT_HOST,
             DEFAULT_PORT,
+        )
+        from chzzktube.infra.pot_server import (
             built_server_js,
             latest_server_ver,
             probe_server,
