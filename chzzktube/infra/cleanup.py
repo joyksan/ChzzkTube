@@ -44,9 +44,8 @@ def cleanup_provisioning_artifacts():
             except OSError:
                 pass
 
-    # 4. components 루트의 .part 파일 정리 (Homebrew bottle 다운로드 등)
-    from chzzktube.infra.components import components_root
-    comp_root = components_root()
+    # 4. ffmpeg 루트의 .part 파일 정리 (Homebrew bottle 다운로드 등)
+    comp_root = os.path.join(base, "ffmpeg")
     if os.path.isdir(comp_root):
         for part_file in glob.glob(os.path.join(comp_root, "*.part")):
             try:

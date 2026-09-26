@@ -50,17 +50,7 @@ from chzzktube.ui import ProgressBar
 _UA = "ChzzkTube-Components/1.0"
 
 
-def components_root():
-    """구성요소 전개 루트 — SSOT: writable_base()/components 단일 경로 (v3.8.2).
 
-    [SSOT 원칙] frozen과 source 모두 writable_base() 하위를 사용.
-    - frozen 시 <exe>/components 경로 참조 완전 제거
-    - 환경변수 CHZZKTUBE_COMPONENTS_DIR로만 오버라이드
-    """
-    env = os.environ.get("CHZZKTUBE_COMPONENTS_DIR")
-    if env:
-        return env
-    return os.path.join(config.writable_base(), "components")
 
 
 
@@ -220,7 +210,7 @@ def _extract_zip(zip_path, dest_dir, log, label, promote_single_root=False):
             os.makedirs(os.path.dirname(d) or ".", exist_ok=True)
             shutil.move(s, d)
         _rmtree(tmp)
-    log(emit_component("DEPS", "OK", "DEPS", f"{label} extracted → {os.path.relpath(dest_dir, components_root())}"))
+    log(emit_component("DEPS", "OK", "DEPS", f"{label} extracted → {os.path.relpath(dest_dir, config.writable_base())}"))
 
 
 FFMPEG_DIRNAME = "ffmpeg"

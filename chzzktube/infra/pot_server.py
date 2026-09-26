@@ -154,10 +154,9 @@ def clean_stale_plugin():
     자동 로드해 fetch_po_token과 이중 주입 → 토큰 충돌 위험. 기동 시 1회.
     대상: <writable_base>/yt_dlp_plugins, <components>/yt-dlp/yt_dlp_plugins
     """
-    from chzzktube.infra import components
     roots = [
         os.path.join(get_writable_base(), "yt_dlp_plugins"),
-        os.path.join(components.components_root(), "yt-dlp", "yt_dlp_plugins"),
+        os.path.join(get_writable_base(), "components", "yt-dlp", "yt_dlp_plugins"),
     ]
     removed = False
     for d in roots:
