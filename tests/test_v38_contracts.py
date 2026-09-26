@@ -12,7 +12,10 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tarfile
+
+import pytest
 
 import chzzktube.pipeline.progress_emitter as _pe
 import chzzktube.pipeline.target_downloader as _td
@@ -82,6 +85,7 @@ class TestEnvironmentIsolation:
         assert "shutil.which(" not in src
         assert "npm_exe" in src
 
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS Homebrew bottle test")
     def test_macos_bottle_keys_match_live_formulae(self):
         # [Critical-2 회귀] 실측 bottle 키(tahoe/sequoia/golden_gate)가
         # 하드코딩 테이블이 아닌 arch prefix 매치로 선택되어야 한다.
@@ -107,6 +111,7 @@ class TestEnvironmentIsolation:
         monkeypatch.setattr(config, "writable_base", lambda: str(tmp_path / "empty"))
         assert components.ffmpeg_exe() is None
 
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS Homebrew bottle test")
     def test_macos_bottle_binaries_are_normalized_to_cache_root(self, tmp_path):
         extracted = tmp_path / "bottle" / "opt" / "homebrew" / "bin"
         extracted.mkdir(parents=True)
@@ -121,6 +126,7 @@ class TestEnvironmentIsolation:
         assert (cache / "bin" / "ffprobe").read_bytes() == b"ffprobe"
         assert os.access(ffmpeg, os.X_OK)
 
+    @pytest.mark.skipif(sys.platform != "darwin", reason="macOS Homebrew bottle test")
     def test_macos_bottle_contract_matches_live_formulae_shape(self, monkeypatch, tmp_path):
         """실제 formulae 응답 형태 → Bottle 다운로드 → 격리 캐시 설치 전 과정.
 

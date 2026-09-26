@@ -69,15 +69,22 @@ class TestNoManualClientChain:
             assert "client_chain" not in src, f"client_chain found in {py_file}"
             assert "_RETRY_CLIENTS" not in src, f"_RETRY_CLIENTS found in {py_file}"
 
-    def test_pure_delegation_comment_present(self):
-        """순정 위임 주석이 살아있어 방향성 회귀 방지."""
-        import pathlib
+    def test_pure_delegation_runtime_options(self):
+        """yt-dlp 옵션 빌더가 수동 클라이언트 체인 없이 순정 단일 위임 설정을 생성하는지 검증."""
+        from chzzktube.pipeline.target_downloader.options import _make_ytdl_opts
 
-        # options.py에 순정 위임 주석 확인
-        src = pathlib.Path("chzzktube/pipeline/target_downloader/options.py").read_text(
-            encoding="utf-8"
+        ctx = DownloadContext(
+            cfg={"download_path": "/tmp", "yt_player_client": "auto"},
+            current_url="https://youtu.be/test1234",
+            speed_win=SpeedWindow(),
         )
-        assert "순정" in src
+        opts = _make_ytdl_opts(ctx, "bv*+ba", ctx.current_url)
+
+        # 수동 체인(여러 클라이언트 나열)이 아닌 단일 순정 auto 위임 확인
+        ext_args = opts.get("extractor_args", {})
+        yt_args = ext_args.get("youtube", {})
+        client = yt_args.get("player_client", ["auto"])
+        assert client == ["auto"]
 
 
 class TestDownloadVodTerminalFailFast:

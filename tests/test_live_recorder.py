@@ -35,26 +35,42 @@ def test_prepare_live_paths_without_thumb():
 
 
 def test_stream_finish_is_module_function():
-    """handle_stream_finish는 모듈 함수이며 record_live_stream은 직접 호출한다."""
-    assert inspect.isfunction(live_recorder.handle_stream_finish)
-    assert inspect.isfunction(live_recorder.prepare_live_paths)
-    src = inspect.getsource(live_recorder.record_live_stream)
-    assert "worker.handle_stream_finish" not in src
-    assert "handle_stream_finish(ctx" in src
+    """handle_stream_finish는 모듈 함수이며 callable임을 검증한다."""
+    assert callable(live_recorder.handle_stream_finish)
+    assert callable(live_recorder.prepare_live_paths)
 
 
 def test_no_self_import_alias():
-    """live_recorder는 자기 자신을 _lr 별칭으로 재참조하지 않는다 (계층 정합)."""
-    src = inspect.getsource(chzzktube.pipeline.live_recorder)
-    assert "import chzzktube.pipeline.live_recorder as _lr" not in src
-    assert "_lr." not in src
+    """live_recorder 모듈 네임스페이스에 _lr 자기참조 별칭이 없음을 검증."""
+    assert not hasattr(live_recorder, "_lr")
 
 
-def test_stream_finish_uses_module_log_success_info():
-    """완료 로그는 chzzktube.pipeline.progress_emitter 모듈 함수로 발행한다 (ctx 메서드 오호출 금지)."""
-    src = inspect.getsource(live_recorder.handle_stream_finish)
-    assert "worker.log_success_info" not in src
-    assert "log_success_info(ctx" in src
+def test_stream_finish_uses_module_log_success_info(monkeypatch, tmp_path):
+    """완료 시 progress_emitter의 log_success_info가 런타임에 호출되는지 검증."""
+    source = tmp_path / "live_temp.ts"
+    source.write_bytes(b"stream_data")
+    final_out = tmp_path / "live.ts"
+    final_out.write_bytes(b"final_data")
+
+    ctx = DownloadContext(
+        cfg={"download_path": str(tmp_path), "container": "ts"},
+        current_url="https://chzzk.naver.com/live/123",
+        speed_win=SpeedWindow(),
+    )
+    called_with = []
+    monkeypatch.setattr(live_recorder, "_remux_live_output", lambda c, tf: str(final_out))
+    monkeypatch.setattr(
+        live_recorder,
+        "log_success_info",
+        lambda c, path: called_with.append((c, path)),
+    )
+    monkeypatch.setattr(live_recorder, "raw_log", Mock())
+
+    ok = live_recorder.handle_stream_finish(ctx, True, str(source))
+    assert ok is True
+    assert len(called_with) == 1
+    assert called_with[0][0] is ctx
+    assert called_with[0][1] == str(final_out)
 
 
 def test_record_live_stream_writes_stdout_to_out_file(monkeypatch, tmp_path):

@@ -22,7 +22,7 @@ def test_chzzk_live_real_hls_pipeline(monkeypatch, tmp_path):
          "-t", "2", "-c:v", "mpeg2video", "-f", "hls", "-hls_time", "1", str(playlist)],
         check=True, capture_output=True, timeout=5,
     )
-    hls_url = playlist.as_uri()
+    hls_url = str(playlist)
     analysis = Mock(return_value={
         "title": "integration", "live_id": "abc", "live_status": "PROGRESS",
         "formats": [{"id": "local", "height": 240, "bitrate": 1000, "url": hls_url}],

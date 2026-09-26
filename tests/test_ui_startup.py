@@ -14,11 +14,13 @@ def test_window_opens_and_renders_log():
         win = MainWindow()
         try:
             win.show()
-            QTest.qWait(1100)
+            QTest.qWait(100)
             assert win.isVisible() and win.centralWidget() is not None
             win._render_concise(emit_event("SYS", "OK", "MAIN", "startup probe"))
             assert "startup probe" in win.te_concise.toPlainText()
         finally:
+            if hasattr(win, "_pot_manager") and win._pot_manager:
+                win._pot_manager.cancel()
             win.hide()
             win.deleteLater()
             app.processEvents()

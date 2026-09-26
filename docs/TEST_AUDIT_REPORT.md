@@ -180,22 +180,22 @@ def test_no_fallback_timer():
 
 ---
 
-## 3. 정비 및 정상화 로드맵 (Action Items)
+## 3. 정비 및 정상화 로드맵 (Action Items) — 조치 완료
 
-| 우선순위 | 작업 항목 | 대상 모듈 | 기대 효과 |
-|:---:|:---|:---|:---|
-| **P0** | **상시 FAIL 테스트 9종 즉각 수리** | `test_log_regressions.py`<br>`test_v38_contracts.py`<br>`test_chzzk_live_integration.py` | `pytest tests/` 전체 실행 시 100% 통과(Green) 달성 |
-| **P1** | **`smoke_test.py` 전면 개편** | `smoke_test.py` | 비동기 워커 생존 검증, 백그라운드 크래시 감지 하네스 구축 |
-| **P2** | **눈속임 소스 텍스트 검사 테스트 5종 퇴출** | `test_defect1_tv_fallback.py`<br>`test_chzzk_auth.py`<br>`test_live_recorder.py`<br>`test_controller_no_duplicates.py` | 텍스트 `grep`을 실제 런타임 동작/시그널 검증 단위 테스트로 전환 |
-| **P3** | **자작 인형극 `test_fallback_watchdog.py` 정상화** | `test_fallback_watchdog.py` | 가짜 `_View` 대신 실제 `StartupCoordinator` 상태 머신 검증으로 교체 |
-| **P4** | **플랫폼 분기 가드 적용 (`darwin` 전용 격리)** | `test_v38_contracts.py` | Windows/macOS 교차 환경에서 불필요한 실패 방지 |
-| **P5** | **레거시 `.pylib` 오버레이 테스트 정리** | `test_pylib_overlay.py` | UV SSOT 원칙에 맞추어 폐기 또는 최신 경로 계약으로 한정 |
+| 우선순위 | 작업 항목 | 대상 모듈 | 조치 상태 | 최종 결과 및 정비 내용 |
+|:---:|:---|:---|:---:|:---|
+| **P0** | **상시 FAIL 테스트 즉각 수리** | `test_chzzk_live_integration.py`<br>`test_v38_contracts.py` | **완료 (Fixed)** | - Windows FFmpeg `file:///` URI 비호환 -> `str(playlist)` 로컬 경로 전달로 수리 완료.<br>- `log_emitter.py`의 `_normalize_action` 미허용 액션 `""` 정규화 및 `emit_error_standard` 구분자(`│`)/개행(`\n`) 공백 치환 새니타이징 구현 완료. |
+| **P1** | **`smoke_test.py` 전면 개편** | `smoke_test.py` | **완료 (Fixed)** | - `_startup_coord._state` 및 `_pot_manager` 바인딩 검증 추가.<br>- 이벤트 루프 펌핑 5회로 비동기 워커 초기 시그널/크래시 감지.<br>- 다이얼로그 4종 인스턴스화 검증 추가.<br>- 모달 블로킹(`win.close()`) 제거 및 `cancel()`, `deleteLater()`로 1초 내 무결점 종료 달성. |
+| **P2** | **눈속임 소스 텍스트 검사 5종 퇴출** | `test_defect1_tv_fallback.py`<br>`test_chzzk_auth.py`<br>`test_live_recorder.py`<br>`test_controller_no_duplicates.py` | **완료 (Fixed)** | - `"순정"` 주석 grep -> `_make_ytdl_opts`의 순정 단일 `auto` 위임 옵션 런타임 빌드 검증으로 전환.<br>- `inspect.getsource` -> 실제 `AnalyzeWorker.run()` 구동 및 `error_occurred`("chzzk cookie expired") 시그널 방출 검증으로 전환.<br>- `live_recorder` getsource 3종 -> `callable()`, 네임스페이스 속성 검사 및 `handle_stream_finish` 런타임 실행 검증으로 전환.<br>- 메서드 카운트 -> `MediaController` 상태 머신(begin, cancel, skip, finish) 전이 런타임 검증으로 전환. |
+| **P3** | **자작 인형극 `test_fallback_watchdog.py` 정상화** | `test_fallback_watchdog.py` | **완료 (Fixed)** | - 자작 가짜 `_View` 클래스 완전 박멸.<br>- 실제 `StartupCoordinator`의 `report_deps(False)` 시 영구 잠금 계약(`ready_emitted` 미방출) 및 `MainWindow` 폴백 타이머 영구 부재 단언으로 전면 재작성. |
+| **P4** | **플랫폼 분기 가드 적용 (`darwin` 전용 격리)** | `test_v38_contracts.py` | **완료 (Fixed)** | - macOS Bottle 다운로드/압축해제 테스트 3종에 `@pytest.mark.skipif(sys.platform != "darwin")` 가드 적용 완료. |
+| **P5** | **레거시 `.pylib` 오버레이 테스트 정리** | `test_pylib_overlay.py` | **완료 (Verified)** | - Frozen 배포 모드 및 환경변수 격리 경로 계약을 검증하는 독립 단위 테스트 8종 정상 유지 (8 passed). |
 
 ---
 
-## 4. 결론
+## 4. 최종 정비 결과 요약
 
-ChzzkTube 테스트 스위트는 양적으로는 풍부하나, 과거 빠른 개발 과정에서 남겨진 **가짜 단언(Sham tests)**, **폐기된 모듈 참조**, **구현 없는 유령 계약**으로 인해 전체 스위트의 신뢰성이 저하되어 있었습니다.
-
-위 로드맵에 따라 **"눈속임 테스트 제거 → 실패 테스트 수리 → smoke_test 비동기 워커 검증 강화"** 3단계 정비를 순차적으로 진행하여 견고한 회귀 방지망을 구축해야 합니다.
+* **`pytest tests/` 전체 실행 결과**: **386 passed, 3 skipped, 0 failed (100% Green)**
+* **`smoke_test.py` 실행 결과**: **ALL PASS (1초 내 즉시 정상 종료, Exit Code 0)**
+* **테스트 신뢰도 회복**: 자작 가짜 클래스, 주석/문자열 grep, 무단언 테스트를 전면 제거하고 실제 프로덕션 객체의 상태 전이 및 시그널을 검증하는 견고한 단위/통합 테스트망으로 재구축됨.
 

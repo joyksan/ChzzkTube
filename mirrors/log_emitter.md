@@ -413,12 +413,12 @@ def _normalize_cause(cause: str) -> str:
     return cause.strip() if cause else "unknown error"
 
 def _normalize_action(action: str) -> str:
-    """액션 문자열을 표준 키워드로 정규화 (알려지지 않은 액션도 보존)."""
+    """액션 문자열을 표준 키워드로 정규화 (표준 목록에 없으면 빈 문자열)."""
     action_lower = action.lower()
     for std_action, std_value in _ERROR_ACTIONS.items():
         if std_action.lower() in action_lower:
             return std_value
-    return action.strip()
+    return ""
 
 def _truncate_msg(msg: str, max_len: int = _MAX_ERR_MSG_LEN) -> str:
     """메시지 길이 제한 (초과 시 '…' 절단)."""
@@ -438,6 +438,10 @@ def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
     """
     from chzzktube.core.log_event import LogEvent  # lazy import
     
+    # [Task 5-4] 로그 인젝션 및 컬럼 파괴 방어: 구분자(│) 및 개행(\n, \r) 공백 치환
+    cause = cause.replace("│", " ").replace("\n", " ").replace("\r", " ")
+    action = action.replace("│", " ").replace("\n", " ").replace("\r", " ")
+
     # 원인/액션 정규화
     cause_std = _normalize_cause(cause)
     action_std = _normalize_action(action)
@@ -448,6 +452,7 @@ def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
     else:
         msg = cause_std
     
+    msg = msg.replace("│", " ").replace("\n", " ").replace("\r", " ")
     # 길이 제한
     msg = _truncate_msg(msg)
     
@@ -455,7 +460,7 @@ def emit_error_standard(stage: str, scope: str, cause: str, action: str = "",
         stage=stage,
         status=status,
         scope=scope,
-                msg=msg,
+        msg=msg,
         is_error=True,
     )
 

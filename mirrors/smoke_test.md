@@ -74,25 +74,71 @@ def test_main():
     app = _setup_app()
     assert app is not None
 
+    win = None
     try:
+        # 1. MainWindow 인스턴스화
         win = MainWindow()
         print("[Smoke Test] MainWindow 생성 성공!")
         assert win is not None
         assert win.ctrl is not None
-        # [v3.8.1] 폴백 제거 — _force_unlock_input 속성 없음
         print("[Smoke Test] ctrl.state 확인:", win.ctrl.state)
 
-        dlg = SettingsDialog(win, is_running=False)
-        assert dlg.cb_container.currentData() in ("mp4", "mkv", "webm")
-        assert dlg.cb_container.count() == 3
-        dlg.update_filename_preview()
-        print("[Smoke Test] SettingsDialog 생성 OK — combos", dlg.cb_container.count())
-        print("[Smoke Test] PASS")
+        # 2. 비동기 워커 및 시동 코디네이터 바인딩 검증
+        assert hasattr(win, "_startup_coord"), "StartupCoordinator 바인딩 누락"
+        assert win._startup_coord is not None
+        assert hasattr(win._startup_coord, "_state"), "StartupState 바인딩 누락"
+        print("[Smoke Test] _startup_coord._state 확인 OK")
+
+        assert hasattr(win, "_pot_manager"), "POTManager 바인딩 누락"
+        assert win._pot_manager is not None
+        print("[Smoke Test] _pot_manager 바인딩 확인 OK")
+
+        # 3. 비동기 시동 이벤트 루프 펌핑 (크래시 및 시그널 예외 감지)
+        for _ in range(5):
+            app.processEvents()
+
+        # 4. 주요 다이얼로그 4종 인스턴스화 및 무결성 검증 (non-blocking)
+        d_settings = SettingsDialog(win, is_running=False)
+        assert d_settings.cb_container.currentData() in ("mp4", "mkv", "webm")
+        assert d_settings.cb_container.count() == 3
+        d_settings.update_filename_preview()
+        d_settings.deleteLater()
+        print("[Smoke Test] SettingsDialog 검증 OK")
+
+        d_cookie = CookieSelectDialog(win)
+        d_cookie.deleteLater()
+        print("[Smoke Test] CookieSelectDialog 검증 OK")
+
+        d_countdown = ActionCountdownDialog("exit_app", win)
+        d_countdown.timer.stop()
+        d_countdown.deleteLater()
+        print("[Smoke Test] ActionCountdownDialog 검증 OK")
+
+        d_log = VerboseLogWindow(win)
+        d_log.deleteLater()
+        print("[Smoke Test] VerboseLogWindow 검증 OK")
+
+        # 5. 리소스 안전 해제 (모달 블로킹 win.close() 호출 방지)
+        if hasattr(win, "_pot_manager") and win._pot_manager:
+            win._pot_manager.cancel()
+        if hasattr(win, "update_worker") and win.update_worker:
+            win.update_worker.terminate()
+        win.deleteLater()
+        app.processEvents()
+
+        print("[Smoke Test] ALL PASS (무결점 종료)")
         return 0
-    except (OSError, re.error) as e:
-        
+    except Exception as e:
         print("[Smoke Test] FAIL:", e)
         traceback.print_exc()
+        if win is not None:
+            try:
+                if hasattr(win, "_pot_manager") and win._pot_manager:
+                    win._pot_manager.cancel()
+                win.deleteLater()
+                app.processEvents()
+            except Exception:
+                pass
         return 1
 
 

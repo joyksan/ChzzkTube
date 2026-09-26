@@ -44,11 +44,22 @@ def test_auth_check_passes_through_other_http_errors(monkeypatch):
         _get_json_with_auth_check("https://api.chzzk.naver.com/x", {})
 
 
-def test_analyze_worker_maps_auth_error_to_cookie_message():
-    import inspect
-
+def test_analyze_worker_maps_auth_error_to_cookie_message(monkeypatch):
     import chzzktube.workers.analyze_worker as aw
 
-    src = inspect.getsource(aw.AnalyzeWorker.run)
-    assert "ChzzkAuthError" in src
-    assert "cookie" in src.lower()
+    def _raise_auth_error(url, cookies=None):
+        raise ChzzkAuthError(401, "Unauthorized")
+
+    monkeypatch.setattr(aw, "analyze_chzzk_vod_api", _raise_auth_error)
+
+    worker = aw.AnalyzeWorker(
+        target_url="https://chzzk.naver.com/video/12345",
+        cfg={},
+    )
+    captured = []
+    worker.error_occurred.connect(captured.append)
+
+    worker.run()
+
+    assert len(captured) == 1
+    assert "chzzk cookie expired" in captured[0].lower()
