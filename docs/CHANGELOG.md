@@ -1,3 +1,52 @@
+### 2026-09-26 — v3.12.5 : 테스트 스위트 전수조사 정비(P0~P5)·스모크 하네스 비동기 생존 검증·눈속임 테스트 퇴출 및 런타임 전환·오류 로그 새니타이징 (patch)
+
+#### 배경 (v3.12.4 → v3.12.5)
+- **테스트 스위트 전수조사 및 결함 정비 (P0~P5 완수, 100% Green 달성)**:
+  - `docs/TEST_AUDIT_REPORT.md` 보고서에 도출된 5대 결함 로드맵을 전면 이행하여 상시 실패 8종 수리, 플랫폼 비호환 분기, 눈속임 및 자작 인형극 테스트 전면 퇴출.
+  - `pytest tests/` 전체 실행 결과: 386 passed, 3 skipped, 0 failed 달성.
+- **`smoke_test.py` 전면 개편 및 논블로킹 1초 무결점 하네스 구축**:
+  - `MainWindow` 생성 후 `_startup_coord._state` 및 `_pot_manager` 바인딩 검증 추가.
+  - 이벤트 루프 5회 펌핑(`app.processEvents()`)으로 비동기 워커 초기 시그널/크래시 무감지 결함 차단.
+  - `SettingsDialog`, `CookieSelectDialog`, `ActionCountdownDialog`, `VerboseLogWindow` 4종 다이얼로그 무결성 검증.
+  - `win.close()` 시 발생하는 `ExitConfirmDialog.exec()` 모달 블로킹(무한 대기)을 제거하고 `cancel()`, `deleteLater()`, `processEvents()`로 1초 내 즉시 정상 종료(Exit code 0) 보장.
+- **눈속임 소스 텍스트 검사 5종 퇴출 및 실제 런타임/시그널 단위 테스트 전환**:
+  - `test_defect1_tv_fallback.py`: 소스코드 `"순정"` 주석 grep을 `_make_ytdl_opts`의 순정 단일 `auto` 위임 옵션 빌드 런타임 검증으로 교체.
+  - `test_chzzk_auth.py`: `inspect.getsource` 검사를 실제 `AnalyzeWorker.run()` 구동 및 `ChzzkAuthError` 시 `error_occurred`("chzzk cookie expired") 시그널 방출 런타임 검증으로 교체.
+  - `test_live_recorder.py`: `inspect.getsource` 3종을 `callable()`, `_lr` 네임스페이스 격리 검사 및 `handle_stream_finish` 실행 시 `log_success_info` 런타임 호출 검증으로 교체.
+  - `test_controller_no_duplicates.py`: 소스 텍스트 메서드 카운트 검사를 실제 `MediaController` 상태 머신(`begin_download`, `request_cancel`, `request_skip`, `on_download_finished`)의 상태 전이 및 시그널 방출 런타임 검증으로 교체.
+- **자작 인형극 `test_fallback_watchdog.py` 정상화**:
+  - 프로덕션 코드와 무관했던 가짜 `_View` 클래스를 완전히 삭제하고, 실제 `StartupCoordinator`의 `report_deps(False)` 시 영구 잠금 계약(`ready_emitted`, `ui_unlocked` 미방출) 및 `MainWindow` 폴백 타이머 영구 부재 단언으로 전면 재작성.
+- **플랫폼 분기 가드 및 Windows FFmpeg 호환성 정상화**:
+  - `test_chzzk_live_integration.py`: Windows FFmpeg CLI가 `file:///C:/...` 형태 URI를 파싱하지 못하던 결함을 `str(playlist)` 로컬 경로 전달로 수정하여 정상화.
+  - `test_v38_contracts.py`: macOS Homebrew Bottle 테스트 3종에 `@pytest.mark.skipif(sys.platform != "darwin")` 가드를 적용하여 Windows/macOS 교차 환경 무단언 실패 방지.
+- **오류 로그 새니타이징 및 규격 정규화**:
+  - `log_emitter.py`의 `emit_error_standard`에서 메시지 내 구분자(`│`) 및 개행(`\r`, `\n`)을 공백(`" "`)으로 치환(Sanitize)하여 TUI 4컬럼 파괴 방지.
+  - `_normalize_action`에서 미허용 액션 전달 시 빈 문자열 `""`을 반환하도록 정규화.
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `core/log_emitter.py` | `_normalize_action` 미허용 액션 `""` 정규화 및 `emit_error_standard` 구분자/개행 새니타이징 |
+| `core/config.py`, `pyproject.toml` | 버전 `v3.12.5` 패치 범프 |
+| `smoke_test.py` | 비동기 워커 생존 검증, 다이얼로그 4종 검증, 모달 블로킹 방지 논블로킹 회수 |
+| `tests/test_chzzk_live_integration.py` | Windows FFmpeg `file:///` URI 비호환 -> `str(playlist)` 로컬 경로 전달 |
+| `tests/test_v38_contracts.py` | macOS Bottle 테스트 3종 `@pytest.mark.skipif` 가드 적용 |
+| `tests/test_defect1_tv_fallback.py` | `"순정"` 주석 grep -> `_make_ytdl_opts` 단일 auto 위임 옵션 런타임 검증 |
+| `tests/test_chzzk_auth.py` | `inspect.getsource` -> 실제 `AnalyzeWorker.run()` 시그널 방출 런타임 검증 |
+| `tests/test_live_recorder.py` | `inspect.getsource` 3종 -> `callable()`, `log_success_info` 런타임 호출 검증 |
+| `tests/test_controller_no_duplicates.py` | 메서드 카운트 -> `MediaController` 상태 머신 전이 및 시그널 런타임 검증 |
+| `tests/test_fallback_watchdog.py` | 가짜 `_View` 삭제 -> 실제 `StartupCoordinator` 영구 잠금 계약 런타임 검증 |
+| `tests/test_ui_startup.py` | 하드 슬립(1100ms -> 100ms) 단축 및 `_pot_manager.cancel()` 자원 회수 |
+| `docs/TEST_AUDIT_REPORT.md` | P0~P5 조치 완료 현황 및 최종 통계 갱신 |
+| `docs/HANDOVER.md` | test 자산 모듈 리스트 신설, 유지보수 원칙, 불변식 37-39, 하지 말 것 조항 신설 |
+
+#### 검증
+- `uv run pytest tests/` -> 386 passed, 3 skipped, 0 failed in 12s (100% Green)
+- `uv run python smoke_test.py` -> ALL PASS (1초 내 정상 종료)
+- `uv run python sync_mirrors.py` -> 66개 미러 전체 동기화 완료
+
+---
+
 ### 2026-09-26 — v3.12.4 : pot_server DEFAULT_HOST re-export 누락 회귀 복구·POT 워커 크래시 F12 추적 보강·에러 버스 배선 안정화 (patch)
 
 #### 배경 (v3.12.3 → v3.12.4)

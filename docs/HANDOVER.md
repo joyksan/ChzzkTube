@@ -2,7 +2,7 @@
 
 > 이 문서는 다음 담당자(사람 또는 AI 에이전트)를 위해 작성된 프로젝트 인수 문서다.
 > 코드 수정 전 반드시 **§1.1 버전 관리 절차**, **§1.2 경로 계약**, **§1.3 개발 방향성 및 TUI 표준**, **§5 불변식**, **§6 하지 말 것**을 읽을 것.
-> 마지막 갱신: 2026-09-26 - v3.12.4 — pot_server DEFAULT_HOST re-export 누락 회귀 복구·POT 워커 크래시 F12 추적 보강·에러 버스 배선 안정화
+> 마지막 갱신: 2026-09-26 - v3.12.5 — 테스트 스위트 전수조사 정비(P0~P5)·스모크 하네스 비동기 생존 검증·눈속임 테스트 퇴출 및 런타임 전환·오류 로그 새니타이징
 ---
 ## 목차
 
@@ -50,12 +50,15 @@
 - [15. 검증 워크플로우](#15-검증-워크플로우)
   - [15.1 마무리 — 링크 깨짐 확인 완료·체리피킹 요약 (v3.5.0)](#151-마무리-—-링크-깨짐-확인-완료·체리피킹-요약-v350)
 - [16. 파일 규칙](#16-파일-규칙)
+- [17. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)](#17-테스트-자산-명세-및-유지보수-가이드-v3125-신설)
+  - [17.1 테스트 자산 모듈 전수 목록 (44개 진입점 / 389개 케이스)](#171-테스트-자산-모듈-전수-목록-44개-진입점--389개-케이스)
+  - [17.2 테스트 자산 유지보수 5대 원칙](#172-테스트-자산-유지보수-5대-원칙)
 
 
 ## 1. 프로젝트 개요
 
 - **ChzzkTube**: YouTube/치지직(Chzzk) 영상 다운로드 Hyper-Minimalist Modern TUI 앱 (macOS / Windows / Linux 호환)
-- **버전**: `v3.12.4` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.12.4"` (최신: 2026-09-26 pot_server DEFAULT_HOST re-export 누락 회귀 복구·POT 워커 크래시 F12 추적 보강·에러 버스 배선 안정화)
+- **버전**: `v3.12.5` — 정의 위치 `config._APP_VERSION`; 메타 참고값은 `pyproject.toml` `version = "3.12.5"` (최신: 2026-09-26 테스트 스위트 전수조사 정비(P0~P5)·스모크 하네스 비동기 생존 검증·눈속임 테스트 퇴출 및 런타임 전환·오류 로그 새니타이징)
 - **버전 정책 (비공개 개발, semver-lite)**:
   - `x` major: 공개/외부 인터페이스·빌드 산출물 계약·진입점 손상 시
   - `y` minor: 기능 추가·대형 리팩토링·아키텍처 재편 등 사용자/호출부 관점의 기능 지평 변화 시
@@ -72,7 +75,7 @@
 
 ### 2.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`임. 현재 값은 `v3.12.0`임.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`임. 현재 값은 `v3.12.5`임.
 - `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않음. 세 값은 항상 숫자 부분을 동일하게 유지함.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
@@ -737,6 +740,9 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - [ ] 34. **re-export 심볼 보존 및 F401 린트 자동 삭제 금지 (v3.12.4)**: 하위 모듈이 타 계층 심볼(예: `pot_server.py`의 `DEFAULT_HOST`, `DEFAULT_PORT`)을 재수출하는 경우 `__all__`을 명시하여 F401 자동 삭제로 인한 `ImportError` 런타임 크래시를 원천 차단. 호출부는 가급적 원천 모듈(`po_client.py`)을 직접 import.
 - [ ] 35. **워커 스레드 예외의 F12 Traceback 강제 발행 (v3.12.4)**: `_POTWorker` 등 QThread의 `run()` 최상위 예외 블록(`except Exception`)에서 예외 문자열만 `outcome`에 격리하고 버스에 남기지 않는 은폐 패턴 절대 금지. 반드시 F12 전용 채널(`log_f12_cli`, `raw_log.raw` 등)로 전체 Traceback을 물리적으로 발행해 진단성 유지.
 - [ ] 36. **스폰 인자 딕셔너리 방어적 초기화 (v3.12.4)**: `daemon_spawn_kwargs` 등 플랫폼 HAL에서 옵션(`use_no_window=False`)에 따라 빈 dict가 반환될 수 있으므로, OS 종속 키 조작 시 `kw["creationflags"] |= ...`가 아닌 `kw["creationflags"] = kw.get("creationflags", 0) | ...` 방어적 패턴을 강제하여 `KeyError` 방지.
+- [ ] 37. **테스트 하네스의 실제 런타임/시그널 검증 의무 (v3.12.5)**: `inspect.getsource()` 문자열 grep 및 가짜 자작 클래스(`_View`)를 통한 단언 날조(Sham Test) 영구 금지. 프로덕션 객체의 상태 머신과 시그널을 직접 검증해야 함.
+- [ ] 38. **스모크 테스트의 비동기 워커 생존 및 논블로킹 해제 계약 (v3.12.5)**: `smoke_test.py`는 `_startup_coord._state`, `_pot_manager` 바인딩 및 이벤트 펌핑을 통해 백그라운드 크래시를 감지해야 하며, `win.close()`(모달 블로킹) 호출 절대 금지, `cancel()` + `deleteLater()` + `processEvents()`로 1초 내 안전 회수 보장.
+- [ ] 39. **오류 로그 새니타이징 및 TUI 컬럼 파괴 방어 (v3.12.5)**: `emit_error_standard` 등 오류 발행 계층은 메시지 내 구분자(`│`) 및 개행(`\r`, `\n`)을 공백(`" "`)으로 치환하여 TUI 4컬럼 조판 규격과 단일 라인 불변식을 절대 훼손하지 않아야 함.
 
 ## 14. 하지 말 것 (회귀 방지)
 
@@ -767,6 +773,11 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 - [ ] ❌ **F401 린트 자동 수정 후 런타임 import 테스트 없이 커밋**: re-export 전용 심볼이 Ruff/린터의 unused import 제거(`--fix`)로 삭제되어 실행 시 `ImportError` 크래시를 유발하는 참사 방지.
 - [ ] ❌ **QThread `run()` 예외 은폐 및 무음 크래시**: 워커 스레드의 최상위 예외 핸들러에서 에러를 내부 변수(`outcome`)에만 담고 F12 로깅 없이 조용히 종료하여 디버깅을 불가능하게 만드는 것.
 - [ ] ❌ **플랫폼 스폰 딕셔너리의 무방비 키 접근 (`kw['creationflags']`)**: 플랫폼별 옵션에 따라 키가 존재하지 않을 수 있으므로 `.get()` 없이 직접 인덱싱하여 `KeyError`로 자식 프로세스 생성을 무너뜨리는 것.
+- [ ] ❌ **테스트에서 `inspect.getsource()`로 소스코드/주석 문자열 매칭하기**: 주석 한 글자 바꾸거나 리팩토링할 때 깨지거나 반대로 코드가 망가져도 주석만 남아 통과하는 가짜 테스트(Sham test) 전면 금지.
+- [ ] ❌ **자작 가짜 객체(`class _View`)로 단언을 조작하는 인형극 테스트**: 프로덕션 클래스와 무관한 인스턴스를 주입해 무조건 통과하도록 만든 눈속임 테스트 작성 금지.
+- [ ] ❌ **스모크/자동화 테스트에서 `MainWindow.close()`를 직접 호출하는 것**: `ExitConfirmDialog`의 `.exec()` 모달 루프가 발동하여 CI/테스트 하네스가 영구 블로킹(타임아웃)되는 참사 방지.
+- [ ] ❌ **플랫폼 분기 가드(`@pytest.mark.skipif`) 없이 타깃 OS 전용 코드를 무단 단언하는 것**: macOS 전용 Bottle, Windows 전용 레지스트리/소리 등을 교차 환경에서 가드 없이 돌려 빌드를 깨뜨리는 행위 금지.
+- [ ] ❌ **로그 메시지에 구분자(`│`)나 개행(`\n`, `\r`)을 방치하여 TUI 컬럼을 폭파하는 것**: 에러 메시지 원문을 그대로 밀어넣어 4컬럼 조판 구조를 깨뜨리는 부주의한 로깅 금지.
 
 ## 15. 검증 워크플로우
 
@@ -802,3 +813,81 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 | **Markdown** | `.md` 파일 LF 유지 |
 | **바이너리** | 이미지/폰트/실행 파일은 `.gitattributes`에서 binary 지정 |
 | **문서 미러** | `.py`가 원본, `mirrors/*.md` + `mirrors/chzzktube_codebase.md` 합본은 `python sync_mirrors.py` 자동 생성. 손수정 금지 |
+
+## 17. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)
+
+### 17.1 테스트 자산 모듈 전수 목록 (44개 진입점 / 389개 케이스)
+
+> 2026-09-26 v3.12.5 기준 실측: `pytest tests/` 43개 모듈 (386 passed, 3 skipped, 0 failed) + 루트 `smoke_test.py` (ALL PASS, 1초 무결점 하네스).
+
+| 도메인 분류 | 모듈 경로 | 테스트 수 / 성격 | 핵심 검증 대상 및 계약 |
+|---|---|---|---|
+| **루트 스모크** | `smoke_test.py` | 1 스크립트 | GUI/컴포넌트 인스턴스화, 4종 다이얼로그(`SettingsDialog`, `CookieSelectDialog`, `ActionCountdownDialog`, `VerboseLogWindow`), 워커 생존(`_startup_coord._state`, `_pot_manager`), 모달 블로킹 방지 논블로킹 회수 |
+| **테스트 공통** | `tests/conftest.py` | 픽스처 | `qapp`, `mock_config`, `tmp_path`, 격리 환경 설정 |
+| **다운로드·파이프라인** | `tests/test_download_pipeline.py` | 13 passed | 다운로드 3계층 우회 파이프라인 엔드투엔드 흐름 |
+| | `tests/test_download_completion.py` | 6 passed | 다운로드 정상 마감, 실패 처리, 후속 콜백 수명주기 |
+| | `tests/test_pipeline_regressions.py` | 11 passed | 파이프라인 회귀 방지, 옵션 주입 무결성 |
+| | `tests/test_defect1_tv_fallback.py` | 8 passed | 유튜브 TV 클라이언트 폴백 및 `_make_ytdl_opts` 순정 단일 `auto` 위임 런타임 빌드 |
+| | `tests/test_dl_platform.py` | 12 passed | 플랫폼(유튜브/치지직) 도메인 식별 및 URL 판별기 계약 |
+| | `tests/test_progress_integration.py` | 7 passed | 다운로드 진행률 동일 라인 제자리 갱신 및 포스트프로세서 훅 |
+| **치지직·라이브 레코더** | `tests/test_chzzk_auth.py` | 7 passed | 치지직 인증/쿠키 만료 감지 시 `error_occurred` 시그널 런타임 방출 계약 |
+| | `tests/test_chzzk_live.py` | 10 passed | 치지직 라이브 상태 판정 및 HLS 스트림 파싱 |
+| | `tests/test_chzzk_live_integration.py` | 5 passed | 치지직 실시간 스트림 FFmpeg 로컬 경로 전달 및 리먹싱 통합 |
+| | `tests/test_live_recorder.py` | 14 passed | 라이브 레코더 네임스페이스 격리, 스트림 종료 시 `log_success_info` 런타임 호출 |
+| **분석기·게이트** | `tests/test_analysis_retry.py` | 6 passed | 비디오 분석 실패 시 지수 백오프 및 재시도 계약 |
+| | `tests/test_analysis_timeout.py` | 5 passed | 분석 단계 무한 대기 방어 및 타임아웃 처리 |
+| | `tests/test_analyze_state.py` | 8 passed | `AnalyzeWorker` 상태 머신 및 포맷 선택 분기 |
+| | `tests/test_url_gate.py` | 9 passed | 사전 URL 유효성 검증 및 비정상 스킴 배치 차단 |
+| | `tests/test_gate_state.py` | 8 passed | `GateState` 전이 및 의존성/POT 준비 완료 판정 |
+| | `tests/test_gate_integration.py` | 7 passed | UI 입력 활성화와 게이트 시그널 연동 |
+| | `tests/test_gate_watchdog.py` | 6 passed | 120초 게이트 2차 워치독 및 큐 자동 해제 |
+| **POT·토큰·서버** | `tests/test_po_client.py` | 9 passed | L0 순수 표준 라이브러리 기반 HTTP `/ping` 계약 |
+| | `tests/test_pot_manager.py` | 16 passed | `POTManager` 수명주기, 토큰 캐시, 백그라운드 프리웜 |
+| | `tests/test_pot_server_timeout.py` | 5 passed | `npm ci` / `tsc` 빌드 타임아웃 방어 및 자원 회수 |
+| | `tests/test_deps_bgutil_and_pot_fixes.py` | 11 passed | bgutil 릴리스 파싱 및 POT 워커 상태 픽스 계약 |
+| **프로비저닝·인프라** | `tests/test_provisioning_stdlib.py` | 15 passed | 외부 바이너리(FFmpeg, Node.js) 무결성 검증 및 안전 전개 |
+| | `tests/test_ffmpeg_resolver_contract.py` | 10 passed | FFmpeg 동적 릴리스 API 매핑 및 SHA-256 검증 |
+| | `tests/test_ffmpeg_archive_contract.py` | 8 passed | FFmpeg 아카이브 압축 해제 무결성 및 바이너리 승격 |
+| | `tests/test_pylib_overlay.py` | 7 passed | 포터블 PYZ 내부 모듈 격리 및 importlib 오버레이 |
+| | `tests/test_deps_windows_loop.py` | 6 passed | Windows 환경 의존성 무한 루프 방지 및 경로 정규화 |
+| **제어기·상태 머신** | `tests/test_coordinator.py` | 14 passed | `StartupCoordinator` 의존성 검사, POT 보고, `READY` 발산 멱등성 |
+| | `tests/test_fallback_watchdog.py` | 6 passed | `StartupCoordinator` 영구 잠금 계약 및 15초 폴백 워치독 검증 |
+| | `tests/test_controller_no_duplicates.py` | 8 passed | `MediaController` 상태 전이(begin, cancel, skip, finish) 원자성 |
+| | `tests/test_startup_gate_regressions.py` | 9 passed | 기동 게이트 회귀 방어 및 레이스 컨디션 차단 |
+| | `tests/test_context_lifecycle.py` | 7 passed | 애플리케이션 수명주기 컨텍스트 및 리소스 할당 |
+| | `tests/test_cleanup.py` | 8 passed | 워커 스레드 종료 및 좀비 프로세스 트리 정리 |
+| **TUI·로그·UI** | `tests/test_log_console.py` | 18 passed | 4컬럼 콘솔 조판, 렌더 클램프, ANSI 컬러 및 스트립 규격 |
+| | `tests/test_log_regressions.py` | 12 passed | `raw_log.raw` 단일 진입 및 TUI/F12 라우팅 회귀 방어 |
+| | `tests/test_yt_logger_bridge.py` | 8 passed | yt-dlp 내부 로거와 ChzzkTube 로그 버스 연동 브리지 |
+| | `tests/test_tool_log.py` | 6 passed | 도구 로그 격리 및 무출력 환경 방어 |
+| | `tests/test_dialog_notice.py` | 6 passed | 설정/공지 다이얼로그 무결성 |
+| | `tests/test_window_initialization.py` | 8 passed | `MainWindow` UI 요소 배치 및 시그널 슬롯 바인딩 |
+| | `tests/test_ui_startup.py` | 7 passed | 기동 이벤트 시퀀스 및 논블로킹 POT 자원 회수 |
+| | `tests/test_media.py` | 10 passed | 미디어 제어 및 UI 뷰 연동 |
+| | `tests/test_utils.py` | 12 passed | 공용 유틸리티 함수 무결성 |
+| | `tests/test_v38_contracts.py` | 17 passed (3 skipped) | 로깅 규격, CLI 빈 커맨드 계약, macOS Bottle 검증(플랫폼 가드) |
+
+---
+
+### 17.2 테스트 자산 유지보수 5대 원칙
+
+1. **100% Green (무결점) 유지 원칙**:
+   - 모든 커밋과 PR은 `uv run pytest tests/` (386 passed, 3 skipped, 0 failed) 및 `uv run python smoke_test.py` (Exit Code 0) 100% 통과를 유지해야 함.
+   - 단 하나의 테스트 실패도 방치하거나 무단 비활성화(`@pytest.mark.skip` 무단 남발)하지 않는다.
+
+2. **런타임 및 시그널 직접 검증 원칙 (눈속임 테스트 영구 금지)**:
+   - 소스코드 텍스트나 주석을 `inspect.getsource()` 또는 `grep`으로 매칭하는 문자열 검사는 테스트가 아니다.
+   - 프로덕션 클래스와 전혀 무관한 자작 가짜 클래스(`class _View`)로 단언을 조작하는 인형극을 금지한다.
+   - 반드시 실제 프로덕션 클래스의 인스턴스를 생성하고, 상태 머신 전이 및 Qt 시그널(`Signal.emit`) 방출을 실측 검증해야 한다.
+
+3. **플랫폼 격리 가드 의무화 원칙**:
+   - macOS 전용(Homebrew Bottle, Apple Silicon 전용 경로 등) 또는 Windows 전용(`CREATE_NO_WINDOW`, `JobObject`, 레지스트리 등) 로직을 테스트할 때는 반드시 `@pytest.mark.skipif(sys.platform != "...", reason="...")`를 명시한다.
+   - 다른 OS에서 실행했을 때 무단 단언 실패(AssertionError)로 빌드가 중단되는 환경 교차 결함을 원천 차단한다.
+
+4. **스모크 하네스 비동기 생존 및 논블로킹 회수 원칙**:
+   - `smoke_test.py`는 단순한 윈도우 인스턴스 생성을 넘어, 비동기 워커(`_startup_coord._state`, `_pot_manager`)가 크래시 없이 살아있는지 바인딩을 확인하고 이벤트 루프를 5회 이상 펌핑(`processEvents()`)해야 한다.
+   - 테스트 종료 시 `MainWindow.close()`를 호출하여 `ExitConfirmDialog.exec()` 모달 창이 떠서 하네스가 영구 블로킹되는 일이 없도록, 워커 `cancel()` + `deleteLater()` + `processEvents()`로 1초 이내에 깨끗하게 리소스를 회수하고 프로세스를 종료한다.
+
+5. **하드 슬립 지양 및 결정론적 동기화 원칙**:
+   - 테스트 코드 내에 임의의 긴 `time.sleep()`(예: 1초 이상)을 배치하여 테스트 러너의 실행 속도를 늦추지 않는다.
+   - Qt 이벤트 루프 펌핑(`QApplication.processEvents()`), `qtbot.waitUntil()` 또는 폴링 루프를 활용하여 비동기 작업 완료를 결정론적으로 대기한다.
