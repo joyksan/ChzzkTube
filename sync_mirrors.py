@@ -84,7 +84,7 @@ MIRROR_MODULES = [
     "chzzktube.infra.pot_server",
     "chzzktube.infra.pylib_bootstrap",
     "chzzktube.infra.updater",
-    "yt_dlp_binary.py",
+    "chzzktube.infra.yt_dlp_binary.py",
     # chzzktube.infra.provisioning (flat basename 충돌 회피: provisioning_<name>.md)
     "chzzktube.infra.provisioning.bridge",
     "chzzktube.infra.provisioning.committer",
