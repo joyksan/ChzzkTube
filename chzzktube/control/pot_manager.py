@@ -80,11 +80,8 @@ class _POTWorker(QThread):
     def _dbg(self, msg):
         """raw 버스 단일 경유 — 직접 log_full.emit 금지 (F12 이중 적재 방지)."""
         text = msg.msg if isinstance(msg, LogEvent) else str(msg)
-        if self.mode == "prewarm":
-            raw_log.raw("POT-DEBUG", text)
-        else:
-            event = LogEvent(stage="POT", status="RUN", scope="POT", msg=text)
-            raw_log.raw("POT", event, to_tui=True)
+        event = LogEvent(stage="POT", status="RUN", scope="POT", msg=text, rendered=True)
+        raw_log.raw("POT-DEBUG", event, to_tui=(self.mode != "prewarm"))
     
     def _run(self):
         from chzzktube.infra.pot_server import probe_server, latest_server_ver, server_installed_ver

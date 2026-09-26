@@ -121,6 +121,10 @@ class StartupCoordinator(QObject):
         # [토글 계약] 시동 → 가동 → lazy 대기 전환이 메인/풀 로그에 모두 기록된다
         # (앱 동작 전량 기록 원칙 — HANDOVER §9).
         self.pot_status_changed.emit(status)
+        if status == "failed":
+            # [중복 방지] 실패 시의 TUI 안내는 직후 _on_pot_finished -> report_pot()에서
+            # check logs (F12) 표준 에러 포맷으로 1회만 단일 발행한다.
+            return
         from chzzktube.core.log_emitter import emit_event
         from chzzktube.core.raw_log import raw
         _POT_TOGGLE = {
@@ -128,7 +132,6 @@ class StartupCoordinator(QObject):
             "starting": ("RUN",  "server starting..."),
             "staged":   ("OK",   "server staged — lazy standby"),
             "ready":    ("OK",   "server running"),
-            "failed":   ("FAIL", "server failed"),
         }
         st, msg = _POT_TOGGLE.get(status, ("RUN", str(status)))
         raw(

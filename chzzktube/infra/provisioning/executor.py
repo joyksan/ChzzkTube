@@ -135,15 +135,17 @@ class Executor:
 
     def _on_progress(self, component: str, downloaded: int, total: int, speed_bps: float = 0.0, eta_sec: float = 0.0):
         """다운로드 진행률 하트비트 — TUI: 컴포넌트별 개별 갱신형 라인, F12: 개별 누적."""
-        if total <= 0:
-            return
-
-        pct = int(downloaded / total * 100)
         downloaded_mb = downloaded / (1024 * 1024)
-        total_mb = total / (1024 * 1024)
+        if total > 0:
+            pct = int(downloaded / total * 100)
+            total_mb = total / (1024 * 1024)
+            nm_str = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
+        else:
+            pct = 0
+            total_mb = 0.0
+            nm_str = f"{downloaded_mb:.1f} MB"
 
         speed_str = self._format_speed(speed_bps)
-        nm_str = f"{downloaded_mb:.1f}/{total_mb:.1f} MB"
 
         # 개별 진행 저장 (100% 완료 및 추출/실패 후에도 bar, pct, speed, n/m 유지)
         self._active_progress[component] = {
@@ -236,6 +238,27 @@ class Executor:
         
         self._plan_versions = {plan.component: plan.version for plan in plans}
 
+        # 모든 대상 컴포넌트에 대해 초기 0% 진행 라인을 즉시 등록 및 발행 (동시 노출 보장)
+        for plan in plans:
+            comp_id = f"deps_{plan.component}"
+            scope = _to_scope(plan.component)
+            self._active_progress[plan.component] = {
+                "pct": 0,
+                "speed": "",
+                "nm": "",
+                "downloaded_mb": 0.0,
+                "total_mb": 0.0,
+            }
+            init_line = self._fmt_progress(0, "", "", msg="")
+            init_event = emit_component("DEPS", "RUN", scope, init_line, is_status=True, is_error=False)
+            init_event.component_id = comp_id
+            init_event.is_progress = True
+            if not self._emit_via_log(init_event):
+                raw_log.raw(
+                    "provisioning", init_event, to_tui=True,
+                    component_id=comp_id, is_progress=True,
+                )
+
         tasks = []
         for plan in plans:
             dest = self.base_dir / "downloads" / plan.component
@@ -256,9 +279,12 @@ class Executor:
             dl_result = next((r for r in dl_results if r.task.component == plan.component), None)
 
             prog = self._active_progress.get(plan.component, {})
-            pct = prog.get("pct", 100)
+            pct = 100 if (dl_result and dl_result.success) else prog.get("pct", 0)
             speed = prog.get("speed", "")
             nm = prog.get("nm", "")
+            if dl_result and dl_result.bytes_downloaded > 0:
+                mb = dl_result.bytes_downloaded / (1024 * 1024)
+                nm = f"{mb:.1f}/{mb:.1f} MB"
 
             if not dl_result or not dl_result.success:
                 error_msg = dl_result.error if dl_result else "download task vanished"

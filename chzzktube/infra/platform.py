@@ -39,7 +39,7 @@ def daemon_spawn_kwargs(use_no_window: bool = True) -> Dict[str, Any]:
     """장기 데몬용 스폰 인자 — Win: NO_WINDOW|NEW_PROCESS_GROUP, POSIX: 세션 분리."""
     kw = spawn_kwargs(use_no_window)
     if is_windows():
-        kw["creationflags"] |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        kw["creationflags"] = kw.get("creationflags", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     else:
         kw["start_new_session"] = True
     return kw

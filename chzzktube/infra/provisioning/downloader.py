@@ -195,7 +195,8 @@ class ParallelDownloader:
                             hasher.update(chunk)
                         report(downloaded, total)
 
-                    report(downloaded, total, is_final=True)
+                    effective_total = total if total > 0 else downloaded
+                    report(downloaded, effective_total, is_final=True)
 
                 computed_sha256 = hasher.hexdigest() if hasher is not None else None
                 if hasher is not None and computed_sha256 != task.expected_sha256:

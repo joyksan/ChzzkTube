@@ -392,11 +392,14 @@ def _spawn_node_server(log_full_func=None):
     if _wait_port(20, log_full_func):
         return proc
     _kill(proc)
+    tail = read_server_log_tail(15)
     if log_full_func:
         log_full_func(
             "server spawn reason: /ping not responding in 20s "
             "(crash after startup — see bgutil_server.log)"
         )
+        if tail:
+            log_full_func(f"[pot:server.log tail]\n{tail.strip()}")
     return None
 
 
@@ -685,7 +688,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
     to_tui=False 강제이므로 메인 TUI 콘솔은 오염되지 않는다.
     """
     cmd_line = " ".join(map(str, cmd))
-    log_f12_cli(cmd_line, None)
+    log_f12_cli(cmd_line, None, stage="POT", tag="pot-cli")
     try:
         kwargs = daemon_spawn_kwargs(use_no_window=use_no_window)
         proc = subprocess.Popen(
@@ -701,7 +704,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
             stdout, _ = _communicate_with_ticks(proc, timeout, tick_func, tick_interval)
         except subprocess.TimeoutExpired:
             kill_tree(proc)  # [Followup-2] tree kill (job object / process group)
-            log_f12_cli(cmd_line, f"timeout ({timeout}s) — killed", is_error=True)
+            log_f12_cli(None, f"timeout ({timeout}s) — killed", is_error=True, stage="POT", tag="pot-cli")
             if log_full_func:
                 log_full_func(
                     f"subprocess timeout ({timeout}s) — killed: {' '.join(map(str, cmd))}"
@@ -713,7 +716,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
             except ValueError:
                 pass
         if stdout:
-            log_f12_cli(cmd_line, stdout, is_error=(proc.returncode != 0))
+            log_f12_cli(None, stdout, is_error=(proc.returncode != 0), stage="POT", tag="pot-cli")
             if log_full_func:
                 for line in stdout.splitlines():
                     stripped = line.strip()
@@ -721,7 +724,7 @@ def _run_and_stream_log(cmd, cwd, log_full_func, env=None, use_no_window=True,
                         log_full_func(stripped)
         return proc.returncode
     except Exception as e:
-        log_f12_cli(cmd_line, f"[{type(e).__name__}] {e}", is_error=True)
+        log_f12_cli(None, f"[{type(e).__name__}] {e}", is_error=True, stage="POT", tag="pot-cli")
         if log_full_func:
             log_full_func(f"subprocess Popen error: {e}")
         return -1

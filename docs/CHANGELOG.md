@@ -1,3 +1,40 @@
+### 2026-09-26 — v3.12.3 : bgutil 의존성 다운로드 게이지 동시 노출·POT 컴파일러 creationflags KeyError 해결·TUI 중복 에러 로그 억제 (patch)
+
+#### 배경 (v3.12.2 → v3.12.3)
+- **bgutil 다운로드 게이지 4줄 동시 노출 및 실시간 수치 표시 정상화**:
+  - `executor.py`의 `provision()` 시작 시점에 모든 컴포넌트(4개)에 대해 0% 초기 진행 라인을 TUI에 즉시 등록 및 발행하여, 기동 순간부터 4개 의존성 줄이 칼같이 동시에 정렬되어 표시되도록 보장.
+  - GitHub zipball의 청크 전송 인코딩(`Transfer-Encoding: chunked`)으로 인해 `Content-Length`가 없을 때(`total <= 0`), `executor.py`의 `_on_progress`가 조기 리턴(`if total <= 0: return`)하여 `bgutil`의 다운로드 진행률 이벤트가 통째로 드롭되던 결함을 제거.
+  - `downloader.py` 완료 시점 `effective_total = total if total > 0 else downloaded`로 100% 완료 콜백을 보장하고, 다운로드 종료 후 `bytes_downloaded` 기반으로 `f"{mb:.1f}/{mb:.1f} MB"` 및 100% 게이지 수치를 완벽하게 채워 `[██████████] 100% ·            · bgutil installed`와 같은 공백 버그 원천 차단.
+- **POT 서버 staging 실패(`KeyError: 'creationflags'`) 원천 해결**:
+  - `platform.py`의 `daemon_spawn_kwargs`에서 `use_no_window=False` 옵션 지정 시 `spawn_kwargs(False)`가 `{}`를 반환하여 Windows 환경에서 `kw["creationflags"] |= ...` 연산 중 `KeyError: 'creationflags'`가 발생하던 결함을 `kw["creationflags"] = kw.get("creationflags", 0) | ...`로 안전하게 수정.
+  - 이로 인해 `tsc` 컴파일러 프로세스(`use_no_window=False`로 실행됨)가 스폰 직후 즉시 크래시되어 `main.js`가 빌드되지 못하고 `server failed`로 이어지던 근본 원인을 완벽히 해결.
+- **POT server failed 중복 TUI 로그 제거**:
+  - `pot_manager.py`가 실패 시 `pot_status_changed.emit("failed")`와 `pot_finished.emit(False, "failed")`를 연달아 발행함에 따라, `startup_coordinator.py`에서 `server failed`와 `server failed → check logs (F12)`가 TUI에 2줄로 중복 찍히던 문제를 해결.
+  - `_on_pot_status("failed")`의 TUI 발행을 억제하고, `report_pot()`에서 표준 에러 헬퍼(`emit_error_standard`)로 1회만 단일 발행하도록 정리.
+- **F12 상세로그 터미널 및 POT 수명주기 로깅 체계 고도화**:
+  - `log_f12_cli`에 `stage`, `scope` 매개변수 및 `cmd=None` / `output=None` 2단계 호출을 지원하여, `$ cmd`가 시작과 완료 시점에 2번 중복 찍히던 문제를 방지.
+  - POT CLI 및 네트워크/스폰 로그를 `stage="POT"`, `scope="CLI"/"NET"/"POT"`로 정규화하여 F12 필터링 및 가독성 개선.
+  - POT 서버 바인딩 대기(`_wait_port`) 실패 시 `bgutil_server.log`의 tail을 F12에 즉시 덤프하도록 개선하여 디버깅 정보 확보.
+
+#### 모듈 변경
+| 모듈 | 변경 |
+|------|------|
+| `infra/platform.py` | `daemon_spawn_kwargs`에서 `kw.get("creationflags", 0)` 적용으로 `use_no_window=False` 시 `KeyError` 방지 |
+| `control/startup_coordinator.py` | `_on_pot_status("failed")` TUI 중복 emit 억제 (단일 에러 표준화) |
+| `infra/provisioning/executor.py` | `provision` 진입 시 전체 플랜 0% 즉시 emit, `total <= 0`에서도 진행률 표시, 완료 시 bytes 기반 nm 보정 |
+| `infra/provisioning/downloader.py` | 다운로드 마감 시 `effective_total` 보정으로 100% 최종 리포트 보장 |
+| `core/raw_log.py` | `log_f12_cli`, `log_f12_net`에 `stage`, `scope` 지원 및 CLI 프롬프트 중복 방지 |
+| `control/pot_manager.py` | `_dbg`에서 `stage="POT"`, `scope="POT"` 정규 LogEvent 발행 |
+| `infra/pot_server.py` | `_run_and_stream_log` 프롬프트 중복 제거 및 POT 태그 적용, 스폰 타임아웃 시 `bgutil_server.log` tail F12 덤프 |
+| `core/config.py`, `pyproject.toml` | 버전 `v3.12.3` 패치 범프 |
+| `tests/test_deps_bgutil_and_pot_fixes.py` | 6개 신규 검증 단위 테스트 추가 |
+
+#### 검증
+- `pytest tests/test_deps_bgutil_and_pot_fixes.py tests/test_deps_windows_loop.py tests/test_pot_manager.py tests/test_po_client.py tests/test_provisioning_stdlib.py tests/test_progress_integration.py` → 62개 테스트 100% 통과
+- `git diff` 디스크 플러시 검증 완료
+
+---
+
 ### 2026-09-26 — v3.12.2 : Windows 의존성 정합성 루프 정비·다운로드 진행률 규격 개편·F12 터미널 원문 로깅 체계 구축 (patch)
 
 #### 배경 (v3.12.1 → v3.12.2)

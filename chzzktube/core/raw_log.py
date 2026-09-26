@@ -196,19 +196,19 @@ def flush(timeout: float = 1.0) -> None:
 def shutdown(timeout: float = 1.0) -> None:
     _dispatcher.shutdown(timeout)
 
-def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str = "deps-cli"):
+def log_f12_cli(cmd: str | None = None, output: str | None = None, is_error: bool = False,
+                tag: str = "deps-cli", stage: str = "DEPS", scope: str = "CLI"):
     """F12 상세로그 전용 CLI 실행 결과 발행 ($ cmdline + 원문 출력).
 
     - to_tui=False 강제: 메인 TUI 콘솔 오염을 완벽히 차단
     - truncate_for_full_log 적용: 최대 6줄, 160자 제한
     """
-    if not cmd:
-        return
-    raw(
-        tag,
-        LogEvent(stage="DEPS", status="RUN", scope="CLI", msg=f"$ {cmd}", is_error=is_error, rendered=True),
-        to_tui=False,
-    )
+    if cmd:
+        raw(
+            tag,
+            LogEvent(stage=stage, status="RUN", scope=scope, msg=f"$ {cmd}", is_error=is_error, rendered=True),
+            to_tui=False,
+        )
     if output:
         from chzzktube.infra.updater import truncate_for_full_log
         clean_out = truncate_for_full_log(output, max_lines=6, max_width=160)
@@ -216,9 +216,9 @@ def log_f12_cli(cmd: str, output: str = None, is_error: bool = False, tag: str =
             raw(
                 tag,
                 LogEvent(
-                    stage="DEPS",
+                    stage=stage,
                     status="FAIL" if is_error else "OK",
-                    scope="CLI",
+                    scope=scope,
                     msg=line,
                     is_error=is_error,
                     rendered=True,
