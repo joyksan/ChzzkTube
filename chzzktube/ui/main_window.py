@@ -203,6 +203,13 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
 
+        # [v3.12.6] 기동 헤더 로그: 앱 식별자 및 단일 진실 버전 1줄 TUI 발행
+        raw_log.raw(
+            "SYS",
+            LogEvent(stage="SYS", status="OK", scope="MAIN", msg=f"{APP_NAME} {APP_VERSION}", is_status=False),
+            to_tui=True,
+        )
+
         # 구성요소(yt-dlp/ffmpeg/node) 자동 업데이트 확인 — 기동 직후 비동기 1회
         QTimer.singleShot(500, self._start_update_check)
 

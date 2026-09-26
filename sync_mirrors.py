@@ -22,6 +22,8 @@ MIRROR_MODULES = [
     "bump_version",
     "smoke_test",
     "sync_mirrors",
+    # package root
+    "chzzktube.__init__",
     # chzzktube.ui
     "chzzktube.ui.dialogs",
     "chzzktube.ui.log_console",
@@ -122,6 +124,8 @@ def sync_module(name: str, dry_run: bool = False) -> int:
         dst = MIRRORS_DIR / f"provisioning_{basename}.md"
     elif clean_name == "chzzktube.pipeline.target_downloader.utils":
         dst = MIRRORS_DIR / "target_downloader_utils.md"
+    elif clean_name == "chzzktube.__init__":
+        dst = MIRRORS_DIR / "pkg_init.md"
     else:
         dst = MIRRORS_DIR / f"{basename}.md"
 

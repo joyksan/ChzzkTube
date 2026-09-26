@@ -43,7 +43,9 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.12.5"
+APP_NAME = _APP_NAME
+APP_VERSION = "v3.12.5"
+_APP_VERSION = APP_VERSION  # 하위 호환 별칭
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")

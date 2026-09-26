@@ -1,9 +1,18 @@
-### 2026-09-26 — v3.12.5 : 테스트 스위트 전수조사 정비(P0~P5)·스모크 하네스 비동기 생존 검증·눈속임 테스트 퇴출 및 런타임 전환·오류 로그 새니타이징 (patch)
+### 2026-09-26 — v3.12.5 : 테스트 스위트 전수조사 정비(P0~P5)·버전 단일 진실(SSOT) 일원화·스모크 하네스 비동기 생존 검증·눈속임 테스트 퇴출 및 런타임 전환·오류 로그 새니타이징·레거시 .pylib 생성 차단 (patch)
 
 #### 배경 (v3.12.4 → v3.12.5)
+- **버전 단일 진실(SSOT) 결함 전면 해소 및 자동 검증망 구축**:
+  - `config.APP_VERSION`을 공개 상수로 승격하고, `chzzktube.__version__` 표준 패키지 메타데이터 연동.
+  - `bump_version.py`를 개편하여 `config.py`와 `pyproject.toml`의 버전을 원자적으로 동시 갱신하도록 수리 (버전 엇갈림 원천 차단).
+  - `tests/test_version_consistency.py` 단위 테스트 5종을 신설하여 `config.APP_VERSION == "v" + pyproject.toml == __version__ == README == HANDOVER` 정합성을 상시 강제.
+  - `README.md` 방치된 구버전(`v3.12.1`)을 최신 `v3.12.5`로 완전 동기화.
+  - TUI 기동 시 콘솔 첫 줄에 앱 버전 헤더(`[HH:MM:SS] SYS │ OK │ MAIN │ ChzzkTube v3.12.5`) 1줄 발행 및 `SettingsDialog` 푸터에 버전 표시 라벨 추가.
+- **레거시 `.pylib` 빈 디렉터리 무단 생성 차단 및 오버레이 격리**:
+  - `pylib_bootstrap.py`에서 무조건적인 `os.makedirs`를 제거하여 빈 폴더 생성을 원천 차단하고, 기존 빈 디렉터리 잔재 자동 청소.
+  - `tests/test_pylib_overlay.py`의 `writable_base`를 `tmp_path`로 격리하여 사용자 로컬 AppData(`%LOCALAPPDATA%\ChzzkTube`) 오염 방지.
 - **테스트 스위트 전수조사 및 결함 정비 (P0~P5 완수, 100% Green 달성)**:
   - `docs/TEST_AUDIT_REPORT.md` 보고서에 도출된 5대 결함 로드맵을 전면 이행하여 상시 실패 8종 수리, 플랫폼 비호환 분기, 눈속임 및 자작 인형극 테스트 전면 퇴출.
-  - `pytest tests/` 전체 실행 결과: 386 passed, 3 skipped, 0 failed 달성.
+  - `pytest tests/` 전체 실행 결과: 392 passed, 3 skipped, 0 failed 달성.
 - **`smoke_test.py` 전면 개편 및 논블로킹 1초 무결점 하네스 구축**:
   - `MainWindow` 생성 후 `_startup_coord._state` 및 `_pot_manager` 바인딩 검증 추가.
   - 이벤트 루프 5회 펌핑(`app.processEvents()`)으로 비동기 워커 초기 시그널/크래시 무감지 결함 차단.
@@ -26,8 +35,15 @@
 #### 모듈 변경
 | 모듈 | 변경 |
 |------|------|
+| `core/config.py`, `chzzktube/__init__.py` | `APP_VERSION` 공개 상수 승격, `__version__` 표준 패키지 메타 노출 |
+| `bump_version.py` | `config.py`와 `pyproject.toml` 원자적 동시 버전 갱신 지원 |
+| `tests/test_version_consistency.py` | 버전 SSOT 5대 정합성 검증 테스트 신설 (5 passed) |
+| `ui/main_window.py` | 기동 시 TUI 콘솔 첫 줄에 앱 버전 헤더(`SYS │ OK │ MAIN │ ChzzkTube v3.12.5`) 1줄 발행 |
+| `ui/dialogs.py` | `SettingsDialog` 푸터에 앱 버전 표시 라벨 추가 |
+| `README.md` | 버전 `v3.12.5` 동기화 |
+| `infra/pylib_bootstrap.py` | 빈 `.pylib` 생성 차단 및 빈 디렉터리 잔재 자동 청소 |
+| `tests/test_pylib_overlay.py` | `writable_base` 격리(`tmp_path`)로 사용자 환경 오염 방지 |
 | `core/log_emitter.py` | `_normalize_action` 미허용 액션 `""` 정규화 및 `emit_error_standard` 구분자/개행 새니타이징 |
-| `core/config.py`, `pyproject.toml` | 버전 `v3.12.5` 패치 범프 |
 | `smoke_test.py` | 비동기 워커 생존 검증, 다이얼로그 4종 검증, 모달 블로킹 방지 논블로킹 회수 |
 | `tests/test_chzzk_live_integration.py` | Windows FFmpeg `file:///` URI 비호환 -> `str(playlist)` 로컬 경로 전달 |
 | `tests/test_v38_contracts.py` | macOS Bottle 테스트 3종 `@pytest.mark.skipif` 가드 적용 |
@@ -38,11 +54,12 @@
 | `tests/test_fallback_watchdog.py` | 가짜 `_View` 삭제 -> 실제 `StartupCoordinator` 영구 잠금 계약 런타임 검증 |
 | `tests/test_ui_startup.py` | 하드 슬립(1100ms -> 100ms) 단축 및 `_pot_manager.cancel()` 자원 회수 |
 | `docs/TEST_AUDIT_REPORT.md` | P0~P5 조치 완료 현황 및 최종 통계 갱신 |
-| `docs/HANDOVER.md` | test 자산 모듈 리스트 신설, 유지보수 원칙, 불변식 37-39, 하지 말 것 조항 신설 |
+| `docs/HANDOVER.md` | 버전 SSOT 계약 갱신, test 자산 모듈 리스트 신설, 유지보수 원칙, 불변식 37-39, 하지 말 것 조항 신설 |
 
 #### 검증
-- `uv run pytest tests/` -> 386 passed, 3 skipped, 0 failed in 12s (100% Green)
+- `uv run pytest tests/` -> 392 passed, 3 skipped, 0 failed in 13.5s (100% Green)
 - `uv run python smoke_test.py` -> ALL PASS (1초 내 정상 종료)
+- `uv run python sync_mirrors.py --check` -> 70개 미러 전체 동기화 완료 (0 changed, 0 missing)
 - `uv run python sync_mirrors.py` -> 66개 미러 전체 동기화 완료
 
 ---

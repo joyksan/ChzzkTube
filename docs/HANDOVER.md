@@ -51,7 +51,7 @@
   - [15.1 마무리 — 링크 깨짐 확인 완료·체리피킹 요약 (v3.5.0)](#151-마무리-—-링크-깨짐-확인-완료·체리피킹-요약-v350)
 - [16. 파일 규칙](#16-파일-규칙)
 - [17. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)](#17-테스트-자산-명세-및-유지보수-가이드-v3125-신설)
-  - [17.1 테스트 자산 모듈 전수 목록 (44개 진입점 / 389개 케이스)](#171-테스트-자산-모듈-전수-목록-44개-진입점--389개-케이스)
+  - [17.1 테스트 자산 모듈 전수 목록 (45개 진입점 / 395개 케이스)](#171-테스트-자산-모듈-전수-목록-45개-진입점--395개-케이스)
   - [17.2 테스트 자산 유지보수 5대 원칙](#172-테스트-자산-유지보수-5대-원칙)
 
 
@@ -75,8 +75,10 @@
 
 ### 2.1 버전 진실 공급원과 정책
 
-- 앱이 표시하는 버전의 단일 진실 공급원은 `config._APP_VERSION`임. 현재 값은 `v3.12.5`임.
-- `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타 참고값이며 앱 실행 버전을 대체하지 않음. 세 값은 항상 숫자 부분을 동일하게 유지함.
+- 앱이 표시하는 버전의 단일 진실 공급원은 `config.APP_VERSION` (하위 호환 별칭 `_APP_VERSION`)임. 현재 값은 `v3.12.5`임.
+- `chzzktube.__version__`은 패키지 메타데이터로서 `config.APP_VERSION.lstrip("v")`를 동적으로 노출함.
+- `pyproject.toml`의 `version`과 `uv.lock`의 루트 프로젝트 버전은 패키지/빌드 메타이며 `config.APP_VERSION`과 1:1로 항상 일치해야 함.
+- **버전 정합성 계약 강제**: `tests/test_version_consistency.py` 단위 테스트가 `config.APP_VERSION == "v" + pyproject.toml version == "v" + chzzktube.__version__ == README.md == HANDOVER.md` 불일치를 상시 차단함.
 - 비공개 개발은 semver-lite를 따른다.
   - `major`: 공개/외부 인터페이스, 빌드 산출물 계약, 진입점 호환성이 깨질 때
   - `minor`: 기능 추가, 대형 리팩토링, 아키텍처 재편 등 사용자/호출부 관점의 기능 지평이 바뀔 때
@@ -87,22 +89,20 @@
 ### 2.2 버전 증가 절차
 
 1. 변경 성격에 따라 `major`/`minor`/`patch` 증가를 결정함.
-2. `config.py`의 `_APP_VERSION`를 먼저 수정함. 앱 화면, 부트 로그, 히스토리 세션 마커는 이 값을 사용함.
-3. `pyproject.toml`의 `version`과 `uv.lock`의 루트 `[[package]] name = "chzzktube"` 버전을 같은 숫자로 맞춘다.
-4. `HANDOVER.md` 머리글/개요/최신 변경 이력과 `CHANGELOG.md` 최신 엔트리를 갱신함.
+2. 패치 버전 증가 시 `python bump_version.py`를 실행함 — `config.py`의 `APP_VERSION`과 `pyproject.toml`의 `version`이 원자적으로 동시 갱신됨.
+3. 마이너/메이저 버전 증가 시에는 `config.py`의 `APP_VERSION` 및 `pyproject.toml`의 `version`을 직접 수동 편집함.
+4. `HANDOVER.md` 머리글/개요/최신 변경 이력, `CHANGELOG.md` 최신 엔트리, `README.md`를 갱신함.
 5. `python sync_mirrors.py`로 `mirrors/config.md`와 `mirrors/chzzktube_codebase.md`를 재생성함.
-6. 다음 정합성 조건을 확인함.
-   - `config._APP_VERSION == "v" + pyproject.toml version`
-   - `uv.lock` 루트 프로젝트 버전이 `pyproject.toml`과 동일
-   - `HANDOVER.md`, `CHANGELOG.md`, README의 현재 버전 표기가 동일
-   - `python sync_mirrors.py --check`가 전체 등록 모듈(`MIRROR_MODULES`, `chzzktube.infra.provisioning.*` 포함) 기준으로 변경 0건/누락 0건을 반환
-   - 신규 `.py` 모듈은 반드시 `MIRROR_MODULES`에 등록함. basename이 기존 미러와 충돌하면 `provisioning_<name>.md`처럼 패키지 접두사를 붙인다
+6. `uv run pytest tests/test_version_consistency.py`로 5대 버전 정합성 조건을 확인함.
+   - `config.APP_VERSION == "v" + pyproject.toml version`
+   - `chzzktube.__version__ == pyproject.toml version`
+   - `HANDOVER.md`, `CHANGELOG.md`, `README.md`의 현재 버전 표기가 동일
+   - `python sync_mirrors.py --check`가 전체 등록 모듈(`MIRROR_MODULES`) 기준으로 변경 0건/누락 0건을 반환
 
-### 2.3 `bump_version.py` 제한
+### 2.3 `bump_version.py` 동작 계약
 
-- `bump_version.py`는 `config.py`의 `_APP_VERSION`에서 patch 숫자만 `+1`하는 보조 스크립트다.
-- `major`/`minor` 증가는 지원하지 않으며, `pyproject.toml`, `uv.lock`, `HANDOVER.md`, `CHANGELOG.md`, `README.md`, Python 미러는 자동 갱신하지 않음.
-- 따라서 릴리스/배포 버전 변경 시에는 위 §1.1.2 절차를 수동으로 완수해야 하며, `python bump_version.py` 실행 후 `config.py`만 바뀌었다고 완료 처리하면 안 됨.
+- `bump_version.py`는 `config.py`의 `APP_VERSION`과 `pyproject.toml`의 `version`에서 patch 숫자만 `+1`하여 동시 갱신하는 원자적 동기화 스크립트다.
+- 단일 파일만 수정되어 발생하던 버전 불일치 결함을 원천 차단함. 마이너/메이저 버전 점프 시에는 수동 편집 후 `test_version_consistency.py`로 검증할 것.
 
 ## 3. 기술 스택 및 디펜던시
 
@@ -816,14 +816,15 @@ PySide6 전체 패키지는 수십 MB이므로, **빌드 시 실제 사용하는
 
 ## 17. 테스트 자산 명세 및 유지보수 가이드 (v3.12.5 신설)
 
-### 17.1 테스트 자산 모듈 전수 목록 (44개 진입점 / 389개 케이스)
+### 17.1 테스트 자산 모듈 전수 목록 (45개 진입점 / 395개 케이스)
 
-> 2026-09-26 v3.12.5 기준 실측: `pytest tests/` 43개 모듈 (386 passed, 3 skipped, 0 failed) + 루트 `smoke_test.py` (ALL PASS, 1초 무결점 하네스).
+> 2026-09-27 v3.12.5 기준 실측: `pytest tests/` 44개 모듈 (392 passed, 3 skipped, 0 failed) + 루트 `smoke_test.py` (ALL PASS, 1초 무결점 하네스).
 
 | 도메인 분류 | 모듈 경로 | 테스트 수 / 성격 | 핵심 검증 대상 및 계약 |
 |---|---|---|---|
 | **루트 스모크** | `smoke_test.py` | 1 스크립트 | GUI/컴포넌트 인스턴스화, 4종 다이얼로그(`SettingsDialog`, `CookieSelectDialog`, `ActionCountdownDialog`, `VerboseLogWindow`), 워커 생존(`_startup_coord._state`, `_pot_manager`), 모달 블로킹 방지 논블로킹 회수 |
-| **테스트 공통** | `tests/conftest.py` | 픽스처 | `qapp`, `mock_config`, `tmp_path`, 격리 환경 설정 |
+| **테스트 공통·정합성** | `tests/conftest.py` | 픽스처 | `qapp`, `mock_config`, `tmp_path`, 격리 환경 설정 |
+| | `tests/test_version_consistency.py` | 5 passed | 버전 단일 진실 공급원(SSOT) 정합성(config, pyproject, __init__, README, HANDOVER) 검증 |
 | **다운로드·파이프라인** | `tests/test_download_pipeline.py` | 13 passed | 다운로드 3계층 우회 파이프라인 엔드투엔드 흐름 |
 | | `tests/test_download_completion.py` | 6 passed | 다운로드 정상 마감, 실패 처리, 후속 콜백 수명주기 |
 | | `tests/test_pipeline_regressions.py` | 11 passed | 파이프라인 회귀 방지, 옵션 주입 무결성 |

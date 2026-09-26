@@ -703,6 +703,11 @@ class SettingsDialog(QDialog):
         footer.setStyleSheet("background-color: #0d0d0d;")
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(18, 8, 18, 10)
+
+        lbl_ver = QLabel(f"{config.APP_NAME} {config.APP_VERSION}")
+        lbl_ver.setStyleSheet("color: #555555; font-size: 11px;")
+        footer_layout.addWidget(lbl_ver)
+
         footer_layout.addStretch()
 
         btn_done = QPushButton("[ Close: Esc ]")

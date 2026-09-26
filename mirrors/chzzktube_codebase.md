@@ -160,38 +160,62 @@ print('Done')
 ## File: bump_version.py
 
 ```python
-### bump_version.py
+### bump_version.py - config.py와 pyproject.toml 원자적 버전 범프 스크립트
 import re
 import sys
 
-FILE_PATH = "chzzktube/core/config.py"
+CONFIG_PATH = "chzzktube/core/config.py"
+PYPROJECT_PATH = "pyproject.toml"
+
 try:
-    with open(FILE_PATH, "r", encoding="utf-8") as f:
-        content = f.read()
+    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        config_content = f.read()
 
-    # 큰따옴표/작은따옴표 및 한글/특수문자 괄호 조합까지 모두 허용하는 정규식
-    pattern = r'(_APP_VERSION\s*=\s*["\']v)(\d+)\.(\d+)\.(\d+)(.*?["\'])'
-
-    def bump_patch(match):
-        prefix = match.group(1)         # _APP_VERSION = "v
-        major = match.group(2)          # 3
-        minor = match.group(3)          # 1
-        patch = int(match.group(4)) + 1 # 0 -> 1
-        suffix = match.group(5)         
-
-        new_ver = f"{prefix}{major}.{minor}.{patch}{suffix}"
-        print(f"[Labmem 004] Version Bump: {match.group(0)} -> {new_ver}")
-        return new_ver
-
-    updated_content, count = re.subn(pattern, bump_patch, content)
-
-    if count > 0:
-        with open(FILE_PATH, "w", encoding="utf-8") as f:
-            f.write(updated_content)
-        print("[Labmem 004] config.py 버전 업그레이드 성공!")
-    else:
-        print("[Labmem 004 ERROR] config.py에서 _APP_VERSION 패턴을 찾지 못했습니다!")
+    # APP_VERSION = "vX.Y.Z" 패턴
+    cfg_pattern = r'((?:_)?APP_VERSION\s*=\s*["\']v)(\d+)\.(\d+)\.(\d+)(.*?["\'])'
+    match = re.search(cfg_pattern, config_content)
+    if not match:
+        print("[Labmem 004 ERROR] config.py에서 APP_VERSION 패턴을 찾지 못했습니다!")
         sys.exit(1)
+
+    major = match.group(2)
+    minor = match.group(3)
+    old_patch = int(match.group(4))
+    new_patch = old_patch + 1
+
+    old_ver = f"{major}.{minor}.{old_patch}"
+    new_ver = f"{major}.{minor}.{new_patch}"
+
+    # 1. config.py 갱신 (APP_VERSION 및 _APP_VERSION 일괄 갱신)
+    def bump_cfg(m):
+        prefix = m.group(1)
+        suffix = m.group(5)
+        return f"{prefix}{major}.{minor}{'.' if m.group(3) else ''}{new_patch}{suffix}"
+
+    new_config, cfg_count = re.subn(cfg_pattern, f"\\g<1>{major}.{minor}.{new_patch}\\g<5>", config_content)
+    if cfg_count == 0:
+        print("[Labmem 004 ERROR] config.py 치환 실패!")
+        sys.exit(1)
+
+    # 2. pyproject.toml 갱신 (version = "X.Y.Z")
+    with open(PYPROJECT_PATH, "r", encoding="utf-8") as f:
+        toml_content = f.read()
+
+    toml_pattern = r'(version\s*=\s*["\'])(\d+\.\d+\.\d+)(["\'])'
+    new_toml, toml_count = re.subn(toml_pattern, f"\\g<1>{new_ver}\\g<3>", toml_content)
+    if toml_count == 0:
+        print("[Labmem 004 ERROR] pyproject.toml에서 version 패턴을 찾지 못했습니다!")
+        sys.exit(1)
+
+    # 원자적 쓰기
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        f.write(new_config)
+    with open(PYPROJECT_PATH, "w", encoding="utf-8") as f:
+        f.write(new_toml)
+
+    print(f"[Labmem 004] Version Bump 성공: v{old_ver} -> v{new_ver}")
+    print(f"  - {CONFIG_PATH}: v{new_ver}")
+    print(f"  - {PYPROJECT_PATH}: {new_ver}")
 
 except (OSError, re.error) as e:
     print(f"[Labmem 004 CRITICAL] 오류 발생: {e}")
@@ -562,6 +586,8 @@ MIRROR_MODULES = [
     "bump_version",
     "smoke_test",
     "sync_mirrors",
+    # package root
+    "chzzktube.__init__",
     # chzzktube.ui
     "chzzktube.ui.dialogs",
     "chzzktube.ui.log_console",
@@ -662,6 +688,8 @@ def sync_module(name: str, dry_run: bool = False) -> int:
         dst = MIRRORS_DIR / f"provisioning_{basename}.md"
     elif clean_name == "chzzktube.pipeline.target_downloader.utils":
         dst = MIRRORS_DIR / "target_downloader_utils.md"
+    elif clean_name == "chzzktube.__init__":
+        dst = MIRRORS_DIR / "pkg_init.md"
     else:
         dst = MIRRORS_DIR / f"{basename}.md"
 
@@ -3991,6 +4019,13 @@ if __name__ == "__main__":
 ## File: chzzktube\__init__.py
 
 ```python
+"""ChzzkTube 패키지 메타데이터."""
+from chzzktube.core.config import APP_NAME, APP_VERSION
+
+__title__ = APP_NAME
+__version__ = APP_VERSION.lstrip("v")
+
+__all__ = ["APP_NAME", "APP_VERSION", "__title__", "__version__"]
 
 ```
 
@@ -5757,7 +5792,9 @@ def writable_base():
     return os.path.join(os.path.expanduser("~"), ".chzzktube")
 
 _APP_NAME = "ChzzkTube"
-_APP_VERSION = "v3.12.5"
+APP_NAME = _APP_NAME
+APP_VERSION = "v3.12.5"
+_APP_VERSION = APP_VERSION  # 하위 호환 별칭
 
 BASE_DIR, CONFIG_DIR = resolve_dirs()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "dl_config.json")
@@ -16110,6 +16147,11 @@ class SettingsDialog(QDialog):
         footer.setStyleSheet("background-color: #0d0d0d;")
         footer_layout = QHBoxLayout(footer)
         footer_layout.setContentsMargins(18, 8, 18, 10)
+
+        lbl_ver = QLabel(f"{config.APP_NAME} {config.APP_VERSION}")
+        lbl_ver.setStyleSheet("color: #555555; font-size: 11px;")
+        footer_layout.addWidget(lbl_ver)
+
         footer_layout.addStretch()
 
         btn_done = QPushButton("[ Close: Esc ]")
@@ -17306,6 +17348,13 @@ class MainWindow(QMainWindow):
         self._watchdog_poll_timer.timeout.connect(self._poll_watchdogs)
 
         self.init_ui()
+
+        # [v3.12.6] 기동 헤더 로그: 앱 식별자 및 단일 진실 버전 1줄 TUI 발행
+        raw_log.raw(
+            "SYS",
+            LogEvent(stage="SYS", status="OK", scope="MAIN", msg=f"{APP_NAME} {APP_VERSION}", is_status=False),
+            to_tui=True,
+        )
 
         # 구성요소(yt-dlp/ffmpeg/node) 자동 업데이트 확인 — 기동 직후 비동기 1회
         QTimer.singleShot(500, self._start_update_check)
